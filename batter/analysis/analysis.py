@@ -55,6 +55,8 @@ COMPONENT_DIRECTION_DICT = {
     "m": -1,
     "x": +1,
     "Boresch": -1,
+    "Boresch_REF": -1,
+    "Boresch_ALT": +1,
 }
 
 
@@ -1027,7 +1029,7 @@ class RESTMBARAnalysis(MBARAnalysis):
 
 
 class BoreschAnalysis(FEAnalysisBase):
-    def __init__(self, disangfile, k_r, k_a, temperature):
+    def __init__(self, disangfile, k_r, k_a, temperature, restraint_tag=None):
         """
         Initialize the Boresch analysis with the disang file and parameters.
 
@@ -1042,6 +1044,9 @@ class BoreschAnalysis(FEAnalysisBase):
             They are the same (they don't have to be).
         temperature : float
             The temperature in Kelvin for the analysis.
+        restraint_tag : str, optional
+            Select a tagged Boresch block such as ``Lig_TR_REF`` or
+            ``Lig_TR_ALT``. When omitted, the legacy ``#Lig_TR`` match is used.
         """
         super().__init__()
         self.disangfile = disangfile
@@ -1050,6 +1055,7 @@ class BoreschAnalysis(FEAnalysisBase):
         assert self.k_r > 0.0, "k_r must be positive"
         assert self.k_a > 0.0, "k_a must be positive"
         self.temperature = temperature
+        self.restraint_tag = restraint_tag
 
     def run_analysis(self):
         """
@@ -1067,7 +1073,21 @@ class BoreschAnalysis(FEAnalysisBase):
         with open(self.disangfile, "r") as f_in:
             lines = [line.rstrip() for line in f_in]
 
-            tr_lines = list(line for line in lines if "#Lig_TR" in line)
+            if self.restraint_tag:
+                tag = f"#{str(self.restraint_tag).lstrip('#')}"
+                tr_lines = [line for line in lines if tag in line]
+            else:
+                tr_lines = [line for line in lines if "#Lig_TR" in line]
+            if len(tr_lines) < 6:
+                label = (
+                    str(self.restraint_tag).lstrip("#")
+                    if self.restraint_tag
+                    else "Lig_TR"
+                )
+                raise ValueError(
+                    f"Expected at least 6 Boresch restraint lines tagged #{label} "
+                    f"in {self.disangfile}, found {len(tr_lines)}"
+                )
             r0 = _extract_r2_val(tr_lines[0])  # P1–L1 distance (target at r2)
             a1_0 = _extract_r2_val(tr_lines[1])  # P2–P1–L1 angle
             t1_0 = _extract_r2_val(tr_lines[2])  # P3–P2–P1–L1 dihedral
@@ -1161,6 +1181,15 @@ class BoreschAnalysis(FEAnalysisBase):
         )
 
 
+def _disang_has_restraint_tag(disangfile: str | Path, tag: str) -> bool:
+    needle = f"#{tag.lstrip('#')}"
+    try:
+        with open(disangfile, "r") as f_in:
+            return any(needle in line for line in f_in)
+    except FileNotFoundError:
+        return False
+
+
 def generate_results_rest(
     md_sim_files: List[str],
     comp: str,
@@ -1238,6 +1267,29 @@ def analyze_lig_task(
         fe_timeseries: Dict[str, np.ndarray] = {}
         fe_timeseries_backward: Dict[str, np.ndarray] = {}
 
+        def _add_boresch_contribution(
+            label: str,
+            disangfile: str | Path,
+            restraint_tag: str | None = None,
+        ) -> None:
+            k_r, k_a = rest[2], rest[3]
+            direction = COMPONENT_DIRECTION_DICT[label]
+            bor = BoreschAnalysis(
+                disangfile=disangfile,
+                k_r=k_r,
+                k_a=k_a,
+                temperature=temperature,
+                restraint_tag=restraint_tag,
+            )
+            bor.run_analysis()
+            fe_values.append(direction * bor.results["fe"])
+            fe_stds.append(bor.results["fe_error"])
+            fe_timeseries[label] = np.asarray([bor.results["fe"], 0.0])
+            fe_timeseries_backward[label] = np.asarray([bor.results["fe"], 0.0])
+            results_entries.append(
+                f"{label}\t{direction * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
+            )
+
         # Analytical Boresch (if present)
         if "v" in components:
             boresch_file = f"{lig_path}/v/v-1/disang.rest"
@@ -1249,17 +1301,19 @@ def analyze_lig_task(
             boresch_file = None
 
         if boresch_file:
-            k_r, k_a = rest[2], rest[3]
-            bor = BoreschAnalysis(
-                disangfile=boresch_file, k_r=k_r, k_a=k_a, temperature=temperature
+            _add_boresch_contribution("Boresch", boresch_file)
+
+        septop_boresch_file = Path(lig_path) / "x" / "x-1" / "disang.rest"
+        if (
+            "x" in components
+            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_REF")
+            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_ALT")
+        ):
+            _add_boresch_contribution(
+                "Boresch_REF", septop_boresch_file, restraint_tag="Lig_TR_REF"
             )
-            bor.run_analysis()
-            fe_values.append(COMPONENT_DIRECTION_DICT["Boresch"] * bor.results["fe"])
-            fe_stds.append(bor.results["fe_error"])
-            fe_timeseries["Boresch"] = np.asarray([bor.results["fe"], 0.0])
-            fe_timeseries_backward["Boresch"] = np.asarray([bor.results["fe"], 0.0])
-            results_entries.append(
-                f"Boresch\t{COMPONENT_DIRECTION_DICT['Boresch'] * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
+            _add_boresch_contribution(
+                "Boresch_ALT", septop_boresch_file, restraint_tag="Lig_TR_ALT"
             )
 
         for comp in components:

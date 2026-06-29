@@ -38,7 +38,7 @@ def resolve_network_scorer_name(
     scorer = str(network_scorer or "auto").strip().lower().replace("-", "_")
     if scorer in {"", "auto", "default"}:
         return (
-            "shape_difference"
+            "pocket_shape"
             if _normalize_protocol(protocol) == "rbfe_septop"
             else "lomap"
         )
@@ -52,9 +52,19 @@ def resolve_network_scorer_name(
         "kartograf_shape_difference",
     }:
         return "shape_difference"
+    if scorer in {
+        "pocket",
+        "pocket_shape",
+        "grid_shape",
+        "pocket_grid",
+        "receptor_grid",
+        "receptor_shape",
+        "receptor_frame_shape",
+    }:
+        return "pocket_shape"
     raise ValueError(
         f"Unknown RBFE network scorer '{network_scorer}'. "
-        "Available: auto, lomap, shape_difference"
+        "Available: auto, lomap, shape_difference, pocket_shape"
     )
 
 
@@ -82,12 +92,442 @@ def _shape_difference_network_score(mapping) -> float:
         return 0.0
 
 
+def _rdkit_mol_from_component(component: Any) -> Chem.Mol | None:
+    if component is None:
+        return None
+    if hasattr(component, "to_rdkit"):
+        try:
+            mol = component.to_rdkit()
+            if mol is not None:
+                return mol
+        except Exception:
+            pass
+    mol = getattr(component, "_rdkit", None)
+    if mol is not None:
+        return mol
+    mol = getattr(component, "mol", None)
+    if mol is not None:
+        return mol
+    return None
+
+
+def _mapping_component(mapping: Any, name: str) -> Any:
+    component = getattr(mapping, name, None)
+    if component is None:
+        component = getattr(mapping, f"_{name}", None)
+    return component
+
+
+def _pocket_grid_occupancy(
+    mol: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> set[tuple[int, int, int]] | None:
+    """Voxelized receptor-frame ligand heavy-atom occupancy.
+
+    The input ligand poses are assumed to already be in the same receptor frame.
+    A voxel is occupied if its center falls within a buffered vdW radius of any
+    ligand heavy atom.
+    """
+    if mol is None or mol.GetNumConformers() < 1:
+        return None
+    if spacing <= 0:
+        return None
+
+    try:
+        conf = mol.GetConformer()
+    except Exception:
+        return None
+
+    periodic_table = Chem.GetPeriodicTable()
+    voxels: set[tuple[int, int, int]] = set()
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            continue
+        idx = atom.GetIdx()
+        try:
+            pos = conf.GetAtomPosition(idx)
+        except Exception:
+            continue
+        try:
+            radius = float(periodic_table.GetRvdw(atom.GetAtomicNum()))
+        except Exception:
+            radius = 1.7
+        if not math.isfinite(radius) or radius <= 0:
+            radius = 1.7
+        radius = radius + radius_buffer
+
+        ix0 = math.floor((float(pos.x) - radius) / spacing)
+        ix1 = math.floor((float(pos.x) + radius) / spacing)
+        iy0 = math.floor((float(pos.y) - radius) / spacing)
+        iy1 = math.floor((float(pos.y) + radius) / spacing)
+        iz0 = math.floor((float(pos.z) - radius) / spacing)
+        iz1 = math.floor((float(pos.z) + radius) / spacing)
+
+        for ix in range(ix0, ix1 + 1):
+            cx = (ix + 0.5) * spacing
+            dx2 = (cx - float(pos.x)) ** 2
+            if dx2 > radius * radius:
+                continue
+            for iy in range(iy0, iy1 + 1):
+                cy = (iy + 0.5) * spacing
+                dxy2 = dx2 + (cy - float(pos.y)) ** 2
+                if dxy2 > radius * radius:
+                    continue
+                for iz in range(iz0, iz1 + 1):
+                    cz = (iz + 0.5) * spacing
+                    if dxy2 + (cz - float(pos.z)) ** 2 <= radius * radius:
+                        voxels.add((ix, iy, iz))
+
+    return voxels or None
+
+
+def _pocket_grid_overlap_score(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> float | None:
+    """High-is-good receptor-frame occupancy score for two ligand poses."""
+    metrics = _pocket_grid_overlap_metrics(
+        mol_a,
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if metrics is None:
+        return None
+    return metrics["pocket_grid_score"]
+
+
+def _pocket_grid_overlap_metrics(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> dict[str, float] | None:
+    """Return receptor-frame occupancy metrics for two ligand poses."""
+    vox_a = _pocket_grid_occupancy(
+        mol_a,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    vox_b = _pocket_grid_occupancy(
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not vox_a or not vox_b:
+        return None
+
+    overlap = len(vox_a & vox_b)
+    if overlap <= 0:
+        return {
+            "pocket_grid_score": 0.0,
+            "pocket_grid_containment": 0.0,
+            "pocket_grid_jaccard": 0.0,
+            "pocket_grid_overlap_voxels": 0.0,
+            "pocket_grid_ref_voxels": float(len(vox_a)),
+            "pocket_grid_alt_voxels": float(len(vox_b)),
+        }
+    min_volume = min(len(vox_a), len(vox_b))
+    union = len(vox_a | vox_b)
+    if min_volume <= 0 or union <= 0:
+        return None
+
+    containment = overlap / min_volume
+    jaccard = overlap / union
+    score = 0.65 * containment + 0.35 * jaccard
+    return {
+        "pocket_grid_score": max(0.0, min(1.0, float(score))),
+        "pocket_grid_containment": max(0.0, min(1.0, float(containment))),
+        "pocket_grid_jaccard": max(0.0, min(1.0, float(jaccard))),
+        "pocket_grid_overlap_voxels": float(overlap),
+        "pocket_grid_ref_voxels": float(len(vox_a)),
+        "pocket_grid_alt_voxels": float(len(vox_b)),
+    }
+
+
+def _pocket_similarity_metric_scores(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    mapping: Any | None = None,
+) -> dict[str, float]:
+    """Metrics stored in RBFE mapping artifacts for HTML edge visualization."""
+    metrics = _pocket_grid_overlap_metrics(mol_a, mol_b)
+    if metrics is None:
+        return {}
+
+    shape_score = (
+        _shape_difference_network_score(mapping) if mapping is not None else 0.0
+    )
+    pocket_shape_score = metrics["pocket_grid_score"]
+    if shape_score > 0:
+        pocket_shape_score = 0.85 * metrics["pocket_grid_score"] + 0.15 * shape_score
+
+    out = {
+        "pocket_shape_score": max(0.0, min(1.0, float(pocket_shape_score))),
+        **metrics,
+    }
+    if shape_score > 0:
+        out["pocket_shape_kartograf_score"] = max(0.0, min(1.0, float(shape_score)))
+    return out
+
+
+def _voxel_center(
+    voxel: tuple[int, int, int],
+    spacing: float,
+) -> tuple[float, float, float]:
+    return (
+        (float(voxel[0]) + 0.5) * spacing,
+        (float(voxel[1]) + 0.5) * spacing,
+        (float(voxel[2]) + 0.5) * spacing,
+    )
+
+
+def _sample_voxels(
+    voxels: set[tuple[int, int, int]],
+    *,
+    max_points: int = 4500,
+) -> list[tuple[int, int, int]]:
+    if len(voxels) <= max_points:
+        return sorted(voxels)
+    ordered = sorted(voxels)
+    stride = max(1, math.ceil(len(ordered) / max_points))
+    return ordered[::stride][:max_points]
+
+
+def _write_pocket_shape_overlap_png(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    out_path: Path,
+    *,
+    pair_id: str,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> bool:
+    """Write a receptor-frame voxel-overlap plot for a planned RBFE edge."""
+    vox_a = _pocket_grid_occupancy(
+        mol_a,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    vox_b = _pocket_grid_occupancy(
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not vox_a or not vox_b:
+        return False
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+        from matplotlib.lines import Line2D
+    except Exception as exc:
+        logger.debug(
+            f"Could not import matplotlib for pocket-shape plot {pair_id}: {exc}"
+        )
+        return False
+
+    ref_only = vox_a - vox_b
+    alt_only = vox_b - vox_a
+    overlap = vox_a & vox_b
+    all_voxels = vox_a | vox_b
+    if not all_voxels:
+        return False
+
+    metrics = _pocket_grid_overlap_metrics(
+        mol_a,
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    ) or {}
+
+    categories = [
+        ("reference only", ref_only, "#2563eb", 0.30, 2.0),
+        ("target only", alt_only, "#f97316", 0.30, 2.0),
+        ("overlap", overlap, "#16a34a", 0.78, 3.0),
+    ]
+    sampled: dict[str, list[tuple[float, float, float]]] = {}
+    for label, voxels, _color, _alpha, _size in categories:
+        sampled[label] = [
+            _voxel_center(voxel, spacing)
+            for voxel in _sample_voxels(voxels)
+        ]
+
+    all_points = [
+        _voxel_center(voxel, spacing)
+        for voxel in _sample_voxels(all_voxels, max_points=12000)
+    ]
+    xs = [point[0] for point in all_points]
+    ys = [point[1] for point in all_points]
+    zs = [point[2] for point in all_points]
+
+    def _limits(values: list[float]) -> tuple[float, float]:
+        if not values:
+            return (0.0, 1.0)
+        low = min(values)
+        high = max(values)
+        pad = max(1.0, 0.08 * max(high - low, 1.0))
+        return low - pad, high + pad
+
+    xlim = _limits(xs)
+    ylim = _limits(ys)
+    zlim = _limits(zs)
+
+    try:
+        fig = plt.figure(figsize=(9.8, 7.6), dpi=150)
+        axes = [
+            fig.add_subplot(2, 2, 1, projection="3d"),
+            fig.add_subplot(2, 2, 2),
+            fig.add_subplot(2, 2, 3),
+            fig.add_subplot(2, 2, 4),
+        ]
+
+        ax3d = axes[0]
+        for label, _voxels, color, alpha, size in categories:
+            points = sampled[label]
+            if not points:
+                continue
+            ax3d.scatter(
+                [point[0] for point in points],
+                [point[1] for point in points],
+                [point[2] for point in points],
+                s=size,
+                c=color,
+                alpha=alpha,
+                linewidths=0,
+                depthshade=False,
+            )
+        ax3d.set_title("3D voxel occupancy", fontsize=10)
+        ax3d.set_xlabel("x (A)", fontsize=8)
+        ax3d.set_ylabel("y (A)", fontsize=8)
+        ax3d.set_zlabel("z (A)", fontsize=8)
+        ax3d.set_xlim(*xlim)
+        ax3d.set_ylim(*ylim)
+        ax3d.set_zlim(*zlim)
+        ax3d.view_init(elev=25, azim=-55)
+        try:
+            ax3d.set_box_aspect(
+                (
+                    max(xlim[1] - xlim[0], 1.0),
+                    max(ylim[1] - ylim[0], 1.0),
+                    max(zlim[1] - zlim[0], 1.0),
+                )
+            )
+        except Exception:
+            pass
+
+        projection_specs = [
+            (axes[1], 0, 1, "XY projection", "x (A)", "y (A)", xlim, ylim),
+            (axes[2], 0, 2, "XZ projection", "x (A)", "z (A)", xlim, zlim),
+            (axes[3], 1, 2, "YZ projection", "y (A)", "z (A)", ylim, zlim),
+        ]
+        for ax, dim_x, dim_y, title, xlabel, ylabel, limit_x, limit_y in projection_specs:
+            for label, _voxels, color, alpha, size in categories:
+                points = sampled[label]
+                if not points:
+                    continue
+                ax.scatter(
+                    [point[dim_x] for point in points],
+                    [point[dim_y] for point in points],
+                    s=size,
+                    c=color,
+                    alpha=alpha,
+                    linewidths=0,
+                )
+            ax.set_title(title, fontsize=10)
+            ax.set_xlabel(xlabel, fontsize=8)
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.set_xlim(*limit_x)
+            ax.set_ylim(*limit_y)
+            ax.set_aspect("equal", adjustable="box")
+            ax.grid(color="#e5e7eb", linewidth=0.5)
+
+        score = metrics.get("pocket_grid_score")
+        containment = metrics.get("pocket_grid_containment")
+        jaccard = metrics.get("pocket_grid_jaccard")
+        metric_text = ""
+        if score is not None and containment is not None and jaccard is not None:
+            metric_text = (
+                f"grid={score:.3f}  containment={containment:.3f}  "
+                f"jaccard={jaccard:.3f}"
+            )
+        fig.suptitle(f"{pair_id} pocket occupancy overlap\n{metric_text}", fontsize=12)
+        handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color,
+                markersize=7,
+                label=label,
+            )
+            for label, _voxels, color, _alpha, _size in categories
+        ]
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=3,
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.012),
+        )
+        fig.tight_layout(rect=(0.0, 0.055, 1.0, 0.925))
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, facecolor="white")
+        plt.close(fig)
+    except Exception as exc:
+        logger.debug(f"Could not write pocket-shape plot for {pair_id}: {exc}")
+        try:
+            plt.close("all")
+        except Exception:
+            pass
+        return False
+
+    return out_path.is_file()
+
+
+def _pocket_shape_network_score(mapping) -> float:
+    """Score receptor-frame pocket occupancy, with Kartograf shape as fallback.
+
+    This is intended for ``rbfe_septop`` where the whole ligand is in softcore
+    and atom mapping is not a common-core requirement. The dominant term rewards
+    overlapping ligand occupancy in the input receptor frame. A containment term
+    lets a smaller ligand that fills one subpocket connect to a larger ligand
+    spanning several subpockets, while the Jaccard term still ranks full
+    x/y-to-x/y overlap above x-to-x containment.
+    """
+    shape_score = _shape_difference_network_score(mapping)
+    mol_a = _rdkit_mol_from_component(_mapping_component(mapping, "componentA"))
+    mol_b = _rdkit_mol_from_component(_mapping_component(mapping, "componentB"))
+    if mol_a is None or mol_b is None:
+        return shape_score
+
+    grid_metrics = _pocket_grid_overlap_metrics(mol_a, mol_b)
+    if grid_metrics is None:
+        return shape_score
+
+    grid_score = grid_metrics["pocket_grid_score"]
+    if shape_score <= 0:
+        return grid_score
+    return max(0.0, min(1.0, 0.85 * grid_score + 0.15 * shape_score))
+
+
 def _network_scorer_callable(
     network_scorer: str | None = None,
     *,
     protocol: str | None = None,
 ):
     scorer_name = resolve_network_scorer_name(network_scorer, protocol=protocol)
+    if scorer_name == "pocket_shape":
+        return _pocket_shape_network_score
     if scorer_name == "shape_difference":
         return _shape_difference_network_score
 
@@ -1115,10 +1555,21 @@ def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]
         "mapping_path": (pair_dir / "mapping.json").as_posix(),
         "mapping_dir": pair_dir.as_posix(),
     }
-    png = pair_dir / "mapping.png"
-    if png.is_file():
-        asset["image_data_uri"] = _mapping_png_data_uri(png)
+    shape_png = pair_dir / "pocket_shape_overlap.png"
+    if shape_png.is_file():
+        asset["image_data_uri"] = _mapping_png_data_uri(shape_png)
+        asset["image_alt"] = f"Pocket shape overlap for {pair_id}"
+        asset["image_kind"] = "pocket_shape_overlap"
+        asset["shape_overlap_path"] = shape_png.as_posix()
+    mapping_png = pair_dir / "mapping.png"
+    if mapping_png.is_file():
+        mapping_uri = _mapping_png_data_uri(mapping_png)
+        asset["atom_mapping_image_data_uri"] = mapping_uri
+        asset["atom_mapping_image_alt"] = f"Atom mapping for {pair_id}"
+    if mapping_png.is_file() and "image_data_uri" not in asset:
+        asset["image_data_uri"] = _mapping_png_data_uri(mapping_png)
         asset["image_alt"] = f"Atom mapping for {pair_id}"
+        asset["image_kind"] = "atom_mapping"
     status = pair_dir / "mapping_status.json"
     if status.is_file():
         try:
@@ -1138,6 +1589,14 @@ def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]
                 "mapping_score_volume_ratio",
                 "mapping_score_shape_mismatch",
                 "mapping_score_shape_overlap",
+                "pocket_shape_score",
+                "pocket_grid_score",
+                "pocket_grid_containment",
+                "pocket_grid_jaccard",
+                "pocket_grid_overlap_voxels",
+                "pocket_grid_ref_voxels",
+                "pocket_grid_alt_voxels",
+                "pocket_shape_kartograf_score",
             ):
                 if key in status_payload:
                     asset[key] = status_payload[key]
@@ -1162,7 +1621,7 @@ def _mapping_status_was_manual(pair_dir: Path) -> bool:
 
 
 def _remove_optional_mapping_artifacts(pair_dir: Path) -> None:
-    for name in ("mapping.pkl", "mapping.png"):
+    for name in ("mapping.pkl", "mapping.png", "pocket_shape_overlap.png"):
         path = pair_dir / name
         if not path.exists():
             continue
@@ -1212,6 +1671,19 @@ def _write_manual_pair_mapping_artifacts(
             serialized,
         )
         metric_scores = _mapping_metric_scores(atom_mapping_obj)
+        metric_scores.update(
+            _pocket_similarity_metric_scores(
+                rdmol_ref,
+                rdmol_alt,
+                atom_mapping_obj,
+            )
+        )
+        _write_pocket_shape_overlap_png(
+            rdmol_ref,
+            rdmol_alt,
+            pair_dir / "pocket_shape_overlap.png",
+            pair_id=pair_id,
+        )
     except Exception as exc:
         logger.debug(
             f"Could not compute manual RBFE mapping coverage for {pair_id}: {exc}"
@@ -1288,7 +1760,16 @@ def write_pair_mapping_artifacts(
             )
             _remove_optional_mapping_artifacts(pair_dir)
         else:
-            return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+            cached_asset = _edge_asset_from_mapping_dir(pair_id, pair_dir)
+            if (
+                "pocket_shape_score" in cached_asset
+                and cached_asset.get("image_kind") == "pocket_shape_overlap"
+            ):
+                return cached_asset
+            logger.debug(
+                f"Prepared RBFE mapping for {pair_id} lacks pocket-shape "
+                "visualization metrics; refreshing mapping status."
+            )
 
     mapper_name = _normalize_atom_mapper(atom_mapper)
     if overwrite:
@@ -1337,6 +1818,19 @@ def write_pair_mapping_artifacts(
     }
     status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
     status_payload.update(_mapping_metric_scores(atom_mapping_obj))
+    status_payload.update(
+        _pocket_similarity_metric_scores(
+            rdmol_ref,
+            rdmol_alt,
+            atom_mapping_obj,
+        )
+    )
+    _write_pocket_shape_overlap_png(
+        rdmol_ref,
+        rdmol_alt,
+        pair_dir / "pocket_shape_overlap.png",
+        pair_id=pair_id,
+    )
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )
@@ -1370,9 +1864,10 @@ def write_planned_mapping_artifacts(
     Generate reusable atom-mapping artifacts for a planned RBFE network.
 
     Each edge gets ``mapping.json``, optional ``mapping.pkl``/``mapping.png``,
-    and ``mapping_status.json`` under ``out_dir``. The returned metadata is fed
-    directly into the interactive network HTML so users can inspect mapping
-    images, coverage, mapper identity, and metric scores before production.
+    ``pocket_shape_overlap.png``, and ``mapping_status.json`` under ``out_dir``.
+    The returned metadata is fed directly into the interactive network HTML so
+    users can inspect receptor-frame pocket overlap, coverage, mapper identity,
+    and metric scores before production.
     """
     assets: dict[str, dict[str, Any]] = {}
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
@@ -1479,7 +1974,7 @@ def konnektor_pairs(
 
     except ImportError as exc:
         raise RuntimeError(
-            "Konnektor mapping requires 'gufe' to be installed."
+            "konnektor mapping requires 'gufe' to be installed."
         ) from exc
 
 

@@ -1791,7 +1791,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if septop:
         scmk1 = scmk1_all_indice
         scmk2 = scmk2_all_indice
-        eq_ligand_restraint_mask = ligand_cc_solvent_first_atom_mask
+        # During pre-window equilibration, keep all four ligand copies close to
+        # their staged poses. Production uses the lighter solvent-anchor mask
+        # plus lambda-dependent Boresch restraints for the bound ligands.
+        eq_ligand_restraint_mask = (
+            f":{int(ref_resid)},{int(ref_resid)+1},"
+            f"{int(ref_resid)+2},{int(ref_resid)+3}"
+        )
     else:
         scmk1_exclude_indice = np.concatenate([
                         scmk1_cc_solvent_indices,

@@ -66,6 +66,13 @@ def _read_nonblank_lines(p: Path) -> List[str]:
     return [ln.rstrip("\n") for ln in p.read_text().splitlines() if ln.strip()]
 
 
+def _heavy_or_all_center_of_mass(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    heavy = atoms.select_atoms("not name H*")
+    if heavy.n_atoms:
+        return heavy.center_of_mass()
+    return atoms.center_of_mass()
+
+
 def _safe_resid(resid: int) -> int:
     """Clamp resid into PDB 1..9999 domain."""
     r = resid % 10000
@@ -1440,6 +1447,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     amber_dir = ctx.amber_dir
     dest_dir = ctx.equil_dir
     sim = ctx.sim
+    septop = str(getattr(sim, "fe_type", "") or "").lower() == "relative_septop"
     buffer_z = sim.buffer_z
     ion_def = sim.ion_def
 
@@ -1586,8 +1594,13 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
-    if not atomMap:
+    if not atomMap and not septop:
         raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
+    if not atomMap:
+        logger.debug(
+            "[simprep:x] no atom mapping found for septop; using receptor-aligned "
+            "ligand poses directly"
+        )
 
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
@@ -1654,8 +1667,11 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
-    mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
-    dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
+    if septop:
+        dum_l.position = _heavy_or_all_center_of_mass(ref_res_atoms)
+    else:
+        mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
+        dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
@@ -1664,47 +1680,53 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms :]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
-    # use reference ligand, steer alt ligand to the atom mapped position.
-    rdmol_ref_work = Chem.Mol(rdmol_ref)
-    ref_pos = u_lig.residues[0].atoms.positions
-    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
-
-    _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-    _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-    rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
-
-    rdmol_alt_site = force_mapped_coords_and_minimize(
-        rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
-    )
-    # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
     alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
-    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
-    with alter_site_pdb.open("w") as f:
-        f.write(pdb_block_m)
 
-    ref_pos = u_lig.residues[1].atoms.positions
-    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
-    
-    _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-    _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-    rdmol_alt_solvent = align_mol_shape(
-        _mol_alt_solvent, ref_mol=_mol_ref_solvent
-    )._rdkit
+    if septop:
+        u_alter_lig_pocket.atoms.write(alter_site_pdb.as_posix())
+        u_alter_lig.atoms.write(alter_solvent_pdb.as_posix())
+    else:
+        # use reference ligand, steer alt ligand to the atom mapped position.
+        rdmol_ref_work = Chem.Mol(rdmol_ref)
+        ref_pos = u_lig.residues[0].atoms.positions
+        rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
 
-    rdmol_alt_solvent = force_mapped_coords_and_minimize(
-        rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
-    )
+        _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
-    # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
-    with alter_solvent_pdb.open("w") as f:
-        f.write(pdb_block_m)
+        rdmol_alt_site = force_mapped_coords_and_minimize(
+            rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
+        )
+        # save mol_alt_aligned as PDB
+        pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
+        with alter_site_pdb.open("w") as f:
+            f.write(pdb_block_m)
+
+        ref_pos = u_lig.residues[1].atoms.positions
+        rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
+
+        _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_solvent = align_mol_shape(
+            _mol_alt_solvent, ref_mol=_mol_ref_solvent
+        )._rdkit
+
+        rdmol_alt_solvent = force_mapped_coords_and_minimize(
+            rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
+        )
+
+        # save mol_alt_aligned as PDB
+        pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
+        with alter_solvent_pdb.open("w") as f:
+            f.write(pdb_block_m)
 
     u_alt_site = mda.Universe(alter_site_pdb.as_posix())
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
+    u_alt.atoms.write(alter_merged_pdb.as_posix())
 
     if not used_prepared_mapping:
         try:

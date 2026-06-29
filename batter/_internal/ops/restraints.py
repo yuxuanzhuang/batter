@@ -1779,22 +1779,94 @@ def _heavy_atom_names_from_residue(residue) -> list[str]:
     return names
 
 
-def _resolve_ref_boresch_atom_names(ref_residue, anchor_names: Sequence[str]) -> list[str]:
-    heavy_names = _heavy_atom_names_from_residue(ref_residue)
-    selected: list[str] = []
-    for name in anchor_names:
-        if name in heavy_names and name not in selected:
-            selected.append(name)
-    for name in heavy_names:
-        if len(selected) >= 3:
-            break
-        if name not in selected:
-            selected.append(name)
-    if len(selected) < 3:
+def _heavy_atoms_from_residue(residue) -> list:
+    atoms: list = []
+    seen_names: set[str] = set()
+    for atom in residue.atoms:
+        name = str(atom.name).strip()
+        if not name or name in seen_names or _is_hydrogen_atom(atom):
+            continue
+        try:
+            position = np.asarray(atom.position, dtype=float)
+        except Exception:
+            continue
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            continue
+        atoms.append(atom)
+        seen_names.add(name)
+    return atoms
+
+
+def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list[str]:
+    """Choose a deterministic, non-collinear ligand anchor triplet without atom mapping."""
+    atoms = _heavy_atoms_from_residue(residue)
+    if len(atoms) < 3:
+        selected = [str(atom.name).strip() for atom in atoms]
         raise ValueError(
-            f"[restraints:x] Need at least 3 reference heavy atoms for SEPTOP Boresch restraints; got {selected}"
+            f"[restraints:x] Need at least 3 {label} heavy atoms for SEPTOP "
+            f"Boresch restraints; got {selected}"
         )
-    return selected[:3]
+
+    coords = np.asarray([np.asarray(atom.position, dtype=float) for atom in atoms])
+    centroid = np.mean(coords, axis=0)
+    span = float(np.max(np.linalg.norm(coords - centroid, axis=1)))
+    span = max(span, 1.0)
+
+    best_score: float | None = None
+    best_indices: tuple[int, int, int] | None = None
+    min_anchor_distance = 0.5
+    min_sine = 0.25
+
+    for i in range(len(atoms)):
+        l1_centrality = np.linalg.norm(coords[i] - centroid) / span
+        for j in range(len(atoms)):
+            if j == i:
+                continue
+            d12 = float(np.linalg.norm(coords[j] - coords[i]))
+            if d12 < min_anchor_distance:
+                continue
+            for k in range(len(atoms)):
+                if k == i or k == j:
+                    continue
+                d13 = float(np.linalg.norm(coords[k] - coords[i]))
+                d23 = float(np.linalg.norm(coords[k] - coords[j]))
+                if min(d13, d23) < min_anchor_distance:
+                    continue
+                area2 = float(
+                    np.linalg.norm(
+                        np.cross(coords[j] - coords[i], coords[k] - coords[i])
+                    )
+                )
+                sine = area2 / max(d12 * d13, 1.0e-12)
+                if sine < min_sine:
+                    continue
+                spread = (min(d12, d13) + 0.5 * d23) / span
+                score = 4.0 * sine + 0.25 * spread - l1_centrality
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_indices = (i, j, k)
+
+    if best_indices is None:
+        logger.warning(
+            "[restraints:x] Could not find a non-collinear {} Boresch anchor "
+            "triplet; falling back to the first three heavy atoms.",
+            label,
+        )
+        best_indices = (0, 1, 2)
+
+    return [str(atoms[idx].name).strip() for idx in best_indices]
+
+
+def _resolve_ref_boresch_atom_names(ref_residue, anchor_names: Sequence[str]) -> list[str]:
+    if any(anchor_names):
+        logger.debug(
+            "[restraints:x] selecting SEPTOP REF Boresch anchors independently "
+            "of ABFE ligand anchors"
+        )
+    return _independent_boresch_atom_names_from_residue(
+        ref_residue,
+        label="reference",
+    )
 
 
 def _resolve_alt_boresch_atom_names(
@@ -1804,47 +1876,15 @@ def _resolve_alt_boresch_atom_names(
     ref_names: Sequence[str],
     mapping_path: Path,
 ) -> list[str]:
-    selected: list[str] = []
-
-    def _append_alt_index(alt_idx: int) -> None:
-        if alt_idx < 0 or alt_idx >= alt_residue.atoms.n_atoms:
-            return
-        atom = alt_residue.atoms[int(alt_idx)]
-        name = str(atom.name).strip()
-        if name and not _is_hydrogen_atom(atom) and name not in selected:
-            selected.append(name)
-
     if mapping_path.exists():
-        mapping_raw = json.loads(mapping_path.read_text())
-        alt_to_ref = {int(k): int(v) for k, v in mapping_raw.items()}
-        ref_to_alt = {ref_idx: alt_idx for alt_idx, ref_idx in alt_to_ref.items()}
-        ref_name_to_index: dict[str, int] = {}
-        for idx, atom in enumerate(ref_residue.atoms):
-            name = str(atom.name).strip()
-            if name and name not in ref_name_to_index:
-                ref_name_to_index[name] = int(idx)
-
-        for ref_name in ref_names:
-            ref_idx = ref_name_to_index.get(str(ref_name).strip())
-            if ref_idx is not None and ref_idx in ref_to_alt:
-                _append_alt_index(ref_to_alt[ref_idx])
-
-        for alt_idx in sorted(alt_to_ref):
-            if len(selected) >= 3:
-                break
-            _append_alt_index(alt_idx)
-
-    for name in _heavy_atom_names_from_residue(alt_residue):
-        if len(selected) >= 3:
-            break
-        if name not in selected:
-            selected.append(name)
-
-    if len(selected) < 3:
-        raise ValueError(
-            f"[restraints:x] Need at least 3 alternate heavy atoms for SEPTOP Boresch restraints; got {selected}"
+        logger.debug(
+            "[restraints:x] selecting SEPTOP ALT Boresch anchors independently "
+            "of atom mapping"
         )
-    return selected[:3]
+    return _independent_boresch_atom_names_from_residue(
+        alt_residue,
+        label="alternate",
+    )
 
 
 def _boresch_tr_expressions(

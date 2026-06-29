@@ -945,7 +945,7 @@ def test_sim_files_x_septop_enables_lambda_dependent_boresch(
     assert "scmask2='@20-22'" in eq_text
     assert "scmask1='@10-12'" in template_text
     assert "scmask2='@20-22'" in template_text
-    assert "((@CA & :1) | (@4 | @2) | :1-2 ) & !@H=" in eq_text
+    assert "((@CA & :1) | (:1,2,3,4) | :1-2 ) & !@H=" in eq_text
     assert "(:1-2 | @4 | @2) & !@H=" in template_text
     assert (windows_dir / "lambda.sch").read_text() == (
         "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"

@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import types
 
+import numpy as np
+
 
 def _load_internal_module(module_name: str):
     repo_root = Path(__file__).resolve().parents[1]
@@ -27,6 +29,25 @@ def _load_internal_module(module_name: str):
 restraints = _load_internal_module("batter._internal.ops.restraints")
 
 
+class _FakeAtoms(list):
+    @property
+    def n_atoms(self) -> int:
+        return len(self)
+
+
+class _FakeAtom:
+    def __init__(self, name: str, position: tuple[float, float, float]):
+        self.name = name
+        self.position = np.asarray(position, dtype=float)
+        self.element = "C"
+        self.type = "C"
+
+
+class _FakeResidue:
+    def __init__(self, atoms: list[_FakeAtom]):
+        self.atoms = _FakeAtoms(atoms)
+
+
 def _write_four_atom_pdb(path: Path, coords: list[tuple[float, float, float]]) -> None:
     lines = []
     for idx, (x, y, z) in enumerate(coords, start=1):
@@ -36,6 +57,113 @@ def _write_four_atom_pdb(path: Path, coords: list[tuple[float, float, float]]) -
         )
     lines.append("END\n")
     path.write_text("".join(lines))
+
+
+def test_septop_ref_boresch_ignores_abfe_ligand_anchors() -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (2.0, 0.0, 0.0)),
+            _FakeAtom("R4", (1.0, 1.0, 0.0)),
+            _FakeAtom("R5", (1.0, 0.0, 1.0)),
+        ]
+    )
+
+    names = restraints._resolve_ref_boresch_atom_names(
+        ref,
+        anchor_names=["R1", "R2", "R3"],
+    )
+
+    coords = {atom.name: atom.position for atom in ref.atoms}
+    assert len(names) == 3
+    assert names != ["R1", "R2", "R3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
+
+
+def test_septop_alt_boresch_ignores_atom_mapping(tmp_path: Path) -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    alt = _FakeResidue(
+        [
+            _FakeAtom("A0", (9.0, 9.0, 9.0)),
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"1": 0, "2": 1, "3": 2}))
+
+    names = restraints._resolve_alt_boresch_atom_names(
+        ref_residue=ref,
+        alt_residue=alt,
+        ref_names=["R1", "R2", "R3"],
+        mapping_path=mapping,
+    )
+
+    coords = {atom.name: atom.position for atom in alt.atoms}
+    assert len(names) == 3
+    assert names != ["A1", "A2", "A3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
+
+
+def test_septop_alt_boresch_empty_mapping_selects_independent_frame(
+    tmp_path: Path,
+) -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    alt = _FakeResidue(
+        [
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (2.0, 0.0, 0.0)),
+            _FakeAtom("A4", (1.0, 1.0, 0.0)),
+            _FakeAtom("A5", (1.0, 0.0, 1.0)),
+        ]
+    )
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}")
+
+    names = restraints._resolve_alt_boresch_atom_names(
+        ref_residue=ref,
+        alt_residue=alt,
+        ref_names=["R1", "R2", "R3"],
+        mapping_path=mapping,
+    )
+
+    coords = {atom.name: atom.position for atom in alt.atoms}
+    assert len(names) == 3
+    assert names != ["A1", "A2", "A3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
 
 
 def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:

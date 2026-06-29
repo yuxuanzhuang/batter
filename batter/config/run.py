@@ -862,9 +862,9 @@ class RBFENetworkArgs(BaseModel):
     network_scorer: str = Field(
         "auto",
         description=(
-            "Konnektor edge scorer: 'auto', 'lomap', or 'shape_difference'. "
-            "The 'auto' default uses Lomap for RBFE and Kartograf shape-difference "
-            "scoring for rbfe_septop."
+            "Konnektor edge scorer: 'auto', 'lomap', 'shape_difference', or "
+            "'pocket_shape'. The 'auto' default uses Lomap for RBFE and "
+            "receptor-frame pocket occupancy plus shape scoring for rbfe_septop."
         ),
     )
     kartograf: KartografMapperArgs = Field(
@@ -947,10 +947,17 @@ class RBFENetworkArgs(BaseModel):
             "shape_mismatch",
             "kartograf_shape",
             "kartograf_shape_difference",
+            "pocket",
+            "pocket_shape",
+            "grid_shape",
+            "pocket_grid",
+            "receptor_grid",
+            "receptor_shape",
+            "receptor_frame_shape",
         }
         if text not in allowed:
             raise ValueError(
-                "rbfe.network_scorer must be one of: auto, lomap, shape_difference"
+                "rbfe.network_scorer must be one of: auto, lomap, shape_difference, pocket_shape"
             )
         return text
 

@@ -188,6 +188,30 @@ def _edge_connectivity_metadata(graph: Any) -> dict[tuple[str, str], dict[str, A
 
 
 _EDGE_SCORE_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "pocket_shape_score": {
+        "label": "Pocket similarity",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Receptor-frame ligand pocket occupancy score blended with shape similarity.",
+    },
+    "pocket_grid_score": {
+        "label": "Pocket grid overlap",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Receptor-frame voxel occupancy overlap from containment and Jaccard terms.",
+    },
+    "pocket_grid_containment": {
+        "label": "Pocket containment",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Occupied voxel overlap divided by the smaller ligand occupancy.",
+    },
+    "pocket_grid_jaccard": {
+        "label": "Pocket Jaccard",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Occupied voxel overlap divided by the union of both ligand occupancies.",
+    },
     "connectivity_score": {
         "label": "Network redundancy",
         "higher_better": True,
@@ -530,6 +554,10 @@ def write_planned_rbfe_network_html(
             "image_data_uri",
             "image_src",
             "image_alt",
+            "image_kind",
+            "shape_overlap_path",
+            "atom_mapping_image_data_uri",
+            "atom_mapping_image_alt",
             "mapping_path",
             "mapping_dir",
             "mapper",
@@ -540,6 +568,14 @@ def write_planned_rbfe_network_html(
             "mapping_score_volume_ratio",
             "mapping_score_shape_mismatch",
             "mapping_score_shape_overlap",
+            "pocket_shape_score",
+            "pocket_grid_score",
+            "pocket_grid_containment",
+            "pocket_grid_jaccard",
+            "pocket_grid_overlap_voxels",
+            "pocket_grid_ref_voxels",
+            "pocket_grid_alt_voxels",
+            "pocket_shape_kartograf_score",
         ):
             if key in primary_payload:
                 planned_edges[edge_key][key] = primary_payload[key]
@@ -628,16 +664,17 @@ def write_planned_rbfe_network_html(
         for key, value in summary_items
     )
     edge_metric_definitions = _edge_metric_definitions_for_edges(planned_edges)
-    default_edge_metric = (
-        "connectivity_score"
-        if "connectivity_score" in edge_metric_definitions
-        else next(iter(edge_metric_definitions), "")
-    )
+    if "pocket_shape_score" in edge_metric_definitions:
+        default_edge_metric = "pocket_shape_score"
+    elif "connectivity_score" in edge_metric_definitions:
+        default_edge_metric = "connectivity_score"
+    else:
+        default_edge_metric = next(iter(edge_metric_definitions), "")
     notes = [
         "Planned transformations are labeled T1, T2, ... in the order stored in rbfe_network.json.",
         "Reverse-direction pairs are collapsed to one visual edge in this HTML view.",
         "Node colors reflect graph degree at planning time.",
-        "Use the edge color selector to switch between graph redundancy and available Kartograf mapping metrics.",
+        "Use the edge color selector to switch between pocket similarity, graph redundancy, and available mapping metrics.",
     ]
 
     html_text = f"""<!DOCTYPE html>
@@ -666,13 +703,13 @@ def write_planned_rbfe_network_html(
     .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 8px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; font-size: 13px; }}
     #stickies {{ position: fixed; inset: 0; pointer-events: none; z-index: 1000; }}
     .sticky-note {{ position: fixed; width: 280px; min-height: 130px; background: #fff9c4; border: 1px solid #e0c56e; border-radius: 8px; box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18); padding: 12px 12px 10px; pointer-events: auto; }}
-    .sticky-note.edge-note {{ width: 360px; background: #eef2ff; border-color: #c7d2fe; }}
+    .sticky-note.edge-note {{ width: 560px; background: #eef2ff; border-color: #c7d2fe; }}
     .sticky-header {{ display: flex; align-items: center; justify-content: space-between; font-weight: 700; margin-bottom: 8px; color: #6b4f00; cursor: move; }}
     .sticky-note.edge-note .sticky-header {{ color: #3730a3; }}
     .sticky-close {{ border: 0; background: transparent; color: inherit; font-size: 18px; line-height: 1; cursor: pointer; }}
     .sticky-body .smiles {{ margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606d; word-break: break-all; }}
     .sticky-body .empty {{ font-size: 12px; color: #7b8794; }}
-    .sticky-body .mapping-image {{ display: block; width: 100%; max-height: 220px; object-fit: contain; border: 1px solid #cbd2d9; border-radius: 6px; background: white; margin: 6px 0 8px; }}
+    .sticky-body .mapping-image {{ display: block; width: 100%; max-height: 420px; object-fit: contain; border: 1px solid #cbd2d9; border-radius: 6px; background: white; margin: 6px 0 8px; }}
     .sticky-meta {{ margin-top: 8px; font-size: 12px; color: #52606d; line-height: 1.45; }}
     .score-list {{ margin-top: 8px; padding-top: 7px; border-top: 1px solid #cbd2d9; }}
   </style>
@@ -913,7 +950,7 @@ def write_planned_rbfe_network_html(
       const index = pairIndexes.length ? pairIndexes.map((value) => `T${{value}}`).join(', ') : edgeKey;
       const imgSrc = edge.image_data_uri || edge.image_src || '';
       const image = imgSrc
-        ? `<img class="mapping-image" src="${{imgSrc}}" alt="${{edge.image_alt || 'Atom mapping'}}" />`
+        ? `<img class="mapping-image" src="${{imgSrc}}" alt="${{edge.image_alt || 'Edge visualization'}}" />`
         : '';
       const nMapped = edge.n_mapped ? `<br />mapped atoms: ${{edge.n_mapped}}` : '';
       const mapper = edge.mapper ? `<br />mapper: ${{edge.mapper}}` : '';
@@ -945,7 +982,7 @@ def write_planned_rbfe_network_html(
       note.className = kind === 'edge' ? 'sticky-note edge-note' : 'sticky-note';
       if (kind === 'edge') note.dataset.edge = key;
       else note.dataset.ligand = key;
-      const width = kind === 'edge' ? 360 : 320;
+      const width = kind === 'edge' ? 560 : 320;
       note.style.left = `${{Math.min(window.innerWidth - width, Math.max(16, event.clientX + 12))}}px`;
       note.style.top = `${{Math.min(window.innerHeight - 280, Math.max(16, event.clientY + 12))}}px`;
       const edge = plannedEdges[key] || {{}};

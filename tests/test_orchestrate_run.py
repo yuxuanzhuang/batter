@@ -302,8 +302,22 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
         out_path=html_path,
         metadata={"both_directions": True},
         edge_assets={
-            "A~B": {"mapping_score_rmsd": 0.91, "mapping_rmsd": 0.18},
-            "B~A": {"mapping_score_rmsd": 0.89, "mapping_rmsd": 0.21},
+            "A~B": {
+                "mapping_score_rmsd": 0.91,
+                "mapping_rmsd": 0.18,
+                "pocket_shape_score": 0.84,
+                "pocket_grid_score": 0.81,
+                "pocket_grid_containment": 0.93,
+                "pocket_grid_jaccard": 0.59,
+            },
+            "B~A": {
+                "mapping_score_rmsd": 0.89,
+                "mapping_rmsd": 0.21,
+                "pocket_shape_score": 0.82,
+                "pocket_grid_score": 0.79,
+                "pocket_grid_containment": 0.91,
+                "pocket_grid_jaccard": 0.57,
+            },
             "B~C": {"mapping_score_ratio_mapped_atoms": 0.72},
         },
     )
@@ -317,6 +331,11 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
     assert "connectivity_score" in html_text
     assert "edge-metric-select" in html_text
     assert "edgeMetricDefinitions" in html_text
+    assert "Pocket similarity" in html_text
+    assert "pocket_shape_score" in html_text
+    assert 'const defaultEdgeMetric = "pocket_shape_score"' in html_text
+    assert '"pocket_shape_score": 0.83' in html_text
+    assert "Pocket containment" in html_text
     assert "Kartograf RMSD score" in html_text
     assert "mapping_score_rmsd" in html_text
     assert '"mapping_score_rmsd": 0.9' in html_text
@@ -367,7 +386,7 @@ def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(
     assert seen["pairs"] == [["A", "B"], ["B", "C"]]
 
 
-def test_build_rbfe_network_plan_defaults_septop_to_shape_scorer(
+def test_build_rbfe_network_plan_defaults_septop_to_pocket_shape_scorer(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -399,7 +418,7 @@ def test_build_rbfe_network_plan_defaults_septop_to_shape_scorer(
     )
 
     assert payload["pairs"] == [["A", "B"]]
-    assert payload["network_scorer"] == "shape_difference"
+    assert payload["network_scorer"] == "pocket_shape"
     assert seen["network_scorer"] == "auto"
     assert seen["protocol"] == "rbfe_septop"
 

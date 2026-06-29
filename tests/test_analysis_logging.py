@@ -134,6 +134,45 @@ def test_mbar_convergence_fallback_repeats_final_estimate(tmp_path: Path) -> Non
     ]
 
 
+def test_boresch_analysis_selects_ligand_specific_tag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    disang = tmp_path / "disang.rest"
+    disang.write_text(
+        "\n".join(
+            [
+                f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR_REF"
+                for value in range(1, 7)
+            ]
+            + [
+                f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR_ALT"
+                for value in range(11, 17)
+            ]
+        )
+    )
+    seen: list[tuple[float, float, float, float, float, float]] = []
+
+    def _fake_fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, *args):
+        seen.append((r0, a1_0, t1_0, a2_0, t2_0, t3_0))
+        return r0
+
+    monkeypatch.setattr(
+        analysis_mod.BoreschAnalysis, "fe_int", staticmethod(_fake_fe_int)
+    )
+
+    ana = analysis_mod.BoreschAnalysis(
+        disangfile=disang,
+        k_r=1.0,
+        k_a=1.0,
+        temperature=300.0,
+        restraint_tag="Lig_TR_ALT",
+    )
+    ana.run_analysis()
+
+    assert ana.results["fe"] == 11.0
+    assert seen == [(11.0, 12.0, 13.0, 14.0, 15.0, 16.0)]
+
+
 def test_analyze_lig_task_writes_backward_fe_timeseries(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -175,6 +214,70 @@ def test_analyze_lig_task_writes_backward_fe_timeseries(
     assert payload["fe_std"][:2] == [0.1, 0.2]
     assert payload["backward_fe_value"][:2] == [3.0, 4.0]
     assert payload["backward_fe_std"][:2] == [0.3, 0.4]
+
+
+def test_analyze_lig_task_adds_septop_boresch_corrections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lig_path = tmp_path / "fe"
+    x_boresch = lig_path / "x" / "x-1" / "disang.rest"
+    x_boresch.parent.mkdir(parents=True)
+    x_boresch.write_text(
+        "\n".join(
+            [
+                f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR_REF"
+                for value in [2, 20, 21, 22, 23, 24]
+            ]
+            + [
+                f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR_ALT"
+                for value in [3, 30, 31, 32, 33, 34]
+            ]
+        )
+    )
+
+    class FakeMBARAnalysis:
+        def __init__(self, **kwargs):
+            self.results = {}
+
+        def run_analysis(self):
+            self.results = {
+                "fe": 10.0,
+                "fe_error": 1.0,
+                "fe_timeseries": np.array([[10.0, 1.0], [10.0, 1.0]]),
+                "fe_timeseries_backward": np.array([[10.0, 1.0], [10.0, 1.0]]),
+            }
+
+        def plot_convergence(self, save_path=None, title=None):
+            if save_path:
+                Path(save_path).write_bytes(b"png")
+
+    def _fake_fe_int(r0, *args):
+        return r0
+
+    monkeypatch.setattr(analysis_mod, "MBARAnalysis", FakeMBARAnalysis)
+    monkeypatch.setattr(
+        analysis_mod.BoreschAnalysis, "fe_int", staticmethod(_fake_fe_int)
+    )
+
+    analysis_mod.analyze_lig_task(
+        lig_path=str(lig_path),
+        lig="LIG",
+        components=["x"],
+        rest=(0.0, 0.0, 5.0, 250.0, 0.0),
+        temperature=300.0,
+        water_model="TIP3P",
+        component_windows_dict={"x": [0, 1]},
+        raise_on_error=True,
+        dt=0.004,
+    )
+
+    results = (lig_path / "Results" / "Results.dat").read_text().splitlines()
+    assert "Boresch_REF\t-2.00\t0.00" in results
+    assert "Boresch_ALT\t3.00\t0.00" in results
+    assert "Total\t11.00\t1.00" in results
+
+    payload = json.loads((lig_path / "Results" / "fe_timeseries.json").read_text())
+    assert payload["fe_value"][:2] == [11.0, 11.0]
 
 
 def test_ligand_rest_component_direction_registered() -> None:

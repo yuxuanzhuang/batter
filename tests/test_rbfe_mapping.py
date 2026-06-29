@@ -7,9 +7,15 @@ import types
 from pathlib import Path
 
 import pytest
+from rdkit import Chem
+from rdkit.Geometry import Point3D
 
 from batter.rbfe import (
+    _edge_asset_from_mapping_dir,
     _kartograf_mapper_kwargs,
+    _pocket_grid_overlap_metrics,
+    _pocket_grid_overlap_score,
+    _write_pocket_shape_overlap_png,
     _wrap_atom_mapper_with_overrides,
     ManualAtomMappingOverrides,
     RBFENetwork,
@@ -268,19 +274,87 @@ def test_konnektor_pairs_layout_resolution(monkeypatch, tmp_path: Path) -> None:
     assert pairs == [("L1", "L2")]
 
 
-def test_network_scorer_auto_defaults_to_shape_for_septop() -> None:
+def _make_pose_mol(points: list[tuple[float, float, float]]) -> Chem.Mol:
+    editable = Chem.RWMol()
+    for _point in points:
+        editable.AddAtom(Chem.Atom(6))
+    mol = editable.GetMol()
+    conf = Chem.Conformer(len(points))
+    for idx, (x, y, z) in enumerate(points):
+        conf.SetAtomPosition(idx, Point3D(float(x), float(y), float(z)))
+    mol.AddConformer(conf)
+    return mol
+
+
+def test_pocket_grid_overlap_prioritizes_shared_pocket_occupancy() -> None:
+    a_xy = _make_pose_mol([(0.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+    b_x = _make_pose_mol([(0.0, 0.0, 0.0)])
+    c_y = _make_pose_mol([(6.0, 0.0, 0.0)])
+    d_xy = _make_pose_mol([(0.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+    assert _pocket_grid_overlap_score(a_xy, d_xy) > _pocket_grid_overlap_score(
+        a_xy,
+        b_x,
+    )
+    assert _pocket_grid_overlap_score(a_xy, b_x) > _pocket_grid_overlap_score(
+        b_x,
+        c_y,
+    )
+    assert _pocket_grid_overlap_score(c_y, d_xy) > _pocket_grid_overlap_score(
+        b_x,
+        c_y,
+    )
+    metrics = _pocket_grid_overlap_metrics(a_xy, b_x)
+    assert metrics is not None
+    assert metrics["pocket_grid_score"] > 0
+    assert metrics["pocket_grid_containment"] > metrics["pocket_grid_jaccard"]
+    assert metrics["pocket_grid_overlap_voxels"] > 0
+
+
+def test_write_pocket_shape_overlap_png(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    a_xy = _make_pose_mol([(0.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+    b_x = _make_pose_mol([(0.0, 0.0, 0.0)])
+    out = tmp_path / "pocket_shape_overlap.png"
+
+    assert _write_pocket_shape_overlap_png(a_xy, b_x, out, pair_id="A~B")
+    assert out.is_file()
+    assert out.stat().st_size > 0
+
+
+def test_edge_asset_prefers_pocket_shape_overlap_image(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "A~B"
+    pair_dir.mkdir()
+    (pair_dir / "mapping.json").write_text("{}")
+    (pair_dir / "mapping.png").write_bytes(b"atom")
+    (pair_dir / "pocket_shape_overlap.png").write_bytes(b"shape")
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps({"pocket_shape_score": 0.75})
+    )
+
+    asset = _edge_asset_from_mapping_dir("A~B", pair_dir)
+
+    assert asset["image_kind"] == "pocket_shape_overlap"
+    assert asset["image_alt"] == "Pocket shape overlap for A~B"
+    assert asset["image_data_uri"].endswith("c2hhcGU=")
+    assert asset["atom_mapping_image_data_uri"].endswith("YXRvbQ==")
+    assert asset["pocket_shape_score"] == 0.75
+
+
+def test_network_scorer_auto_defaults_to_pocket_shape_for_septop() -> None:
     assert resolve_network_scorer_name("auto", protocol="rbfe") == "lomap"
     assert (
         resolve_network_scorer_name("auto", protocol="rbfe_septop")
-        == "shape_difference"
+        == "pocket_shape"
     )
     assert (
         resolve_network_scorer_name("shape-mismatch", protocol="rbfe")
         == "shape_difference"
     )
+    assert resolve_network_scorer_name("grid-shape", protocol="rbfe") == "pocket_shape"
 
 
-def test_konnektor_pairs_septop_auto_uses_shape_difference_scorer(
+def test_konnektor_pairs_septop_auto_uses_pocket_shape_scorer(
     monkeypatch, tmp_path: Path
 ) -> None:
     seen: dict[str, object] = {}
@@ -308,7 +382,7 @@ def test_konnektor_pairs_septop_auto_uses_shape_difference_scorer(
 
     assert pairs == [("L1", "L2")]
     assert callable(seen["scorer"])
-    assert getattr(seen["scorer"], "__name__", "") == "_shape_difference_network_score"
+    assert getattr(seen["scorer"], "__name__", "") == "_pocket_shape_network_score"
 
 
 def test_konnektor_pairs_unknown_layout(monkeypatch, tmp_path: Path) -> None:
