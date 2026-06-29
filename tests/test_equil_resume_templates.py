@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 def _write_file(path: Path, text: str, executable: bool = False) -> None:
+    if path.suffix == ".rst7" and text == "rst\n":
+        text = "Stub Amber restart\n    1  0.00000000\n  0.0  0.0  0.0\n"
     path.write_text(text)
     if executable:
         path.chmod(0o755)
@@ -42,7 +44,7 @@ if [[ -n "$out" ]]; then
     printf "ok\\n" > "$out"
   fi
 fi
-[[ -n "$rst" ]] && printf "rst\\n" > "$rst"
+[[ -n "$rst" ]] && printf "Stub Amber restart\\n    1  0.00000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && printf "nc\\n" > "$nc"
 exit "$fail_status"
 """,

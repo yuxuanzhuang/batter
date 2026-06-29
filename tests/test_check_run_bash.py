@@ -169,6 +169,34 @@ def test_should_skip_completed_step_rejects_truncated_restart(tmp_path: Path) ->
     assert "rerunning Long equilibration" in result.stdout
 
 
+def test_should_skip_completed_step_rejects_incomplete_amber_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=4, payload_fields=18)
+    (tmp_path / "eq.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =    42000   TIME(PS) =      84.000\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& should_skip_completed_step 'RBFE equilibration seed' 'eq.rst7' 0 0 0"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "incomplete Amber output eq.out" in result.stdout
+    assert "rerunning RBFE equilibration seed" in result.stdout
+
+
 def test_check_sim_failure_rejects_numeric_failure_in_derived_output(
     tmp_path: Path,
 ) -> None:
@@ -203,6 +231,43 @@ def test_check_sim_failure_rejects_numeric_failure_in_derived_output(
     assert list((tmp_path / "WRONG_FAIL").glob("*/eq.out"))
     assert "dt=0.001000" in (tmp_path / "eq.in").read_text()
     assert "dt = 0.004" in (tmp_path / "mdin-template").read_text()
+
+
+def test_check_sim_failure_rejects_incomplete_amber_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 50000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =    42000   TIME(PS) =      84.000\n"
+    )
+    (tmp_path / "eq.nc").write_text("partial trajectory\n")
+    (tmp_path / "run.log").write_text("pmemd was preempted\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=2 check_sim_failure 'RBFE equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "did not reach normal completion marker: eq.out" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "eq.out").exists()
+    assert not (tmp_path / "eq.nc").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.out"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.nc"))
 
 
 def test_archive_existing_log_file_moves_log(tmp_path: Path) -> None:

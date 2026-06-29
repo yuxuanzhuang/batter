@@ -305,6 +305,27 @@ md_out_has_completion_marker() {
     grep -Eq 'Final Performance Info|Total wall time' "$path"
 }
 
+output_file_for_restart_artifact() {
+    local artifact=$1
+
+    case "$artifact" in
+        *.rst7) printf '%s\n' "${artifact%.rst7}.out" ;;
+        *.restrt) printf '%s\n' "${artifact%.restrt}.out" ;;
+        *) return 1 ;;
+    esac
+}
+
+restart_artifact_has_incomplete_output() {
+    local artifact=$1
+    local out_file
+
+    is_amber_restart_path "$artifact" || return 1
+    out_file=$(output_file_for_restart_artifact "$artifact" 2>/dev/null) || return 1
+    [[ -s "$out_file" ]] || return 1
+    md_out_has_amber_control_data "$out_file" || return 1
+    ! md_out_has_completion_marker "$out_file"
+}
+
 cmass_file_for_md_stem() {
     local stem=$1
     local n
@@ -554,6 +575,11 @@ should_skip_completed_step() {
         return 1
     fi
 
+    if restart_artifact_has_incomplete_output "$artifact"; then
+        echo "[INFO] Existing artifact ${artifact} has incomplete Amber output $(output_file_for_restart_artifact "$artifact"); rerunning ${stage}."
+        return 1
+    fi
+
     if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
         echo "[INFO] Prior failure marker found; rerunning ${stage} despite existing artifact ${artifact}."
         return 1
@@ -702,6 +728,17 @@ check_sim_failure() {
         if [[ $retry_count -ge 2 ]]; then
             reduce_dt_for_failed_stage 1
         fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    if [[ -n "$rst_file" ]] && restart_artifact_has_incomplete_output "$rst_file"; then
+        local out_file
+        out_file=$(output_file_for_restart_artifact "$rst_file")
+        echo "[ERROR] $stage simulation failed. Amber output did not reach normal completion marker: $out_file"
+        tail -n 200 "$out_file" || true
+        cleanup_outputs
         remove_previous_restart
         write_attempt_failed_marker
         exit 1

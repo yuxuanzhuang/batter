@@ -29,7 +29,19 @@ fi
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
+    local errexit_was_on=0
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    SIM_COMMAND_STATUS=0
+    set +e
     eval "$@"
+    SIM_COMMAND_STATUS=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    else
+        set +e
+    fi
 }
 
 # Build an MPI launch prefix that works for mpirun or srun.
@@ -86,10 +98,12 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     fi
     # run one long equilbration with dynamically changed lambda value
+    seed_eq_ran=0
     if ! should_skip_eq_step "RBFE equilibration seed" "eq.rst7"; then
         require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to RBFE equilibration seed."
         print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+        seed_eq_ran=1
     fi
 
     # lambda values for EACH EQ frame
@@ -99,7 +113,8 @@ if [[ $only_eq -eq 1 ]]; then
     lambda_set_list=(LAMBDA_SET_LIST)
 
     # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
-    if [[ $overwrite -ne 0 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
+    if [[ $overwrite -ne 0 || $seed_eq_ran -eq 1 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
+        rm -f eq.rst7.[0-9]*
         $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart

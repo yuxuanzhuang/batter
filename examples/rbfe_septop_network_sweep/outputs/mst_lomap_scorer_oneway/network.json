@@ -1,0 +1,70 @@
+{
+  "ligands": [
+    "17",
+    "1",
+    "21",
+    "20",
+    "19"
+  ],
+  "pairs": [
+    [
+      "1",
+      "20"
+    ],
+    [
+      "17",
+      "21"
+    ],
+    [
+      "17",
+      "1"
+    ],
+    [
+      "17",
+      "19"
+    ]
+  ],
+  "raw_generator_pairs": [
+    [
+      "1",
+      "20"
+    ],
+    [
+      "17",
+      "21"
+    ],
+    [
+      "17",
+      "1"
+    ],
+    [
+      "17",
+      "19"
+    ]
+  ],
+  "layout": "minimalspanningtree",
+  "network_scorer": "lomap",
+  "network_scorer_requested": "lomap",
+  "atom_mapper": "kartograf",
+  "both_directions": false,
+  "generator_kwargs": {},
+  "kartograf": {
+    "atom_max_distance": 0.95,
+    "map_exact_ring_matches_only": true,
+    "allow_partial_fused_rings": true,
+    "allow_bond_breaks": false,
+    "filter_element_changes": true,
+    "filter_mismatched_attached_h_count": false
+  },
+  "n_ligands": 5,
+  "n_directed_pairs": 4,
+  "n_undirected_edges": 4,
+  "max_undirected_degree": 3,
+  "degrees": {
+    "17": 3,
+    "1": 2,
+    "21": 1,
+    "20": 1,
+    "19": 1
+  }
+}
