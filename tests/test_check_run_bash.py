@@ -233,6 +233,87 @@ def test_check_sim_failure_rejects_numeric_failure_in_derived_output(
     assert "dt = 0.004" in (tmp_path / "mdin-template").read_text()
 
 
+def test_check_sim_failure_allows_mbar_energy_overflow_in_completed_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 50000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        "MBAR Energy analysis:\n"
+        "Energy at 0.0000 = ******************\n"
+        "Energy at 0.0435 = ******************\n"
+        "Energy at 0.0870 = 760374317.96542871\n"
+        "\n"
+        "      A V E R A G E S   O V E R   50000 S T E P S\n"
+        " EAMBER (non-restraint)  =   -203914.5689\n"
+        "--------------------------------------------------------------------------------\n"
+        "   5.  TIMINGS\n"
+        "--------------------------------------------------------------------------------\n"
+        "|  Total wall time:         170    seconds     0.05 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=1 check_sim_failure 'Equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Equilibration seed completed successfully" in result.stdout
+    assert (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "mini.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "mini.out").write_text(
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "      1       1.9998E+13     2.0223E+12     4.5637E+14     C16     22116\n"
+        " VDWAALS = *************  EEL     =  -160501.2396  HBOND      =        0.0000\n"
+        "\n"
+        "                    FINAL RESULTS\n"
+        "\n"
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "   2000      -1.9975E+05     1.2325E+01     8.9000E+01     EPW     41028\n"
+        " VDWAALS =    19835.0909  EEL     =  -237149.6056  HBOND      =        0.0000\n"
+        " EAMBER  =  -201034.1384\n"
+        "|  Total wall time:          72    seconds     0.02 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=1 check_sim_failure 'Minimization' run.log mini.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Minimization completed successfully" in result.stdout
+    assert (tmp_path / "mini.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
 def test_check_sim_failure_rejects_incomplete_amber_output(
     tmp_path: Path,
 ) -> None:

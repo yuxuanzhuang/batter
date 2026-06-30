@@ -137,7 +137,7 @@ def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
 
     dssp_arr = np.asarray(dssp_results)
     if dssp_arr.size == 0:
-        logger.warning("[dssp] Empty DSSP results; using fallback mask.")
+        logger.debug("[dssp] Empty DSSP results; using fallback mask.")
         return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     if dssp_arr.ndim == 1:
@@ -601,6 +601,14 @@ def _force_fe_mini_constraints(line: str) -> str:
     return line
 
 
+def _force_x_mini_constraints(line: str) -> str:
+    if re.search(r"\bntf\s*=", line):
+        return "  ntf = 1,\n"
+    if re.search(r"\bntc\s*=", line):
+        return "  ntc = 2,\n"
+    return line
+
+
 def _sub_write_fe_mini(src: Path, dst: Path, repl: dict[str, str]) -> None:
     text = Path(src).read_text()
     text = "".join(_force_fe_mini_constraints(line) for line in text.splitlines(True))
@@ -704,7 +712,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
 
     # mini.in
-    _sub_write(amber_dir / "mini.in", work / "mini.in", {"_lig_name_": mol})
+    _sub_write_fe_mini(amber_dir / "mini.in", work / "mini.in", {"_lig_name_": mol})
 
     # eqnvt.in
     _sub_write(
@@ -1978,7 +1986,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
-            line = _force_fe_mini_constraints(line)
+            line = _force_x_mini_constraints(line)
             line = (
                 line.replace("_lig1_name_", mol_ref)
                 .replace("_lig2_name_", mol_alt)

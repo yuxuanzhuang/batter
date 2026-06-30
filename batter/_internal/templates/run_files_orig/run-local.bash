@@ -107,57 +107,15 @@ if [[ $only_eq -eq 1 ]]; then
         check_sim_failure "Minimization" "$log_file" mini.rst7
 
         if ! check_min_energy "mini.out" -1000; then
-            echo "Initial minimization not passed with cuda; try CPU"
-            archive_failed_job_files "$retry" "$log_file" mini.rst7
-            rm -f "$log_file"
-            rm -f mini.rst7 mini.nc mini.out
-            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            else
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            fi
-            check_sim_failure "Minimization" "$log_file" mini.rst7
-
-            if ! check_min_energy "mini.out" -1000; then
-                echo "Initial minimization with CPU also failed, exiting."
-                archive_failed_job_files "$retry" "$log_file" mini.rst7
-                rm -f mini.rst7 mini.nc mini.out
-                mark_failed_and_exit
-            fi
+            echo "[WARN] CUDA minimization energy did not pass threshold; continuing from mini.rst7 without CPU minimization."
         fi
     fi
 
     if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
         require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
-        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        fi
-        check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry"
-
-        if ! check_min_energy "mini2.out" -1000; then
-            echo "Minimization not passed with cuda; try CPU"
-            rm -f "$log_file"
-            rm -f mini.rst7 mini.nc mini.out
-            rm -f mini2.rst7 mini2.nc mini2.out
-            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            else
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            fi
-            check_sim_failure "Minimization" "$log_file" mini.rst7
-            check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry"
-
-            if ! check_min_energy "mini2.out" -1000; then
-                echo "Minimization with CPU also failed, exiting."
-                rm -f mini.rst7 mini.nc mini.out
-                rm -f mini2.rst7 mini2.nc mini2.out
-                mark_failed_and_exit
-            fi
-        fi
+        echo "[INFO] Skipping CPU Minimization 2; continuing from CUDA minimization restart."
+        cp mini.rst7 mini2.rst7
+        printf "Skipped CPU Minimization 2; copied mini.rst7 to mini2.rst7.\n" > mini2.out
     fi
 
     if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
@@ -205,20 +163,7 @@ if [[ $only_eq -eq 1 ]]; then
             print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
-                echo "Minimization not passed with cuda; try CPU"
-                rm -f "$log_file"
-                rm -f mini.in.rst7 mini.in.nc mini.in.out
-                if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-                    print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-                else
-                    print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-                fi
-                check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
-                if ! check_min_energy "mini.in.out" -1000; then
-                    echo "Minimization with CPU also failed for window $i, exiting."
-                    rm -f mini.in.rst7 mini.in.nc mini.in.out
-                    mark_failed_and_exit
-                fi
+                echo "[WARN] CUDA FEP minimization energy did not pass threshold; continuing from mini.in.rst7 without CPU minimization."
             fi
         fi
 

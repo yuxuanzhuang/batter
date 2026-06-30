@@ -625,11 +625,47 @@ check_sim_failure() {
         local output_file=$1
         [[ -f "$output_file" && -s "$output_file" ]] || return 1
 
-        if grep -Eiq '(^|[^[:alpha:]])(NaN|nan|NAN|Infinity|inf)([^[:alpha:]]|$)' "$output_file"; then
+        # Minimization may briefly print overflows while still recovering to a
+        # usable restart. If Amber wrote FINAL RESULTS, judge the final state
+        # instead of transient early minimization lines.
+        if awk '
+            /FINAL RESULTS/ {
+                final_start = NR
+            }
+            {
+                lines[NR] = $0
+            }
+            END {
+                start = final_start ? final_start : 1
+                for (i = start; i <= NR; i++) {
+                    line = tolower(lines[i])
+                    if (line ~ /(^|[^[:alpha:]])(nan|infinity|inf)([^[:alpha:]]|$)/) {
+                        exit 0
+                    }
+                }
+                exit 1
+            }
+        ' "$output_file"; then
             return 0
         fi
 
-        if grep -Eq '^[[:space:]]*(Etot|BOND|ANGLE|DIHED|1-4 NB|1-4 EEL|VDWAALS|EAMBER|SC_|Energy at|lambda =).*\*{6,}' "$output_file"; then
+        if awk '
+            /FINAL RESULTS/ {
+                final_start = NR
+            }
+            {
+                lines[NR] = $0
+            }
+            END {
+                start = final_start ? final_start : 1
+                for (i = start; i <= NR; i++) {
+                    if (lines[i] ~ /^[[:space:]]*(Etot|BOND|ANGLE|DIHED|1-4 NB|1-4 EEL|VDWAALS|EAMBER|SC_|lambda =).*\*\*\*\*\*/) {
+                        exit 0
+                    }
+                }
+                exit 1
+            }
+        ' "$output_file"; then
             return 0
         fi
 

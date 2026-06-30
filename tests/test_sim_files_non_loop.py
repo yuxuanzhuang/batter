@@ -314,7 +314,7 @@ def test_modern_fe_templates_do_not_enable_infe() -> None:
         assert "  infe = 0," in content
 
 
-def test_fe_mini_writer_forces_shake_constraints_without_changing_equil_copy(
+def test_mini_writers_force_shake_constraints(
     tmp_path: Path,
 ) -> None:
     src = tmp_path / "mini.in"
@@ -331,14 +331,14 @@ def test_fe_mini_writer_forces_shake_constraints_without_changing_equil_copy(
 
     sim_files._sub_write_fe_mini(src, fe_dst, {"_lig_name_": "LIG"})
     sim_files._sub_write_fe_mini(src, fe_eq_dst, {"_lig_name_": "LIG"})
-    sim_files._sub_write(src, eq_dst, {"_lig_name_": "LIG"})
+    sim_files._sub_write_fe_mini(src, eq_dst, {"_lig_name_": "LIG"})
 
     assert "  ntf = 2," in fe_dst.read_text()
     assert "  ntc = 2," in fe_dst.read_text()
     assert "  ntf = 2," in fe_eq_dst.read_text()
     assert "  ntc = 2," in fe_eq_dst.read_text()
-    assert "  ntf = 1," in eq_dst.read_text()
-    assert "  ntc = 1," in eq_dst.read_text()
+    assert "  ntf = 2," in eq_dst.read_text()
+    assert "  ntc = 2," in eq_dst.read_text()
 
 
 def test_modern_templates_use_dumpave_not_pmd() -> None:
@@ -813,6 +813,8 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     )
     (amber_dir / "mini-ex").write_text(
         "&cntrl\n"
+        "  ntf = 1,\n"
+        "  ntc = 1,\n"
         "  restraintmask = '(@CA,C,N,P31,Na+,Cl- | :_lig1_name_ | :_lig2_name_ | :2) & !@H=',\n"
         "/\n"
     )
@@ -849,10 +851,14 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
 
     assert ":REF" in mini_text
     assert ":ALT" in mini_text
+    assert "  ntf = 1," in mini_text
+    assert "  ntc = 2," in mini_text
     assert re.search(r"\|\s*@10\s*\|", mini_text) is None
 
     assert ":REF" in mini_eq_text
     assert ":ALT" in mini_eq_text
+    assert "  ntf = 2," in mini_eq_text
+    assert "  ntc = 2," in mini_eq_text
     assert re.search(r"\|\s*@10\s*\|", mini_eq_text) is None
 
 
@@ -907,6 +913,8 @@ def test_sim_files_x_septop_enables_lambda_dependent_boresch(
     )
     (amber_dir / "mini-ex").write_text(
         "&cntrl\n"
+        "  ntf = 1,\n"
+        "  ntc = 1,\n"
         "  nmropt = 1,\n"
         "  restraintmask = ':_lig1_name_ | :_lig2_name_',\n"
         "  gti_vdw_exp     = 2\n"
@@ -940,7 +948,13 @@ def test_sim_files_x_septop_enables_lambda_dependent_boresch(
     assert "nmropt = 1" in eq_text
     assert "gti_bat_sc      = 1" in eq_text
     assert "gti_bat_sc      = 1" in template_text
-    assert "gti_bat_sc      = 1" in (windows_dir / "mini.in").read_text()
+    mini_text = (windows_dir / "mini.in").read_text()
+    mini_eq_text = (windows_dir / "mini_eq.in").read_text()
+    assert "gti_bat_sc      = 1" in mini_text
+    assert "  ntf = 1," in mini_text
+    assert "  ntc = 2," in mini_text
+    assert "  ntf = 2," in mini_eq_text
+    assert "  ntc = 2," in mini_eq_text
     assert "scmask1='@10-12'" in eq_text
     assert "scmask2='@20-22'" in eq_text
     assert "scmask1='@10-12'" in template_text

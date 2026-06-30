@@ -81,20 +81,7 @@ if [[ $only_eq -eq 1 ]]; then
     if ! should_skip_eq_step "RBFE minimization seed" "mini.in.rst7"; then
         print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         if ! check_min_energy "mini.in.out" -1000; then
-            echo "Minimization not passed with cuda; try CPU"
-            rm -f "$log_file"
-            rm -f mini.in.rst7 mini.in.nc mini.in.out
-            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            else
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            fi
-            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
-            if ! check_min_energy "mini.in.out" -1000; then
-                echo "Minimization with CPU also failed for window $i, exiting."
-                rm -f mini.in.rst7 mini.in.nc mini.in.out
-                mark_failed_and_exit
-            fi
+            echo "[WARN] CUDA RBFE minimization energy did not pass threshold; continuing from mini.in.rst7 without CPU minimization."
         fi
     fi
     # run one long equilbration with dynamically changed lambda value

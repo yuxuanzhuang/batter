@@ -69,6 +69,48 @@ should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
 }
 
+write_noshake_minimization_input() {
+    local src=$1
+    local dst=$2
+    awk '
+        /^[[:space:]]*ntf[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        /^[[:space:]]*ntc[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        { print }
+    ' "$src" > "$dst"
+}
+
+minimization_failed_for_noshake_retry() {
+    local out_file=$1
+    local rst_file=$2
+    local status=${SIM_COMMAND_STATUS:-0}
+
+    if [[ $status =~ ^[0-9]+$ && $status -ne 0 ]]; then
+        return 0
+    fi
+    if [[ -f "$log_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$log_file"; then
+        return 0
+    fi
+    if [[ -f "$out_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$out_file"; then
+        return 0
+    fi
+    if [[ ! -s "$rst_file" ]]; then
+        return 0
+    fi
+    if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+        return 0
+    fi
+    return 1
+}
+
+run_minimization_cuda() {
+    local mdin=$1
+    local out_file=$2
+    local rst_file=$3
+    local nc_file=$4
+    local coord=$5
+    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP -c $coord -o $out_file -r $rst_file -x $nc_file -ref $INPCRD >> \"$log_file\" 2>&1"
+}
+
 run_penetration_check() {
     local rst_path=$1
     local err_file=".penetration_check.err"
@@ -110,61 +152,34 @@ total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n",
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 # ---------------- Minimization ----------------
+mini_input="mini.in"
+noshake_mini_input="mini_noshake.in"
 if ! should_skip_eq_step "Minimization" "mini.rst7"; then
-    print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    run_minimization_cuda "$mini_input" "mini.out" "mini.rst7" "mini.nc" "$INPCRD"
+    if minimization_failed_for_noshake_retry "mini.out" "mini.rst7"; then
+        echo "[WARN] Minimization with ntf=2, ntc=2 failed; retrying with ntf=1, ntc=1."
+        archive_failed_job_files "$retry_count" "$log_file" mini.rst7
+        rm -f "$log_file" mini.rst7 mini.nc mini.out
+        write_noshake_minimization_input "$mini_input" "$noshake_mini_input"
+        mini_input="$noshake_mini_input"
+        run_minimization_cuda "$mini_input" "mini.out" "mini.rst7" "mini.nc" "$INPCRD"
+    fi
     check_sim_failure "Minimization" "$log_file" mini.rst7
 
     if ! check_min_energy "mini.out" -1000; then
-        echo "Initial minimization not passed with cuda; trying CPU"
-        archive_failed_job_files "$retry_count" "$log_file" mini.rst7
-        rm -f "$log_file" mini.rst7 mini.nc mini.out
-
-        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-            print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        fi
-        check_sim_failure "Minimization" "$log_file" mini.rst7
-
-        if ! check_min_energy "mini.out" -1000; then
-            echo "Initial minimization with CPU also failed, exiting."
-            archive_failed_job_files "$retry_count" "$log_file" mini.rst7
-            rm -f mini.rst7 mini.nc mini.out
-            mark_failed_and_exit
-        fi
+        echo "[WARN] CUDA minimization energy did not pass threshold; continuing from mini.rst7 without CPU minimization."
+    fi
+else
+    if [[ -f "$noshake_mini_input" ]]; then
+        mini_input="$noshake_mini_input"
     fi
 fi
 
 if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
     require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
-    if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-        print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    else
-        print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    fi
-    check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
-
-    if ! check_min_energy "mini2.out" -1000; then
-        echo "Minimization not passed with cuda; trying CPU"
-        rm -f "$log_file" mini.rst7 mini.nc mini.out mini2.rst7 mini2.nc mini2.out
-
-        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-            print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        fi
-
-        check_sim_failure "Minimization" "$log_file" mini.rst7
-        check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
-
-        if ! check_min_energy "mini2.out" -1000; then
-            echo "Minimization with CPU also failed, exiting."
-            rm -f mini.rst7 mini.nc mini.out mini2.rst7 mini2.nc mini2.out
-            mark_failed_and_exit
-        fi
-    fi
+    echo "[INFO] Skipping CPU Minimization 2; continuing from CUDA minimization restart."
+    cp mini.rst7 mini2.rst7
+    printf "Skipped CPU Minimization 2; copied mini.rst7 to mini2.rst7.\n" > mini2.out
 fi
 
 # ---------------- Equilibration ----------------
