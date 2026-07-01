@@ -401,8 +401,8 @@ def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "dt=0.003000" in tmpl.read_text()
-    assert "dt=0.003000" in current.read_text()
+    assert "dt=0.002000" in tmpl.read_text()
+    assert "dt=0.002000" in current.read_text()
     assert "! target_dt=0.004" in tmpl.read_text()
     assert not (tmp_path / "md-01.out").exists()
     assert not (tmp_path / "cmass.txt").exists()
@@ -479,7 +479,7 @@ def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     text = tmpl.read_text()
     assert "! target_dt=0.004" in text
-    assert "dt=0.003000" in text
+    assert "dt=0.002000" in text
 
 
 def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
@@ -493,6 +493,7 @@ def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
         f"source '{check_run}' "
         "&& retry_adjusted_dt_ps mdin-template 1 "
         "&& retry_adjusted_dt_ps mdin-template 3 "
+        "&& retry_adjusted_dt_ps mdin-template 4 "
         "&& retry_adjusted_dt_ps mdin-template 5 "
         "&& retry_adjusted_dt_ps mdin-template 6 "
         "&& retry_adjusted_dt_ps mdin-template 8 "
@@ -511,9 +512,10 @@ def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
     assert result.stdout.splitlines() == [
         "0.004000",
         "0.003000",
-        "0.003000",
         "0.002000",
-        "0.002000",
+        "0.001000",
+        "0.001000",
+        "0.001000",
         "0.001000",
         "0.001000",
     ]
@@ -545,7 +547,7 @@ def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
-    assert "dt=0.003000" in rendered_text
+    assert "dt=0.001000" in rendered_text
     assert "irest = 1," in rendered_text
     assert "ntx = 5," in rendered_text
 
@@ -732,10 +734,10 @@ def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "dt=0.003000" in tmpl.read_text()
+    assert "dt=0.002000" in tmpl.read_text()
     current_text = current.read_text()
     assert "nstlim = 8," in current_text
-    assert "dt=0.003000" in current_text
+    assert "dt=0.002000" in current_text
     assert "DUMPAVE=cmass-03.txt" in current_text
     assert "DUMPAVE=cmass.txt" not in current_text
 

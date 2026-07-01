@@ -78,11 +78,21 @@ def test_slurmm_am_body_increments_attempt_for_titan_xp_pre_md_output(
     assert "not incrementing failure count" not in result.stdout
 
 
-def test_slurmm_am_body_retries_until_tenth_attempt(tmp_path: Path) -> None:
-    (tmp_path / "job_attempt.txt").write_text("9\n")
+def test_slurmm_am_body_retries_until_fifth_attempt(tmp_path: Path) -> None:
+    (tmp_path / "job_attempt.txt").write_text("4\n")
 
     result = _run_slurmm_am_body(tmp_path)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "job_attempt.txt").read_text().strip() == "10"
+    assert (tmp_path / "job_attempt.txt").read_text().strip() == "5"
     assert not (tmp_path / "FAILED").exists()
+
+
+def test_slurmm_am_body_fails_on_fifth_attempt(tmp_path: Path) -> None:
+    (tmp_path / "job_attempt.txt").write_text("5\n")
+
+    result = _run_slurmm_am_body(tmp_path)
+
+    assert result.returncode != 0
+    assert (tmp_path / "job_attempt.txt").read_text().strip() == "5"
+    assert (tmp_path / "FAILED").read_text().strip() == "FAILED"

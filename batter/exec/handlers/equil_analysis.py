@@ -181,7 +181,8 @@ def _write_stable_boresch_distance(
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
     logger.info(
         "[equil_check:{}] stable Boresch pair: {} to {} "
-        "(mean={:.2f} Å, std={:.2f} Å, frames={} from frame {}, mode={}).",
+        "(mean={:.2f} Å, std={:.2f} Å, frames={} from frame {}, "
+        "ranked_pairs={}, mode={}).",
         ligand_label,
         stable_record["protein"]["mask"],
         stable_record["ligand"]["mask"],
@@ -189,6 +190,7 @@ def _write_stable_boresch_distance(
         stable_record["distance"]["std"],
         stable_record["n_frames"],
         stable_record["analysis_start_frame"],
+        len(stable_record.get("ranked_pairs") or []),
         mode,
     )
     return stable_record

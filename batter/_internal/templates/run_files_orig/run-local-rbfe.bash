@@ -71,6 +71,44 @@ should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
 }
 
+write_noshake_minimization_input() {
+    local src=$1
+    local dst=$2
+    awk '
+        /^[[:space:]]*ntf[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        /^[[:space:]]*ntc[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        { print }
+    ' "$src" > "$dst"
+}
+
+minimization_failed_for_noshake_retry() {
+    local out_file=$1
+    local rst_file=$2
+    local status=${SIM_COMMAND_STATUS:-0}
+
+    if [[ $status =~ ^[0-9]+$ && $status -ne 0 ]]; then
+        return 0
+    fi
+    if [[ -f "$log_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$log_file"; then
+        return 0
+    fi
+    if [[ -f "$out_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$out_file"; then
+        return 0
+    fi
+    if [[ ! -s "$rst_file" ]]; then
+        return 0
+    fi
+    if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+        return 0
+    fi
+    return 1
+}
+
+run_rbfe_seed_minimization_cuda() {
+    local mdin=$1
+    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+}
+
 archive_existing_log_file "$log_file"
 cleanup_stale_empty_md_artifacts relaxed
 cleanup_zero_frame_md_trajectories "$retry"
@@ -79,7 +117,18 @@ report_progress
 
 if [[ $only_eq -eq 1 ]]; then
     if ! should_skip_eq_step "RBFE minimization seed" "mini.in.rst7"; then
-        print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        mini_input="mini.in"
+        noshake_mini_input="mini_noshake.in"
+        run_rbfe_seed_minimization_cuda "$mini_input"
+        if minimization_failed_for_noshake_retry "mini.in.out" "mini.in.rst7"; then
+            echo "[WARN] RBFE minimization with ntc=2 failed; retrying with ntc=1."
+            archive_failed_job_files "$retry" "$log_file" mini.in.rst7
+            rm -f "$log_file" mini.in.rst7 mini.in.nc mini.in.out
+            write_noshake_minimization_input "$mini_input" "$noshake_mini_input"
+            mini_input="$noshake_mini_input"
+            run_rbfe_seed_minimization_cuda "$mini_input"
+        fi
+        check_sim_failure "RBFE minimization seed" "$log_file" mini.in.rst7
         if ! check_min_energy "mini.in.out" -1000; then
             echo "[WARN] CUDA RBFE minimization energy did not pass threshold; continuing from mini.in.rst7 without CPU minimization."
         fi

@@ -24,6 +24,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
     hmr = str(ctx.sim.hmr).lower() == "yes"
+    source_root = Path(__file__).resolve().parents[3]
 
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
@@ -46,6 +47,13 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("STAGE", stage)
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
+                .replace("__BATTER_SOURCE_ROOT__", str(source_root))
+                .replace("__BATTER_LIGAND_RESNAME__", repr(str(ctx.residue_name)))
+                .replace("__BATTER_LIGAND_LABEL__", repr(str(ctx.ligand)))
+                .replace(
+                    "__BATTER_RING_FIX_MODE__",
+                    repr(str(getattr(sim, "ring_penetration_fix_mode", "auto"))),
+                )
         )
 
         text = rewrite_prmtop_reference(text, hmr=hmr)

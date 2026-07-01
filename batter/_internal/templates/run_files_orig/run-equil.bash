@@ -10,6 +10,11 @@ SANDER_EXEC=${SANDER_EXEC:-sander}
 MPI_EXEC=${MPI_EXEC:-mpirun}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
+BATTER_SOURCE_ROOT="${BATTER_SOURCE_ROOT:-__BATTER_SOURCE_ROOT__}"
+if [[ -d "$BATTER_SOURCE_ROOT/batter" ]]; then
+    export PYTHONPATH="$BATTER_SOURCE_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
 # Constants
 PRMTOP="full.hmr.prmtop"
 PRMTOP_MERGED="full_merged.prmtop"
@@ -50,7 +55,9 @@ if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
     exit 0
 fi
-rm -f FAILED
+if [[ $rerun_eq_steps_after_failure != 1 ]]; then
+    rm -f FAILED
+fi
 
 prior_failed=$(consume_prior_failure_marker)
 
@@ -67,6 +74,27 @@ fi
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
+}
+
+pre_equil_restart_is_complete() {
+    [[ -s eqnpt_pre.rst7 ]] || return 1
+    if is_amber_restart_path "eqnpt_pre.rst7" && ! amber_restart_is_complete "eqnpt_pre.rst7"; then
+        return 1
+    fi
+    return 0
+}
+
+reset_minimization_after_failed_pre_equil() {
+    if [[ $only_eq -ne 1 || $prior_failed -ne 1 ]]; then
+        return 0
+    fi
+    if pre_equil_restart_is_complete; then
+        return 0
+    fi
+    if [[ -s mini.rst7 || -s mini2.rst7 || -s eqnvt.rst7 ]]; then
+        echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization instead of reusing mini.rst7/mini2.rst7."
+        rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out eqnvt.rst7 eqnvt.out eqnvt.nc
+    fi
 }
 
 write_noshake_minimization_input() {
@@ -113,17 +141,33 @@ run_minimization_cuda() {
 
 run_penetration_check() {
     local rst_path=$1
+    shift || true
     local err_file=".penetration_check.err"
-    python check_penetration.py "$rst_path" 2>"$err_file"
-    if [[ $? -ne 0 ]]; then
-        if grep -Eq "ModuleNotFoundError: No module named '(networkx|batter)'" "$err_file"; then
-            echo "[WARN] Skipping ring penetration check; missing BATTER Python deps (networkx/batter)."
+    local status=0
+    local errexit_was_on=0
+    local action="Checking"
+    if [[ " $* " == *" --repair "* ]]; then
+        action="Checking and repairing"
+    fi
+    echo "[INFO] ${action} ligand ring penetration in ${rst_path}."
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    set +e
+    python check_penetration.py "$@" "$rst_path" 2>"$err_file"
+    status=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    fi
+    if [[ $status -ne 0 ]]; then
+        if grep -Eq "ModuleNotFoundError: No module named '(MDAnalysis|networkx|parmed|batter)'" "$err_file"; then
+            cat "$err_file" >&2
             rm -f "$err_file"
-            return 0
+            mark_failed_and_exit "[ERROR] Ring penetration check could not run; missing BATTER Python deps (MDAnalysis/networkx/parmed/batter)."
         fi
         cat "$err_file" >&2
         rm -f "$err_file"
-        return 1
+        mark_failed_and_exit "[ERROR] Ring penetration check failed for ${rst_path}."
     fi
     rm -f "$err_file"
 }
@@ -143,6 +187,8 @@ fi
 
 # template-driven MD params
 apply_retry_dt_reduction "$tmpl" "$retry_count" 0.001 "production startup"
+
+reset_minimization_after_failed_pre_equil
 
 dt_ps=$(parse_dt_ps "$tmpl")
 target_dt_ps=$(parse_target_dt_ps "$tmpl")
@@ -185,17 +231,32 @@ fi
 # ---------------- Equilibration ----------------
 if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
     require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to NVT preparation."
+    rm -f RING_PENETRATION_REPAIRED
     run_penetration_check "mini2.rst7"
 
     if [[ -f RING_PENETRATION ]]; then
-        echo "Ligand ring penetration detected previously; using longer equilibration."
+        echo "Ligand ring penetration detected after minimization; attempting local repair before NVT."
+        run_penetration_check "mini2.rst7" --repair
+        run_penetration_check "mini2.rst7"
+    fi
+    if [[ -f RING_PENETRATION ]]; then
+        mark_failed_and_exit "Ligand ring penetration still detected after mini2.rst7 repair; exiting."
+    fi
+
+    if [[ -f RING_PENETRATION_REPAIRED ]]; then
+        echo "Ligand ring penetration repaired before NVT; running NVT equilibration."
 
         print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "NVT" "$log_file" eqnvt.rst7
 
         run_penetration_check "eqnvt.rst7"
         if [[ -f RING_PENETRATION ]]; then
-            mark_failed_and_exit "Ligand ring penetration still detected after NVT; exiting."
+            echo "Ligand ring penetration still detected after NVT; attempting local repair."
+            run_penetration_check "eqnvt.rst7" --repair
+            run_penetration_check "eqnvt.rst7"
+        fi
+        if [[ -f RING_PENETRATION ]]; then
+            mark_failed_and_exit "Ligand ring penetration still detected after NVT repair; exiting."
         fi
     else
         cp mini2.rst7 eqnvt.rst7

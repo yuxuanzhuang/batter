@@ -28,7 +28,8 @@ import itertools
 
 from MDAnalysis.analysis.results import Results
 
-STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
+STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 3
+STABLE_BORESCH_DISTANCE_RANKED_PAIR_LIMIT = 50
 _VMD_FIRST_ANCHOR_ANGLE_TARGET = 90.0
 _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE = 70.0
 
@@ -524,65 +525,137 @@ class SimValidator:
             )
 
         mid_distance = (float(min_distance) + float(max_distance)) / 2.0
-        best_flat = min(
-            (int(idx) for idx in valid_indices),
-            key=lambda idx: (
-                float(std_dist[idx]),
-                float(std_angle[idx]) if np.isfinite(std_angle[idx]) else 0.0,
-                abs(float(mean_angle[idx]) - _VMD_FIRST_ANCHOR_ANGLE_TARGET)
-                if np.isfinite(mean_angle[idx])
+
+        def _rank_key(flat_idx: int) -> tuple[float, float, float, float, int, int]:
+            return (
+                float(std_dist[flat_idx]),
+                float(std_angle[flat_idx]) if np.isfinite(std_angle[flat_idx]) else 0.0,
+                abs(float(mean_angle[flat_idx]) - _VMD_FIRST_ANCHOR_ANGLE_TARGET)
+                if np.isfinite(mean_angle[flat_idx])
                 else 0.0,
-                abs(float(mean_dist[idx]) - mid_distance),
-                int(idx // ligand_candidates.n_atoms),
-                int(idx % ligand_candidates.n_atoms),
-            ),
-        )
-        protein_idx = best_flat // ligand_candidates.n_atoms
-        ligand_idx = best_flat % ligand_candidates.n_atoms
-        protein_atom = protein_candidates[int(protein_idx)]
-        ligand_atom = ligand_candidates[int(ligand_idx)]
-
-        distances: list[float] = []
-        vectors: list[np.ndarray] = []
-        angles: list[float] = []
-        for _ in self.universe.trajectory[start_frame:n_frames]:
-            vector = np.asarray(
-                ligand_atom.position - protein_atom.position, dtype=float
+                abs(float(mean_dist[flat_idx]) - mid_distance),
+                int(flat_idx // ligand_candidates.n_atoms),
+                int(flat_idx % ligand_candidates.n_atoms),
             )
-            dist = distance_array(
-                np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
-                np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
-                box=self.universe.dimensions,
-            )[0, 0]
-            vectors.append(vector.copy())
-            distances.append(float(dist))
-            if p2_atom is not None:
-                angle = self._angle_matrix_degrees(
-                    np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
-                    np.asarray(p2_atom.position, dtype=float),
-                    np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
-                )[0, 0]
-                angles.append(float(angle))
 
-        vector_array = np.asarray(vectors, dtype=float)
-        distance_array_values = np.asarray(distances, dtype=float)
-        angle_array_values = np.asarray(angles, dtype=float)
-        vector_mean = vector_array.mean(axis=0)
-        vector_std = vector_array.std(axis=0)
-        selected_mean = float(distance_array_values.mean())
-        selected_std = float(distance_array_values.std())
-        angle_record = None
-        if p2_atom is not None and angle_array_values.size:
-            angle_record = {
-                "p2_anchor": self._atom_metadata(p2_atom),
-                "target": _VMD_FIRST_ANCHOR_ANGLE_TARGET,
-                "tolerance": _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE,
-                "mean": float(angle_array_values.mean()),
-                "std": float(angle_array_values.std()),
-                "min": float(angle_array_values.min()),
-                "max": float(angle_array_values.max()),
-                "last": float(angle_array_values[-1]),
+        ranked_flat = sorted((int(idx) for idx in valid_indices), key=_rank_key)[
+            :STABLE_BORESCH_DISTANCE_RANKED_PAIR_LIMIT
+        ]
+
+        def _record_for_pair(
+            flat_idx: int,
+            *,
+            rank: int,
+            include_series: bool = False,
+        ) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
+            protein_idx = flat_idx // ligand_candidates.n_atoms
+            ligand_idx = flat_idx % ligand_candidates.n_atoms
+            protein_atom = protein_candidates[int(protein_idx)]
+            ligand_atom = ligand_candidates[int(ligand_idx)]
+
+            distances: list[float] = []
+            vectors: list[np.ndarray] = []
+            angles: list[float] = []
+            for _ in self.universe.trajectory[start_frame:n_frames]:
+                vector = np.asarray(
+                    ligand_atom.position - protein_atom.position, dtype=float
+                )
+                dist = distance_array(
+                    np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
+                    np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
+                    box=self.universe.dimensions,
+                )[0, 0]
+                vectors.append(vector.copy())
+                distances.append(float(dist))
+                if p2_atom is not None:
+                    angle = self._angle_matrix_degrees(
+                        np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
+                        np.asarray(p2_atom.position, dtype=float),
+                        np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
+                    )[0, 0]
+                    angles.append(float(angle))
+
+            vector_array = np.asarray(vectors, dtype=float)
+            distance_values = np.asarray(distances, dtype=float)
+            angle_values = np.asarray(angles, dtype=float)
+            vector_mean = vector_array.mean(axis=0)
+            vector_std = vector_array.std(axis=0)
+            selected_mean = float(distance_values.mean())
+            selected_std = float(distance_values.std())
+            angle_record = None
+            if p2_atom is not None and angle_values.size:
+                angle_record = {
+                    "p2_anchor": self._atom_metadata(p2_atom),
+                    "target": _VMD_FIRST_ANCHOR_ANGLE_TARGET,
+                    "tolerance": _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE,
+                    "mean": float(angle_values.mean()),
+                    "std": float(angle_values.std()),
+                    "min": float(angle_values.min()),
+                    "max": float(angle_values.max()),
+                    "last": float(angle_values[-1]),
+                }
+
+            record = {
+                "rank": int(rank),
+                "protein": self._atom_metadata(protein_atom),
+                "ligand": self._atom_metadata(ligand_atom),
+                "distance": {
+                    "mean": selected_mean,
+                    "std": selected_std,
+                    "cv": selected_std / selected_mean if selected_mean else None,
+                    "min": float(distance_values.min()),
+                    "max": float(distance_values.max()),
+                    "last": float(distance_values[-1]),
+                },
+                "vector": {
+                    "mean": [float(x) for x in vector_mean],
+                    "std": [float(x) for x in vector_std],
+                },
+                "angle": angle_record,
+                "rank_score": {
+                    "distance_std": float(std_dist[flat_idx]),
+                    "angle_std": float(std_angle[flat_idx])
+                    if np.isfinite(std_angle[flat_idx])
+                    else None,
+                    "angle_target_delta": abs(
+                        float(mean_angle[flat_idx]) - _VMD_FIRST_ANCHOR_ANGLE_TARGET
+                    )
+                    if np.isfinite(mean_angle[flat_idx])
+                    else None,
+                    "distance_midpoint_delta": abs(float(mean_dist[flat_idx]) - mid_distance),
+                    "flat_index": int(flat_idx),
+                },
             }
+            if include_series:
+                record["frame_indices"] = [int(x) for x in frame_indices]
+                record["distances"] = [float(x) for x in distance_values]
+                record["angles"] = [float(x) for x in angle_values]
+            return record, distance_values, angle_values
+
+        ranked_pair_records: list[dict[str, Any]] = []
+        selected_record: dict[str, Any] | None = None
+        distance_array_values = np.asarray([], dtype=float)
+        angle_array_values = np.asarray([], dtype=float)
+        for rank, flat_idx in enumerate(ranked_flat, start=1):
+            record, pair_distances, pair_angles = _record_for_pair(
+                flat_idx,
+                rank=rank,
+                include_series=(rank == 1),
+            )
+            ranked_pair_records.append(
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key not in {"frame_indices", "distances", "angles"}
+                }
+            )
+            if rank == 1:
+                selected_record = record
+                distance_array_values = pair_distances
+                angle_array_values = pair_angles
+
+        if selected_record is None:
+            raise ValueError("Stable-distance ranking produced no candidate records.")
 
         self.results['stable_boresch_distance'] = distance_array_values
         self.results['stable_boresch_frame_indices'] = np.asarray(
@@ -608,25 +681,18 @@ class SimValidator:
                 "max_distance": float(max_distance),
                 "first_anchor_angle_target": _VMD_FIRST_ANCHOR_ANGLE_TARGET,
                 "first_anchor_angle_tolerance": _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE,
+                "ranked_pair_limit": STABLE_BORESCH_DISTANCE_RANKED_PAIR_LIMIT,
             },
-            "protein": self._atom_metadata(protein_atom),
-            "ligand": self._atom_metadata(ligand_atom),
-            "distance": {
-                "mean": selected_mean,
-                "std": selected_std,
-                "cv": selected_std / selected_mean if selected_mean else None,
-                "min": float(distance_array_values.min()),
-                "max": float(distance_array_values.max()),
-                "last": float(distance_array_values[-1]),
-            },
-            "vector": {
-                "mean": [float(x) for x in vector_mean],
-                "std": [float(x) for x in vector_std],
-            },
-            "angle": angle_record,
-            "frame_indices": [int(x) for x in frame_indices],
-            "distances": [float(x) for x in distance_array_values],
-            "angles": [float(x) for x in angle_array_values],
+            "protein": selected_record["protein"],
+            "ligand": selected_record["ligand"],
+            "distance": selected_record["distance"],
+            "vector": selected_record["vector"],
+            "angle": selected_record["angle"],
+            "rank_score": selected_record["rank_score"],
+            "ranked_pairs": ranked_pair_records,
+            "frame_indices": selected_record["frame_indices"],
+            "distances": selected_record["distances"],
+            "angles": selected_record["angles"],
         }
 
     def _trailing_analysis_start_frame(self, tail_fraction: float = 0.25) -> int:

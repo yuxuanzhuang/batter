@@ -125,7 +125,7 @@ def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_pat
     assert markers.is_done(auto_anchor_system, "equil_analysis") is False
 
     stable_path.write_text(
-        json.dumps({"schema_version": 2, "usable": False, "reason": "no pair"})
+        json.dumps({"schema_version": 3, "usable": False, "reason": "no pair"})
         + "\n"
     )
     assert markers.is_done(auto_anchor_system, "equil_analysis") is True

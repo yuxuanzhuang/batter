@@ -171,3 +171,69 @@ def test_write_apo_anchor_outputs_tags_fixed_anchor_file(tmp_path: Path) -> None
     assert not (tmp_path / "anchors.txt").exists()
     assert (tmp_path / "anchors-APO.txt").read_text() == "DU1\n"
     assert (tmp_path / "dum1.pdb").exists()
+
+
+def _pdb_line(
+    record: str,
+    index: int,
+    name: str,
+    resname: str,
+    chain: str,
+    resid: int,
+    x: float,
+    y: float,
+    z: float,
+) -> str:
+    return (
+        f"{record:<6}{index:5d} {name:^4s} {resname:>3s} {chain:1s}{resid:4d}"
+        f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C\n"
+    )
+
+
+def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    fe_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, -1.0, 0.0, 0.0),
+                _pdb_line("ATOM", 3, "CA", "SER", "A", 4, -1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 4, "C1", "LIG", "L", 12, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 5, "C2", "LIG", "L", 12, 1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 6, "C3", "LIG", "L", 12, 1.0, 1.0, 1.0),
+                _pdb_line("HETATM", 7, "C4", "LIG", "L", 12, 0.2, 1.0, 1.1),
+                _pdb_line("HETATM", 8, "C5", "LIG", "L", 12, 1.4, 2.1, 0.3),
+                _pdb_line("HETATM", 9, "C6", "LIG", "L", 12, 0.6, 0.5, 2.2),
+                "END\n",
+            ]
+        )
+    )
+
+    names = build_complex_mod._guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="test",
+        P1=":2@CA",
+        P2=":3@CA",
+        P3=":4@CA",
+        lig_resid="12",
+        selected_names=["C1", "C2", "C3"],
+    )
+
+    assert names == ["C4", "C5", "C6"]
+
+    preferred_names = build_complex_mod._guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="test",
+        P1=":2@CA",
+        P2=":3@CA",
+        P3=":4@CA",
+        lig_resid="12",
+        selected_names=["C1", "C2", "C3"],
+        preferred_first_names=["C4"],
+    )
+
+    assert preferred_names[0] == "C4"

@@ -166,6 +166,49 @@ def test_septop_alt_boresch_empty_mapping_selects_independent_frame(
     assert area2 > 0.25
 
 
+def test_septop_boresch_selection_rejects_endpoint_torsions() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (49.458, 34.401, 64.572)),
+        _FakeAtom("P2", (42.774, 32.383, 64.365)),
+        _FakeAtom("P3", (35.111, 39.926, 64.300)),
+    ]
+    alt = _FakeResidue(
+        [
+            _FakeAtom("O1", (47.744, 45.981, 68.011)),
+            _FakeAtom("C1", (46.423, 46.027, 67.494)),
+            _FakeAtom("C3", (46.882, 44.481, 65.612)),
+            _FakeAtom("C8", (43.478, 41.915, 66.788)),
+            _FakeAtom("C10", (42.996, 39.390, 69.743)),
+            _FakeAtom("C12", (44.414, 38.838, 70.098)),
+        ]
+    )
+    atoms_by_name = {atom.name: atom for atom in alt.atoms}
+
+    bad_values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name["C8"], atoms_by_name["O1"], atoms_by_name["C12"]],
+    )
+    assert bad_values is not None
+    _, bad_torsion_margin = restraints._boresch_frame_margins(bad_values)
+    assert bad_torsion_margin < restraints.BORESCH_MIN_TORSION_MARGIN_DEG
+
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        alt,
+        receptor_atoms=receptor_atoms,
+        label="alternate",
+    )
+    values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name[name] for name in names],
+    )
+    assert values is not None
+    angle_margin, torsion_margin = restraints._boresch_frame_margins(values)
+
+    assert names != ["C8", "O1", "C12"]
+    assert angle_margin >= restraints.BORESCH_MIN_ANGLE_MARGIN_DEG
+    assert torsion_margin >= restraints.BORESCH_MIN_TORSION_MARGIN_DEG
+
+
 def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
     input_pdb = tmp_path / "input_pose.pdb"
     fallback_pdb = tmp_path / "l00" / "LIG.pdb"

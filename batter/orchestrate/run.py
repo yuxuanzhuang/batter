@@ -775,6 +775,16 @@ def _maybe_regenerate_rbfe_network_after_pruning(
         for x in (payload.get("ligands") or [])
         if x
     ]
+    if not planned:
+        planned = sorted(
+            {
+                sanitize_ligand_name(str(name))
+                for pair in (payload.get("pairs") or [])
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+                for name in pair
+                if name
+            }
+        )
     pruned = [name for name in planned if name not in available_set]
     if not pruned:
         return payload
@@ -792,8 +802,8 @@ def _maybe_regenerate_rbfe_network_after_pruning(
         return payload
 
     logger.warning(
-        f"Detected {len(pruned)} pruned ligand(s) before RBFE transformations ({', '.join(pruned)}). "
-        "Regenerating RBFE network on remaining ligands."
+        f"Detected {len(pruned)} unavailable ligand(s) before RBFE transformations "
+        f"({', '.join(pruned)}). Regenerating RBFE network on remaining ligands."
     )
     try:
         regenerated = _build_rbfe_network_plan(
@@ -1438,16 +1448,15 @@ def _run_from_yaml_impl(
                 protocol=rc.protocol,
             )
 
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-            payload = _maybe_regenerate_rbfe_network_after_pruning(
-                available_ligands=available,
-                lig_map=lig_map,
-                payload=payload,
-                rbfe_cfg=rbfe_cfg,
-                config_dir=config_dir,
-                protocol=rc.protocol,
-            )
+        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+        payload = _maybe_regenerate_rbfe_network_after_pruning(
+            available_ligands=available,
+            lig_map=lig_map,
+            payload=payload,
+            rbfe_cfg=rbfe_cfg,
+            config_dir=config_dir,
+            protocol=rc.protocol,
+        )
 
         pairs = payload.get("pairs") or []
         if not pairs:
@@ -1464,23 +1473,22 @@ def _run_from_yaml_impl(
                 )
             )
 
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            pruned = [
-                p
-                for p in cleaned_pairs
-                if p[0] in available_set and p[1] in available_set
-            ]
-            if not pruned:
-                raise RuntimeError(
-                    "RBFE mapping does not include any available ligands after pruning."
-                )
-            if len(pruned) != len(cleaned_pairs):
-                logger.warning(
-                    "Pruned %d RBFE pair(s) due to on_failure=%s.",
-                    len(cleaned_pairs) - len(pruned),
-                    rc.run.on_failure,
-                )
-            cleaned_pairs = pruned
+        pruned = [
+            p
+            for p in cleaned_pairs
+            if p[0] in available_set and p[1] in available_set
+        ]
+        if not pruned:
+            raise RuntimeError(
+                "RBFE mapping does not include any pairs among ligands that "
+                "completed equilibration/pre-FE preparation."
+            )
+        if len(pruned) != len(cleaned_pairs):
+            logger.warning(
+                "Pruned %d stale RBFE pair(s) referencing unavailable ligand(s).",
+                len(cleaned_pairs) - len(pruned),
+            )
+        cleaned_pairs = pruned
 
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
         atom_mapper = str(

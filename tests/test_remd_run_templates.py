@@ -181,7 +181,7 @@ def test_remd_run_templates_reduce_dt_after_retry_failure(
     )
 
     assert result.returncode != 0
-    assert _extract_dt(tmpl) == pytest.approx(0.003)
+    assert _extract_dt(tmpl) == pytest.approx(0.002)
     assert not (win0 / "cmass-01.txt").exists()
 
 

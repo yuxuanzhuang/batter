@@ -255,6 +255,163 @@ def _receptor_atom_by_resid_name(u: mda.Universe, mol: str, resid: str, atom_nam
     return u.select_atoms(f"(not resname {mol}) and resid {resid} and name {atom_name}")
 
 
+def _atom_from_anchor_mask(
+    u: mda.Universe,
+    mask: str,
+    *,
+    mol: str,
+    ligand: bool,
+):
+    match = re.match(r"^:(-?\d+)@(.+)$", str(mask).strip())
+    if match is None:
+        return None
+    resid = match.group(1)
+    atom_name = match.group(2).strip()
+    if ligand:
+        selections = [
+            f"resname {mol} and resid {resid} and name {atom_name}",
+            f"resid {resid} and name {atom_name}",
+        ]
+    else:
+        selections = [
+            f"(not resname {mol}) and resid {resid} and name {atom_name}",
+            f"protein and resid {resid} and name {atom_name}",
+            f"resid {resid} and name {atom_name}",
+        ]
+    for selection in selections:
+        atoms = u.select_atoms(selection)
+        if atoms.n_atoms == 1:
+            return atoms[0]
+    return None
+
+
+def _ligand_residue_for_boresch_guard(
+    u: mda.Universe,
+    *,
+    mol: str,
+    lig_resid: str,
+):
+    atoms = u.select_atoms(f"resname {mol} and resid {lig_resid}")
+    if atoms.n_atoms == 0:
+        atoms = u.select_atoms(f"resname {mol}")
+    if atoms.n_atoms == 0:
+        return None
+    return atoms.residues[0]
+
+
+def _guard_abfe_boresch_ligand_anchor_names(
+    *,
+    fe_pdb: Path,
+    mol: str,
+    ligand_label: str,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_resid: str,
+    selected_names: Sequence[str],
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
+    """Avoid endpoint angle/torsion Boresch ligand-anchor triplets for ABFE."""
+    try:
+        from batter._internal.ops.restraints import (
+            _boresch_frame_margins,
+            _boresch_frame_values,
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not import Boresch frame guard for {}; "
+            "keeping ligand anchors {}: {}",
+            ligand_label,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    try:
+        u = mda.Universe(str(fe_pdb))
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not load {} for Boresch frame guard; "
+            "keeping ligand anchors {}: {}",
+            fe_pdb,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    receptor_atoms = []
+    for mask in (P1, P2, P3):
+        atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
+        if atom is None:
+            logger.warning(
+                "[build_complex_z] Could not resolve receptor anchor {} in {}; "
+                "keeping ligand anchors {}.",
+                mask,
+                fe_pdb.name,
+                list(selected_names[:3]),
+            )
+            return list(selected_names[:3])
+        receptor_atoms.append(atom)
+
+    residue = _ligand_residue_for_boresch_guard(u, mol=mol, lig_resid=lig_resid)
+    if residue is None:
+        logger.warning(
+            "[build_complex_z] Could not resolve ligand residue {}:{} in {}; "
+            "keeping ligand anchors {}.",
+            mol,
+            lig_resid,
+            fe_pdb.name,
+            list(selected_names[:3]),
+        )
+        return list(selected_names[:3])
+
+    try:
+        guarded_names = _frame_safe_boresch_atom_names_from_residue(
+            residue,
+            receptor_atoms=receptor_atoms,
+            label=f"ABFE {ligand_label}",
+            preferred_first_names=preferred_first_names,
+        )[:3]
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not select guarded ABFE Boresch anchors for {}; "
+            "keeping ligand anchors {}: {}",
+            ligand_label,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    ligand_atoms = [
+        _atom_from_anchor_mask(u, f":{lig_resid}@{name}", mol=mol, ligand=True)
+        for name in guarded_names
+    ]
+    if any(atom is None for atom in ligand_atoms):
+        logger.warning(
+            "[build_complex_z] Guarded ABFE Boresch anchors {} were not all found in {}; "
+            "keeping ligand anchors {}.",
+            guarded_names,
+            fe_pdb.name,
+            list(selected_names[:3]),
+        )
+        return list(selected_names[:3])
+
+    values = _boresch_frame_values(receptor_atoms, ligand_atoms)
+    margins = _boresch_frame_margins(values or ())
+    if list(selected_names[:3]) != guarded_names:
+        logger.info(
+            "[build_complex_z] Replaced ABFE Boresch ligand anchors for {}: {} -> {} "
+            "(angle margin {:.1f} deg, torsion margin {:.1f} deg).",
+            ligand_label,
+            list(selected_names[:3]),
+            guarded_names,
+            margins[0],
+            margins[1],
+        )
+    return guarded_names
+
+
 def _pick_ligand_anchor_names(
     *,
     u: mda.Universe,
@@ -635,7 +792,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 3
 
 
 def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
@@ -684,6 +841,15 @@ def _load_stable_boresch_distance(equil_dir: Path) -> dict | None:
         )
         return None
     return data
+
+
+def _stable_boresch_distance_candidates(stable_record: dict) -> list[dict]:
+    ranked = stable_record.get("ranked_pairs")
+    if isinstance(ranked, list):
+        candidates = [item for item in ranked if isinstance(item, dict)]
+        if candidates:
+            return candidates
+    return [stable_record]
 
 
 def _renumber_stable_protein_residue(
@@ -828,6 +994,122 @@ def _apply_stable_boresch_distance_preference(
         "l1_range": l1_range_new,
         "stable_ligand_name": stable_ligand_name,
     }
+
+
+def _stable_preference_has_safe_boresch_frame(
+    *,
+    u: mda.Universe,
+    mol: str,
+    preference: dict,
+    P2: str,
+    P3: str,
+) -> bool:
+    try:
+        from batter._internal.ops.restraints import (
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not import Boresch frame guard while checking "
+            "stable pair {}: {}",
+            preference.get("stable_ligand_name"),
+            exc,
+        )
+        return True
+
+    receptor_atoms = []
+    for mask in (preference["P1"], P2, P3):
+        atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
+        if atom is None:
+            logger.debug(
+                "[build_complex_z] Stable-pair receptor anchor {} could not be "
+                "resolved for full-frame check.",
+                mask,
+            )
+            return False
+        receptor_atoms.append(atom)
+
+    residue = _ligand_residue_for_boresch_guard(u, mol=mol, lig_resid="")
+    if residue is None:
+        logger.debug(
+            "[build_complex_z] Ligand residue {} could not be resolved for "
+            "stable-pair full-frame check.",
+            mol,
+        )
+        return False
+
+    try:
+        _frame_safe_boresch_atom_names_from_residue(
+            residue,
+            receptor_atoms=receptor_atoms,
+            label="ABFE stable-pair precheck",
+            preferred_first_names=[preference["stable_ligand_name"]],
+            require_preferred_first=True,
+        )
+    except Exception as exc:
+        logger.debug(
+            "[build_complex_z] Stable pair P1={} L1={} did not pass the "
+            "full-frame Boresch guard: {}",
+            preference.get("P1"),
+            preference.get("stable_ligand_name"),
+            exc,
+        )
+        return False
+    return True
+
+
+def _select_stable_boresch_distance_preference(
+    *,
+    u: mda.Universe,
+    mol: str,
+    stable_record: dict,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_name_str: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    renum_data: pd.DataFrame | None = None,
+) -> dict | None:
+    candidates = _stable_boresch_distance_candidates(stable_record)
+    for rank, candidate in enumerate(candidates, start=1):
+        preference = _apply_stable_boresch_distance_preference(
+            u=u,
+            mol=mol,
+            stable_record=candidate,
+            P1=P1,
+            P2=P2,
+            P3=P3,
+            lig_name_str=lig_name_str,
+            l1_x=l1_x,
+            l1_y=l1_y,
+            l1_z=l1_z,
+            l1_range=l1_range,
+            renum_data=renum_data,
+        )
+        if preference is None:
+            continue
+        if not _stable_preference_has_safe_boresch_frame(
+            u=u,
+            mol=mol,
+            preference=preference,
+            P2=P2,
+            P3=P3,
+        ):
+            continue
+        preference["stable_rank"] = rank
+        preference["stable_candidate_count"] = len(candidates)
+        return preference
+
+    if candidates:
+        logger.debug(
+            "[build_complex_z] None of {} stable protein-ligand pair candidate(s) "
+            "satisfied the full-frame Boresch guard; using default anchors.",
+            len(candidates),
+        )
+    return None
 
 
 def _unit_vector(vec: np.ndarray) -> np.ndarray | None:
@@ -1570,6 +1852,7 @@ def build_complex_z(ctx) -> bool:
         "l1_range": l1_range,
     }
     stable_preference_applied = False
+    stable_preference = None
 
     extra = dict(ctx.extra or {})
     if _user_anchor_atoms_were_provided(extra):
@@ -1580,7 +1863,7 @@ def build_complex_z(ctx) -> bool:
     else:
         stable_record = _load_stable_boresch_distance(equil_dir)
         if stable_record is not None:
-            stable_preference = _apply_stable_boresch_distance_preference(
+            stable_preference = _select_stable_boresch_distance_preference(
                 u=u,
                 mol=mol,
                 stable_record=stable_record,
@@ -1607,11 +1890,14 @@ def build_complex_z(ctx) -> bool:
                 stable_preference_applied = True
                 logger.debug(
                     "[build_complex_z] Using stable equilibration distance to prefer "
-                    "P1={} (from {}) and ligand L1 candidate {} for {}.",
+                    "P1={} (from {}) and ligand L1 candidate {} for {} "
+                    "(rank {}/{}).",
                     P1,
                     stable_preference["stable_original_P1"],
                     stable_preference["stable_ligand_name"],
                     ligand,
+                    stable_preference.get("stable_rank", 1),
+                    stable_preference.get("stable_candidate_count", 1),
                 )
 
     # 11) prep.tcl
@@ -1731,15 +2017,31 @@ def build_complex_z(ctx) -> bool:
         return False
 
     lig_resid = str(int(recep_last) + 2)
-    with tagged.open() as f:
-        a = f.readline().split()
-        L1 = f":{lig_resid}@{a[0]}"
-        L2 = f":{lig_resid}@{a[1]}"
-        L3 = f":{lig_resid}@{a[2]}"
-
     fe_pdb = _p(f"fe-{mol}.pdb")
     if not fe_pdb.exists():
         raise FileNotFoundError(f"Missing {fe_pdb}")
+    with tagged.open() as f:
+        a = f.readline().split()
+    a = _guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol=mol,
+        ligand_label=ligand,
+        P1=P1,
+        P2=P2,
+        P3=P3,
+        lig_resid=lig_resid,
+        selected_names=a,
+        preferred_first_names=(
+            [stable_preference["stable_ligand_name"]]
+            if stable_preference_applied and stable_preference is not None
+            else []
+        ),
+    )
+    tagged.write_text(" ".join(a[:3]) + "\n")
+    L1 = f":{lig_resid}@{a[0]}"
+    L2 = f":{lig_resid}@{a[1]}"
+    L3 = f":{lig_resid}@{a[2]}"
+
     lines = fe_pdb.read_text().splitlines(True)
     with fe_pdb.open("wt") as fout:
         fout.write(

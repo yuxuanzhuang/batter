@@ -745,10 +745,10 @@ exit 0
         env=env,
     )
 
-    assert (work / "run_steps.txt").read_text().strip() == "7"
+    assert (work / "run_steps.txt").read_text().strip() == "10"
     mdin_text = (work / "mdin-template").read_text()
     assert "! target_dt=0.004" in mdin_text
-    assert "dt=0.003000" in mdin_text
+    assert "dt=0.002000" in mdin_text
 
 
 def test_run_local_scales_segment_steps_when_dt_reduced(tmp_path: Path) -> None:

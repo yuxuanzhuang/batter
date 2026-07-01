@@ -30,6 +30,8 @@ ABFE_DIFF_POSE_WIDTH = 0.5
 ABFE_DIFF_POSE_LOCAL_ANCHORS = 3
 ABFE_DIFF_POSE_LIGAND_ATOMS = 6
 _ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
+BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
+BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
 
 def _stride_atom_serials(
     atoms: Sequence[str | int],
@@ -1803,7 +1805,7 @@ def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list
     if len(atoms) < 3:
         selected = [str(atom.name).strip() for atom in atoms]
         raise ValueError(
-            f"[restraints:x] Need at least 3 {label} heavy atoms for SEPTOP "
+            f"[restraints:x] Need at least 3 {label} heavy atoms for "
             f"Boresch restraints; got {selected}"
         )
 
@@ -1857,11 +1859,253 @@ def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list
     return [str(atoms[idx].name).strip() for idx in best_indices]
 
 
-def _resolve_ref_boresch_atom_names(ref_residue, anchor_names: Sequence[str]) -> list[str]:
+def _vector_angle_degrees(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float | None:
+    v1 = np.asarray(p1, dtype=float) - np.asarray(p2, dtype=float)
+    v2 = np.asarray(p3, dtype=float) - np.asarray(p2, dtype=float)
+    denom = float(np.linalg.norm(v1) * np.linalg.norm(v2))
+    if denom < 1.0e-12:
+        return None
+    cos_angle = float(np.dot(v1, v2) / denom)
+    return float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+
+def _vector_dihedral_degrees(
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    p4: np.ndarray,
+) -> float | None:
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    p3 = np.asarray(p3, dtype=float)
+    p4 = np.asarray(p4, dtype=float)
+
+    b0 = -(p2 - p1)
+    b1 = p3 - p2
+    b2 = p4 - p3
+    norm = float(np.linalg.norm(b1))
+    if norm < 1.0e-12:
+        return None
+    b1 /= norm
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    if float(np.linalg.norm(v)) < 1.0e-12 or float(np.linalg.norm(w)) < 1.0e-12:
+        return None
+    x = float(np.dot(v, w))
+    y = float(np.dot(np.cross(b1, v), w))
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _angle_endpoint_margin_degrees(angle: float) -> float:
+    return min(float(angle), 180.0 - float(angle))
+
+
+def _torsion_endpoint_margin_degrees(torsion: float) -> float:
+    folded = abs(((float(torsion) + 180.0) % 360.0) - 180.0)
+    return min(folded, 180.0 - folded)
+
+
+def _boresch_frame_values(
+    receptor_atoms: Sequence,
+    ligand_atoms: Sequence,
+) -> tuple[float, ...] | None:
+    if len(receptor_atoms) != 3 or len(ligand_atoms) != 3:
+        return None
+    p1, p2, p3 = [np.asarray(atom.position, dtype=float) for atom in receptor_atoms]
+    l1, l2, l3 = [np.asarray(atom.position, dtype=float) for atom in ligand_atoms]
+    values = (
+        _vector_angle_degrees(p2, p1, l1),
+        _vector_dihedral_degrees(p3, p2, p1, l1),
+        _vector_angle_degrees(p1, l1, l2),
+        _vector_dihedral_degrees(p2, p1, l1, l2),
+        _vector_dihedral_degrees(p1, l1, l2, l3),
+    )
+    if any(value is None or not np.isfinite(value) for value in values):
+        return None
+    return tuple(float(value) for value in values)
+
+
+def _boresch_frame_margins(values: Sequence[float]) -> tuple[float, float]:
+    if len(values) != 5:
+        return 0.0, 0.0
+    angle_margin = min(
+        _angle_endpoint_margin_degrees(values[0]),
+        _angle_endpoint_margin_degrees(values[2]),
+    )
+    torsion_margin = min(
+        _torsion_endpoint_margin_degrees(value)
+        for value in (values[1], values[3], values[4])
+    )
+    return float(angle_margin), float(torsion_margin)
+
+
+def _frame_safe_boresch_atom_names_from_residue(
+    residue,
+    *,
+    receptor_atoms: Sequence,
+    label: str,
+    preferred_first_names: Sequence[str] = (),
+    require_preferred_first: bool = False,
+    min_angle_margin: float = BORESCH_MIN_ANGLE_MARGIN_DEG,
+    min_torsion_margin: float = BORESCH_MIN_TORSION_MARGIN_DEG,
+) -> list[str]:
+    """Choose ligand anchors after checking the full receptor-ligand Boresch frame."""
+    atoms = _heavy_atoms_from_residue(residue)
+    if len(atoms) < 3:
+        selected = [str(atom.name).strip() for atom in atoms]
+        raise ValueError(
+            f"[restraints:x] Need at least 3 {label} heavy atoms for "
+            f"Boresch restraints; got {selected}"
+        )
+
+    coords = np.asarray([np.asarray(atom.position, dtype=float) for atom in atoms])
+    centroid = np.mean(coords, axis=0)
+    span = float(np.max(np.linalg.norm(coords - centroid, axis=1)))
+    span = max(span, 1.0)
+
+    min_anchor_distance = 0.5
+    min_sine = 0.25
+    best_valid: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
+    best_fallback: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
+    preferred_valid: dict[
+        str,
+        tuple[float, tuple[int, int, int], tuple[float, ...], float, float],
+    ] = {}
+    preferred_names = [
+        str(name).strip()
+        for name in preferred_first_names
+        if str(name).strip()
+    ]
+    preferred_set = set(preferred_names)
+
+    for i in range(len(atoms)):
+        first_name = str(atoms[i].name).strip()
+        l1_centrality = np.linalg.norm(coords[i] - centroid) / span
+        for j in range(len(atoms)):
+            if j == i:
+                continue
+            d12 = float(np.linalg.norm(coords[j] - coords[i]))
+            if d12 < min_anchor_distance:
+                continue
+            for k in range(len(atoms)):
+                if k == i or k == j:
+                    continue
+                d13 = float(np.linalg.norm(coords[k] - coords[i]))
+                d23 = float(np.linalg.norm(coords[k] - coords[j]))
+                if min(d13, d23) < min_anchor_distance:
+                    continue
+                area2 = float(
+                    np.linalg.norm(
+                        np.cross(coords[j] - coords[i], coords[k] - coords[i])
+                    )
+                )
+                sine = area2 / max(d12 * d13, 1.0e-12)
+                if sine < min_sine:
+                    continue
+
+                values = _boresch_frame_values(
+                    receptor_atoms,
+                    (atoms[i], atoms[j], atoms[k]),
+                )
+                if values is None:
+                    continue
+                angle_margin, torsion_margin = _boresch_frame_margins(values)
+                spread = (min(d12, d13) + 0.5 * d23) / span
+                local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
+                score = local_score + endpoint_score
+                candidate = (score, (i, j, k), values, angle_margin, torsion_margin)
+                if best_fallback is None or score > best_fallback[0]:
+                    best_fallback = candidate
+                if angle_margin < min_angle_margin or torsion_margin < min_torsion_margin:
+                    continue
+                if best_valid is None or score > best_valid[0]:
+                    best_valid = candidate
+                if first_name in preferred_set and (
+                    first_name not in preferred_valid
+                    or score > preferred_valid[first_name][0]
+                ):
+                    preferred_valid[first_name] = candidate
+
+    for first_name in preferred_names:
+        selected = preferred_valid.get(first_name)
+        if selected is None:
+            continue
+        _, indices, values, angle_margin, torsion_margin = selected
+        names = [str(atoms[idx].name).strip() for idx in indices]
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with preferred L1 {} "
+            "and values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            first_name,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+        return names
+
+    if require_preferred_first and preferred_names:
+        raise ValueError(
+            f"No {label} Boresch triplet with preferred L1 in {preferred_names} "
+            f"satisfied angle margin >= {min_angle_margin:.1f} deg and torsion "
+            f"margin >= {min_torsion_margin:.1f} deg."
+        )
+
+    selected = best_valid or best_fallback
+    if selected is None:
+        logger.warning(
+            "[restraints:x] Could not find a non-collinear {} Boresch anchor "
+            "triplet; falling back to the first three heavy atoms.",
+            label,
+        )
+        return [str(atom.name).strip() for atom in atoms[:3]]
+
+    _, indices, values, angle_margin, torsion_margin = selected
+    names = [str(atoms[idx].name).strip() for idx in indices]
+    if best_valid is None:
+        logger.warning(
+            "[restraints:x] Could not find a {} Boresch triplet satisfying "
+            "angle margin >= {:.1f} deg and torsion margin >= {:.1f} deg; using "
+            "{} with values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            min_angle_margin,
+            min_torsion_margin,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    else:
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with values {} "
+            "(angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    return names
+
+
+def _resolve_ref_boresch_atom_names(
+    ref_residue,
+    anchor_names: Sequence[str],
+    receptor_atoms: Sequence | None = None,
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
     if any(anchor_names):
         logger.debug(
             "[restraints:x] selecting SEPTOP REF Boresch anchors independently "
             "of ABFE ligand anchors"
+        )
+    if receptor_atoms is not None:
+        return _frame_safe_boresch_atom_names_from_residue(
+            ref_residue,
+            receptor_atoms=receptor_atoms,
+            label="reference",
+            preferred_first_names=preferred_first_names,
         )
     return _independent_boresch_atom_names_from_residue(
         ref_residue,
@@ -1875,16 +2119,51 @@ def _resolve_alt_boresch_atom_names(
     alt_residue,
     ref_names: Sequence[str],
     mapping_path: Path,
+    receptor_atoms: Sequence | None = None,
+    preferred_first_names: Sequence[str] = (),
 ) -> list[str]:
     if mapping_path.exists():
         logger.debug(
             "[restraints:x] selecting SEPTOP ALT Boresch anchors independently "
             "of atom mapping"
         )
+    if receptor_atoms is not None:
+        return _frame_safe_boresch_atom_names_from_residue(
+            alt_residue,
+            receptor_atoms=receptor_atoms,
+            label="alternate",
+            preferred_first_names=preferred_first_names,
+        )
     return _independent_boresch_atom_names_from_residue(
         alt_residue,
         label="alternate",
     )
+
+
+def _stable_ranked_ligand_atom_names(system_root: Path, ligand: str) -> list[str]:
+    path = system_root / "simulations" / str(ligand) / "equil" / "stable_boresch_distance.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("[restraints:x] Could not read stable Boresch pairs {}: {}", path, exc)
+        return []
+    if not isinstance(data, dict) or data.get("usable") is False:
+        return []
+    raw_pairs = data.get("ranked_pairs")
+    pairs = raw_pairs if isinstance(raw_pairs, list) else [data]
+    names: list[str] = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        ligand_record = pair.get("ligand") or {}
+        if not isinstance(ligand_record, dict):
+            continue
+        name = str(ligand_record.get("name", "")).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _boresch_tr_expressions(
@@ -1909,6 +2188,8 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
     """Append lambda-dependent Boresch restraints for both site ligands."""
     windows_dir = ctx.window_dir
     extra = ctx.extra or {}
+    lig_ref = extra.get("ligand_ref") or ctx.ligand
+    lig_alt = extra.get("ligand_alt")
     mol_ref = extra.get("residue_ref") or ctx.residue_name
     mol_alt = extra.get("residue_alt")
     if not mol_alt:
@@ -1928,6 +2209,13 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
     P3 = _adjust_receptor_anchor_mask(anchors.P3, ctx.sim.dec_method)
 
     universe = mda.Universe(vac_pdb.as_posix())
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    receptor_atoms = []
+    for mask in (P1, P2, P3):
+        atom = _resolve_anchor_atom_from_mask(universe, atm_num, mask)
+        if atom is None:
+            raise ValueError(f"[restraints:x] could not resolve SEPTOP receptor anchor {mask!r}")
+        receptor_atoms.append(atom)
     ref_residue = _first_residue_with_resname(universe, str(mol_ref), label="reference ligand")
     alt_residue = _first_residue_with_resname(universe, str(mol_alt), label="alternate ligand")
 
@@ -1936,12 +2224,27 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         _atom_name_from_anchor_mask(anchors.L2),
         _atom_name_from_anchor_mask(anchors.L3),
     ]
-    ref_names = _resolve_ref_boresch_atom_names(ref_residue, anchor_names)
+    ref_preferred = _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_ref))
+    if anchor_names[0] not in ref_preferred:
+        ref_preferred.insert(0, anchor_names[0])
+    alt_preferred = (
+        _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_alt))
+        if lig_alt
+        else []
+    )
+    ref_names = _resolve_ref_boresch_atom_names(
+        ref_residue,
+        anchor_names,
+        receptor_atoms=receptor_atoms,
+        preferred_first_names=ref_preferred,
+    )
     alt_names = _resolve_alt_boresch_atom_names(
         ref_residue=ref_residue,
         alt_residue=alt_residue,
         ref_names=ref_names,
         mapping_path=windows_dir / "mapping.json",
+        receptor_atoms=receptor_atoms,
+        preferred_first_names=alt_preferred,
     )
 
     ref_lig_masks = [f":{int(ref_residue.resid)}@{name}" for name in ref_names]
@@ -1952,7 +2255,6 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
     rst_full = receptor_exprs + ref_exprs + alt_exprs
 
     vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
-    atm_num = num_to_mask(vac_pdb.as_posix())
     _rdhf, rdsf, ldf, laf, _ldhf, _rcom, _lcom = ctx.sim.rest
 
     existing = disang.read_text() if disang.exists() else ""

@@ -167,6 +167,10 @@ def test_stable_boresch_distance_uses_tail_candidate_stability(
     assert record["frame_indices"] == [6, 7]
     assert record["protein"]["mask"] == ":10@CA"
     assert record["ligand"]["name"] == "C1"
+    assert record["ranked_pairs"][0]["protein"]["mask"] == ":10@CA"
+    assert record["ranked_pairs"][0]["ligand"]["name"] == "C1"
+    assert record["ranked_pairs"][0]["rank"] == 1
+    assert "rank_score" in record["ranked_pairs"][0]
     assert np.isclose(record["distance"]["mean"], 4.05)
     assert np.isclose(record["distance"]["std"], 0.05)
     assert np.allclose(validator.results["stable_boresch_distance"], [4.0, 4.1])

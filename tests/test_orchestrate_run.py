@@ -882,6 +882,35 @@ def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
     assert out["pairs"] == [["B", "C"]]
 
 
+def test_maybe_regenerate_rbfe_network_after_pruning_uses_pairs_when_ligands_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {
+        "pairs": [["A", "B"], ["A", "C"]],
+        "mapping": "default",
+    }
+    called: dict[str, object] = {}
+
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
+        called["ligands"] = list(ligands)
+        called["lig_map"] = dict(lig_map)
+        return {"ligands": ["B", "C"], "pairs": [["B", "C"]], "mapping": "default"}
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _fake_build)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+
+    assert called["ligands"] == ["B", "C"]
+    assert set(called["lig_map"]) == {"B", "C"}
+    assert out["pairs"] == [["B", "C"]]
+
+
 def test_maybe_regenerate_rbfe_network_after_pruning_noop_when_no_prune(
     monkeypatch, tmp_path: Path
 ) -> None:

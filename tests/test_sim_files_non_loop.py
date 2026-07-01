@@ -33,6 +33,13 @@ sim_files = _load_internal_module("batter._internal.ops.sim_files")
 runfiles = importlib.import_module("batter._internal.ops.runfiles")
 
 
+def test_eqnpt0_uno_template_uses_short_z_seed_equilibration() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    template = repo_root / "batter" / "_internal" / "templates" / "amber_files_orig" / "eqnpt0-uno.in"
+
+    assert "  nstlim = 2000," in template.read_text()
+
+
 def _write_minimal_equil_templates(amber_dir: Path) -> None:
     amber_dir.mkdir(parents=True, exist_ok=True)
     (amber_dir / "mini.in").write_text("_lig_name_\n")

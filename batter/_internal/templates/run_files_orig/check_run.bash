@@ -1119,13 +1119,12 @@ retry_adjusted_dt_ps() {
 
     desired_dt="$target_dt"
     if [[ $retry_count -ge $_reduction_start ]]; then
-        if [[ $retry_count -ge $((_reduction_start + 6)) ]]; then
-            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-3*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
-        elif [[ $retry_count -ge $((_reduction_start + 3)) ]]; then
-            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-2*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
-        else
-            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
+        local reduction_steps
+        reduction_steps=$((retry_count - _reduction_start + 1))
+        if [[ $reduction_steps -gt 3 ]]; then
+            reduction_steps=3
         fi
+        desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" -v steps="$reduction_steps" 'BEGIN{v=target-steps*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
     fi
 
     awk -v target="$target_dt" -v desired="$desired_dt" -v current="$current_dt" '
@@ -1145,6 +1144,7 @@ sync_current_mdin_from_template() {
     local tmpl=${1:-mdin-template}
     local current_mdin=${2:-}
     local retry_count=${3:-}
+    local effective_dt_override=${4:-}
 
     [[ -n "$current_mdin" && -f "$current_mdin" ]] || return 0
 
@@ -1164,7 +1164,7 @@ sync_current_mdin_from_template() {
         }
     ' "$current_mdin")
     tmp="${current_mdin}.tmp"
-    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" "" "$dumpave_file" > "$tmp" && mv "$tmp" "$current_mdin"
+    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" "" "$dumpave_file" "$effective_dt_override" > "$tmp" && mv "$tmp" "$current_mdin"
 }
 
 ensure_target_dt_marker() {
@@ -1233,7 +1233,7 @@ apply_retry_dt_reduction() {
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$desired_dt"
     fi
 
     echo "[INFO] Applied retry dt in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
@@ -1312,7 +1312,7 @@ reduce_dt_on_failure() {
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$new_dt"
     fi
 
     # remove old sims if there's any.
@@ -1749,6 +1749,7 @@ write_mdin_current() {
     local retry_count=${5:-}
     local initial_time_ps=${6:-}
     local dumpave_file=${7:-}
+    local effective_dt_override=${8:-}
 
     [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
 
@@ -1757,8 +1758,12 @@ write_mdin_current() {
 
     local template_dt effective_dt
     template_dt=$(parse_dt_ps "$tmpl")
-    retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
-    effective_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" 0.001 3)
+    if [[ $effective_dt_override =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+        effective_dt="$effective_dt_override"
+    else
+        retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
+        effective_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" 0.001 3)
+    fi
 
     if awk -v eff="$effective_dt" -v template="$template_dt" 'BEGIN{exit !(eff != template)}'; then
         text=$(echo "$text" | awk -v newdt="$effective_dt" '
