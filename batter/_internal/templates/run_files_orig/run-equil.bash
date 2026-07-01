@@ -85,14 +85,14 @@ pre_equil_restart_is_complete() {
 }
 
 reset_minimization_after_failed_pre_equil() {
-    if [[ $only_eq -ne 1 || $prior_failed -ne 1 ]]; then
+    if [[ $prior_failed -ne 1 ]]; then
         return 0
     fi
     if pre_equil_restart_is_complete; then
         return 0
     fi
     if [[ -s mini.rst7 || -s mini2.rst7 || -s eqnvt.rst7 ]]; then
-        echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization instead of reusing mini.rst7/mini2.rst7."
+        echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7."
         rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out eqnvt.rst7 eqnvt.out eqnvt.nc
     fi
 }
@@ -170,6 +170,11 @@ run_penetration_check() {
         mark_failed_and_exit "[ERROR] Ring penetration check failed for ${rst_path}."
     fi
     rm -f "$err_file"
+    if [[ -f RING_PENETRATION ]]; then
+        echo "[INFO] Ligand ring penetration marker present for ${rst_path}."
+    else
+        echo "[INFO] No ligand ring penetration detected in ${rst_path}."
+    fi
 }
 
 archive_existing_log_file "$log_file"

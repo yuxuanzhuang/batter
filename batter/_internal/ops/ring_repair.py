@@ -126,11 +126,11 @@ def _is_hydrogen(atom) -> bool:
     return name.startswith("H") or (len(name) > 1 and name[0].isdigit() and name[1] == "H")
 
 
-def _parmed_heavy_topology(structure: pmd.Structure) -> nx.Graph:
+def _parmed_ring_check_topology(structure: pmd.Structure) -> nx.Graph:
     graph = nx.Graph()
     for atom in structure.atoms:
         resname = str(atom.residue.name).strip()
-        if resname in _WATER_RESNAMES or _is_hydrogen(atom):
+        if resname in _WATER_RESNAMES:
             continue
         graph.add_node(
             atom.idx + 1,
@@ -152,7 +152,7 @@ def _parmed_heavy_topology(structure: pmd.Structure) -> nx.Graph:
 def _ring_penetrations(
     structure: pmd.Structure, coordinates: np.ndarray
 ) -> tuple[list[tuple[int, int]], list[list[int]], nx.Graph]:
-    topology = _parmed_heavy_topology(structure)
+    topology = _parmed_ring_check_topology(structure)
     pairs, rings = _ring_penetrations_with_topology(topology, coordinates)
     return pairs, rings, topology
 

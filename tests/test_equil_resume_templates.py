@@ -723,13 +723,17 @@ def test_run_equil_reruns_nvt_after_direct_failure_when_enabled(
         "import sys\n"
         "from pathlib import Path\n"
         "marker = Path('RING_PENETRATION')\n"
+        "mini2_repaired = Path('mini2_repaired')\n"
         "repaired = Path('RING_PENETRATION_REPAIRED')\n"
         "rst = sys.argv[-1]\n"
         "if '--repair' in sys.argv and rst == 'mini2.rst7':\n"
+        "    mini2_repaired.write_text('yes\\n')\n"
         "    repaired.write_text('mini2\\n')\n"
         "    marker.unlink(missing_ok=True)\n"
-        "elif rst == 'mini2.rst7':\n"
+        "elif rst == 'mini2.rst7' and not mini2_repaired.exists():\n"
         "    marker.write_text('ring\\n')\n"
+        "elif rst == 'mini2.rst7':\n"
+        "    marker.unlink(missing_ok=True)\n"
         "elif rst == 'eqnvt.rst7':\n"
         "    marker.write_text('ring\\n')\n",
     )
@@ -758,7 +762,7 @@ def test_run_equil_reruns_nvt_after_direct_failure_when_enabled(
 
     calls = _read_calls(tmp_path)
     assert "Skipping NVT preparation" not in rerun.stdout
-    assert "rerunning minimization instead of reusing mini.rst7/mini2.rst7" in rerun.stdout
+    assert "rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7" in rerun.stdout
     assert "eqnpt_pre.out" in calls
 
 

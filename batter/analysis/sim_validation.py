@@ -1319,7 +1319,7 @@ def check_universe_ring_penetration(universe, verbose=0):
         True if there is a ring penetration, False otherwise
 
     """
-    selection = 'not resname TIP3 WAT and not (name H*)'
+    selection = 'not resname TIP3 WAT'
     faulty = False
     top = build_topology(universe, selection)
     ag = universe.select_atoms(selection)

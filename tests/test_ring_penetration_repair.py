@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import networkx as nx
+import numpy as np
 import pytest
 
 import batter._internal.ops.ring_repair as ring_repair
@@ -266,6 +267,45 @@ def test_nonaromatic_sidechain_penetrating_ligand_ring_is_protein_candidate() ->
     )
 
     assert candidates == [10]
+
+
+def test_ring_penetration_detection_includes_ligand_hydrogen_bonds() -> None:
+    pmd = pytest.importorskip("parmed")
+    structure = pmd.Structure()
+
+    ring_atoms = []
+    for name in ["ND1", "CE1", "NE2", "CD2", "CG"]:
+        atom = pmd.Atom(name=name, type="C", atomic_number=6, mass=12.0)
+        structure.add_atom(atom, "HID", 66)
+        ring_atoms.append(atom)
+
+    carbon = pmd.Atom(name="C19", type="C", atomic_number=6, mass=12.0)
+    hydrogen = pmd.Atom(name="H23", type="H", atomic_number=1, mass=1.0)
+    structure.add_atom(carbon, "4qk", 287)
+    structure.add_atom(hydrogen, "4qk", 287)
+
+    for first, second in zip(ring_atoms, [*ring_atoms[1:], ring_atoms[0]]):
+        structure.bonds.append(pmd.Bond(first, second))
+    structure.bonds.append(pmd.Bond(carbon, hydrogen))
+
+    coordinates = []
+    for index in range(5):
+        angle = 2.0 * np.pi * index / 5.0
+        coordinates.append([np.cos(angle), np.sin(angle), 0.0])
+    coordinates.extend([[0.0, 0.0, -1.0], [0.0, 0.0, 1.0]])
+    structure.coordinates = np.asarray(coordinates, dtype=float)
+
+    pairs, rings, topology = _ring_penetrations(structure, structure.coordinates)
+
+    assert pairs == [(6, 7)]
+    assert [topology.nodes[node]["name"] for node in pairs[0]] == ["C19", "H23"]
+    assert {topology.nodes[node]["name"] for node in rings[0]} == {
+        "ND1",
+        "CE1",
+        "NE2",
+        "CD2",
+        "CG",
+    }
 
 
 def test_ring_repair_dispatch_requires_ligand_resname_for_ligand_mode() -> None:
