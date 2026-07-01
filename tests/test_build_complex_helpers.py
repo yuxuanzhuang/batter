@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("MDAnalysis", exc_type=ImportError)
+mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import build_complex as build_complex_mod
 
@@ -237,3 +237,29 @@ def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
     )
 
     assert preferred_names[0] == "C4"
+
+
+def test_ligand_residue_for_boresch_guard_allows_empty_ligand_resid(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    fe_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("HETATM", 1, "C1", "LIG", "L", 12, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 2, "C2", "LIG", "L", 12, 1.0, 1.0, 0.0),
+                "END\n",
+            ]
+        )
+    )
+    universe = mda.Universe(str(fe_pdb))
+
+    residue = build_complex_mod._ligand_residue_for_boresch_guard(
+        universe,
+        mol="LIG",
+        lig_resid="",
+    )
+
+    assert residue is not None
+    assert residue.resname == "LIG"
+    assert int(residue.resid) == 12

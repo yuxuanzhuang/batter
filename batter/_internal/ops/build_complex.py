@@ -291,7 +291,11 @@ def _ligand_residue_for_boresch_guard(
     mol: str,
     lig_resid: str,
 ):
-    atoms = u.select_atoms(f"resname {mol} and resid {lig_resid}")
+    lig_resid = str(lig_resid or "").strip()
+    if lig_resid:
+        atoms = u.select_atoms(f"resname {mol} and resid {lig_resid}")
+    else:
+        atoms = u.select_atoms(f"resname {mol}")
     if atoms.n_atoms == 0:
         atoms = u.select_atoms(f"resname {mol}")
     if atoms.n_atoms == 0:
