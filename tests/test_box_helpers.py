@@ -14,6 +14,23 @@ mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 from batter._internal.ops import box
 
 
+def _pdb_atom(
+    serial: int,
+    name: str,
+    resname: str,
+    chain: str,
+    resid: int,
+    x: float,
+    y: float,
+    z: float,
+    element: str,
+) -> str:
+    return (
+        f"ATOM  {serial:5d} {name:<4} {resname:>3} {chain}{resid:4d}    "
+        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2}\n"
+    )
+
+
 def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
     parm = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
@@ -26,6 +43,65 @@ def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     assert parm.parm_data["SOLVENT_POINTERS"] == [1, 1, 2]
     assert parm.parm_data["ATOMS_PER_MOLECULE"] == [len(parm.atoms)]
     assert len(copy.copy(parm).atoms) == len(parm.atoms)
+
+
+def test_restore_reference_hydrogen_coordinates_repairs_existing_lipid_protons(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "full_pre.pdb"
+    reference = tmp_path / "equil-reference.pdb"
+    target.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C31", "PC", "A", 365, 0.000, 0.000, 0.000, "C"),
+                _pdb_atom(2, "C32", "PC", "A", 365, 1.500, 0.000, 0.000, "C"),
+                _pdb_atom(3, "N31", "PC", "A", 365, 1.500, 1.400, 0.000, "N"),
+                _pdb_atom(4, "C33", "PC", "A", 365, 1.500, 0.000, 1.400, "C"),
+                _pdb_atom(5, "H2A", "PC", "A", 365, 0.560, 0.000, 0.000, "H"),
+                _pdb_atom(6, "H2B", "PC", "A", 365, 0.600, 0.100, 0.000, "H"),
+                _pdb_atom(7, "O", "WAT", "A", 366, 5.000, 0.000, 0.000, "O"),
+                _pdb_atom(8, "H1", "WAT", "A", 366, 5.100, 0.000, 0.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    reference.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C31", "PC", "X", 99, 0.000, 0.000, 0.000, "C"),
+                _pdb_atom(2, "C32", "PC", "X", 99, 1.500, 0.000, 0.000, "C"),
+                _pdb_atom(3, "N31", "PC", "X", 99, 1.500, 1.400, 0.000, "N"),
+                _pdb_atom(4, "C33", "PC", "X", 99, 1.500, 0.000, 1.400, "C"),
+                _pdb_atom(5, "H2A", "PC", "X", 99, 2.500, -0.300, -0.300, "H"),
+                _pdb_atom(6, "H2B", "PC", "X", 99, 1.100, -0.800, 0.300, "H"),
+                _pdb_atom(7, "O", "WAT", "X", 100, 7.000, 0.000, 0.000, "O"),
+                _pdb_atom(8, "H1", "WAT", "X", 100, 7.900, 0.000, 0.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    restored = box._restore_reference_hydrogen_coordinates(target, reference)
+
+    assert restored == 2
+    atoms = {}
+    for line in target.read_text().splitlines():
+        if line.startswith(("ATOM  ", "HETATM")) and line[17:20].strip() == "PC":
+            atoms[line[12:16].strip()] = np.asarray(
+                [float(line[30:38]), float(line[38:46]), float(line[46:54])]
+            )
+    np.testing.assert_allclose(atoms["H2A"], [2.5, -0.3, -0.3], atol=1.0e-3)
+    assert np.linalg.norm(atoms["H2A"] - atoms["C31"]) > 2.0
+    assert np.linalg.norm(atoms["H2A"] - atoms["C32"]) == pytest.approx(1.086, abs=1.0e-3)
+
+    water_h1 = next(
+        line
+        for line in target.read_text().splitlines()
+        if line.startswith("ATOM") and line[17:20].strip() == "WAT" and line[12:16].strip() == "H1"
+    )
+    assert float(water_h1[30:38]) == pytest.approx(5.1)
 
 
 def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> None:

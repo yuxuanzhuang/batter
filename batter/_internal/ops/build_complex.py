@@ -387,9 +387,11 @@ def _guard_abfe_boresch_ligand_anchor_names(
         )
         return list(selected_names[:3])
 
+    residue_atoms_by_name = {
+        str(atom.name).strip(): atom for atom in residue.atoms
+    }
     ligand_atoms = [
-        _atom_from_anchor_mask(u, f":{lig_resid}@{name}", mol=mol, ligand=True)
-        for name in guarded_names
+        residue_atoms_by_name.get(str(name).strip()) for name in guarded_names
     ]
     if any(atom is None for atom in ligand_atoms):
         logger.warning(

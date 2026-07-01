@@ -8,7 +8,7 @@ import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -303,6 +303,245 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
                 lines += [ln for ln in f if ln.startswith("ATOM")]
             prev = res.resid
     out_pdb.write_text("".join(lines))
+
+
+_REFERENCE_PROTON_RESTORE_EXCLUDED_RESNAMES = {
+    "WAT",
+    "HOH",
+    "TIP3",
+    "TIP3P",
+    "TIP4P",
+    "SPC",
+    "SPCE",
+    "OPC",
+    "SOL",
+    "NA",
+    "NA+",
+    "SOD",
+    "K",
+    "K+",
+    "POT",
+    "CL",
+    "CL-",
+    "CLA",
+    "MG",
+    "MG2",
+    "CA",
+    "CA2",
+    "ZN",
+    "DUM",
+}
+
+
+def _pdb_atom_coord(line: str) -> np.ndarray | None:
+    if len(line) < 54:
+        return None
+    try:
+        return np.asarray(
+            [float(line[30:38]), float(line[38:46]), float(line[46:54])],
+            dtype=float,
+        )
+    except ValueError:
+        return None
+
+
+def _pdb_atom_is_hydrogen(line: str) -> bool:
+    element = line[76:78].strip().upper() if len(line) >= 78 else ""
+    if element:
+        return element == "H"
+    atom_name = line[12:16].strip().upper()
+    return atom_name.startswith("H") or (
+        len(atom_name) > 1 and atom_name[0].isdigit() and atom_name[1] == "H"
+    )
+
+
+def _replace_pdb_coord(line: str, coord: np.ndarray) -> str:
+    return f"{line[:30]}{coord[0]:8.3f}{coord[1]:8.3f}{coord[2]:8.3f}{line[54:]}"
+
+
+def _kabsch_transform(mobile: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mobile_center = mobile.mean(axis=0)
+    reference_center = reference.mean(axis=0)
+    mobile_centered = mobile - mobile_center
+    reference_centered = reference - reference_center
+    covariance = mobile_centered.T @ reference_centered
+    u, _s, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1
+        rotation = vt.T @ u.T
+    translation = reference_center - mobile_center @ rotation
+    return rotation, translation
+
+
+def _read_pdb_residue_blocks(
+    lines: Sequence[str],
+) -> list[dict[str, Any]]:
+    residues: list[dict[str, Any]] = []
+    current_key: tuple[str, str, str, str] | None = None
+    current: dict[str, Any] | None = None
+    for line_index, line in enumerate(lines):
+        if line.startswith("TER"):
+            current_key = None
+            current = None
+            continue
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        coord = _pdb_atom_coord(line)
+        if coord is None:
+            continue
+        key = (line[17:20].strip(), line[21:22], line[22:26], line[26:27])
+        if current is None or key != current_key:
+            current = {
+                "resname": key[0],
+                "atoms": {},
+                "duplicate_atom_names": set(),
+            }
+            residues.append(current)
+            current_key = key
+
+        atom_name = line[12:16].strip()
+        atoms = current["atoms"]
+        if atom_name in atoms:
+            current["duplicate_atom_names"].add(atom_name)
+            continue
+        atoms[atom_name] = {
+            "line_index": line_index,
+            "coord": coord,
+            "is_hydrogen": _pdb_atom_is_hydrogen(line),
+        }
+    return residues
+
+
+def _restore_reference_hydrogen_coordinates(
+    target_pdb: Path,
+    reference_pdb: Path,
+    *,
+    residue_names: Sequence[str] | None = None,
+    exclude_residue_names: Sequence[str] | None = None,
+    min_common_heavy_atoms: int = 3,
+    heavy_rmsd_cutoff: float = 0.25,
+) -> int:
+    """Restore target hydrogen coordinates from an equilibrated reference.
+
+    Residues are paired by occurrence within each residue name. For each pair,
+    common heavy atoms are locally fit from reference to target, and matching
+    target hydrogen coordinates are replaced by the transformed reference
+    hydrogen coordinates. This preserves the target heavy-atom coordinates and
+    avoids mapping newly solvated molecules onto the old reference.
+    """
+    if not target_pdb.exists() or not reference_pdb.exists():
+        return 0
+
+    include = {name.strip().upper() for name in residue_names or [] if name}
+    exclude = {
+        name.strip().upper()
+        for name in (
+            exclude_residue_names
+            if exclude_residue_names is not None
+            else _REFERENCE_PROTON_RESTORE_EXCLUDED_RESNAMES
+        )
+        if name
+    }
+
+    target_lines = target_pdb.read_text().splitlines(True)
+    reference_lines = reference_pdb.read_text().splitlines(True)
+    target_residues = _read_pdb_residue_blocks(target_lines)
+    reference_by_name: dict[str, list[dict[str, Any]]] = {}
+    for residue in _read_pdb_residue_blocks(reference_lines):
+        reference_by_name.setdefault(str(residue["resname"]).upper(), []).append(residue)
+
+    reference_indices: dict[str, int] = {}
+    restored = 0
+    skipped_rmsd = 0
+    for target_residue in target_residues:
+        resname = str(target_residue["resname"]).upper()
+        if include and resname not in include:
+            continue
+        if resname in exclude:
+            continue
+
+        reference_residues = reference_by_name.get(resname)
+        if not reference_residues:
+            continue
+        reference_index = reference_indices.get(resname, 0)
+        reference_indices[resname] = reference_index + 1
+        if reference_index >= len(reference_residues):
+            continue
+        reference_residue = reference_residues[reference_index]
+
+        target_atoms = target_residue["atoms"]
+        reference_atoms = reference_residue["atoms"]
+        target_duplicates = target_residue["duplicate_atom_names"]
+        reference_duplicates = reference_residue["duplicate_atom_names"]
+
+        common_heavy_names = [
+            name
+            for name in sorted(set(target_atoms) & set(reference_atoms))
+            if name not in target_duplicates
+            and name not in reference_duplicates
+            and not target_atoms[name]["is_hydrogen"]
+            and not reference_atoms[name]["is_hydrogen"]
+        ]
+        if len(common_heavy_names) < min_common_heavy_atoms:
+            continue
+
+        reference_heavy = np.asarray(
+            [reference_atoms[name]["coord"] for name in common_heavy_names],
+            dtype=float,
+        )
+        target_heavy = np.asarray(
+            [target_atoms[name]["coord"] for name in common_heavy_names],
+            dtype=float,
+        )
+        rotation, translation = _kabsch_transform(reference_heavy, target_heavy)
+        aligned_reference_heavy = reference_heavy @ rotation + translation
+        rmsd = float(
+            np.sqrt(np.mean(np.sum((aligned_reference_heavy - target_heavy) ** 2, axis=1)))
+        )
+        if not np.isfinite(rmsd) or rmsd > heavy_rmsd_cutoff:
+            skipped_rmsd += 1
+            continue
+
+        for atom_name, target_atom in target_atoms.items():
+            if atom_name in target_duplicates or atom_name in reference_duplicates:
+                continue
+            if not target_atom["is_hydrogen"]:
+                continue
+            reference_atom = reference_atoms.get(atom_name)
+            if reference_atom is None or not reference_atom["is_hydrogen"]:
+                continue
+            new_coord = reference_atom["coord"] @ rotation + translation
+            target_lines[target_atom["line_index"]] = _replace_pdb_coord(
+                target_lines[target_atom["line_index"]],
+                new_coord,
+            )
+            restored += 1
+
+    if restored:
+        target_pdb.write_text("".join(target_lines))
+        logger.info(
+            "Restored {} existing hydrogen coordinate(s) in {} from {}.",
+            restored,
+            target_pdb.name,
+            reference_pdb.name,
+        )
+    if skipped_rmsd:
+        logger.debug(
+            "Skipped {} residue(s) while restoring hydrogens in {} because heavy-atom RMSD exceeded {:.3f} Å.",
+            skipped_rmsd,
+            target_pdb.name,
+            heavy_rmsd_cutoff,
+        )
+    return restored
+
+
+def _restore_existing_protons_from_reference(window_dir: Path, target_pdb: Path) -> int:
+    for reference_name in ("equil-reference.pdb", "rec_file.pdb"):
+        reference_pdb = window_dir / reference_name
+        if reference_pdb.exists():
+            return _restore_reference_hydrogen_coordinates(target_pdb, reference_pdb)
+    return 0
 
 
 _TERMINAL_AMIDE_CAP_ATOMS = {"N1": "N", "H1": "HN1", "H2": "HN2"}
@@ -1381,6 +1620,7 @@ def create_box(ctx: BuildContext) -> None:
         f"{tleap} -s -f {tleap_solv_pre.name} > tleap_solvate_pre.log",
         working_dir=window_dir,
     )
+    _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
 
     # Count waters in build.pdb
     num_waters = sum(
@@ -2245,6 +2485,7 @@ def create_box_y(ctx: BuildContext) -> None:
     run_with_log(
         f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir
     )
+    _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
 
     # --- process full_pre.pdb into final full.{prmtop,inpcrd,pdb} ---
     #

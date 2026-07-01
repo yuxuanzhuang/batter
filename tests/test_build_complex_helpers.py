@@ -239,6 +239,41 @@ def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
     assert preferred_names[0] == "C4"
 
 
+def test_guard_abfe_boresch_ligand_anchor_names_allows_pdb_resid_mismatch(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    fe_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, -1.0, 0.0, 0.0),
+                _pdb_line("ATOM", 3, "CA", "SER", "A", 4, -1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 4, "C1", "LIG", "L", 11, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 5, "C2", "LIG", "L", 11, 1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 6, "C3", "LIG", "L", 11, 1.0, 1.0, 1.0),
+                _pdb_line("HETATM", 7, "C4", "LIG", "L", 11, 0.2, 1.0, 1.1),
+                _pdb_line("HETATM", 8, "C5", "LIG", "L", 11, 1.4, 2.1, 0.3),
+                _pdb_line("HETATM", 9, "C6", "LIG", "L", 11, 0.6, 0.5, 2.2),
+                "END\n",
+            ]
+        )
+    )
+
+    names = build_complex_mod._guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="test",
+        P1=":2@CA",
+        P2=":3@CA",
+        P3=":4@CA",
+        lig_resid="12",
+        selected_names=["C1", "C2", "C3"],
+    )
+
+    assert names == ["C4", "C5", "C6"]
+
+
 def test_ligand_residue_for_boresch_guard_allows_empty_ligand_resid(
     tmp_path: Path,
 ) -> None:
