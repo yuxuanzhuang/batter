@@ -17,6 +17,7 @@ from loguru import logger
 
 from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
+from batter.utils.lipid_hydrogen_repair import repair_lipid_hydrogen_geometry
 from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
@@ -43,6 +44,40 @@ _PRE_RING_REPAIR_FILES = {
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+
+
+def _repair_lipid_hydrogens_in_amber_files(
+    window_dir: Path,
+    *,
+    prefix: str,
+    report_name: str,
+) -> None:
+    prmtop = window_dir / f"{prefix}.prmtop"
+    inpcrd = window_dir / f"{prefix}.inpcrd"
+    pdb = window_dir / f"{prefix}.pdb"
+    if not prmtop.exists() or not inpcrd.exists():
+        return
+    result = repair_lipid_hydrogen_geometry(
+        prmtop,
+        inpcrd,
+        pdb if pdb.exists() else None,
+        write_report=window_dir / report_name,
+    )
+    if result.repaired:
+        logger.info(
+            "Repaired {} lipid hydrogen(s) on {} carbon center(s) in {}.",
+            result.repaired_hydrogens,
+            result.repaired_centers,
+            prmtop.name,
+        )
+
+
+def _repair_lipid_hydrogens_after_tleap_lipids(window_dir: Path) -> None:
+    _repair_lipid_hydrogens_in_amber_files(
+        window_dir,
+        prefix="solvate_others",
+        report_name="lipid_hydrogen_repair_solvate_others.json",
+    )
 
 
 def _repair_parmed_molecule_table_for_combine(structure: pmd.Structure) -> pmd.Structure:
@@ -2208,6 +2243,7 @@ def create_box(ctx: BuildContext) -> None:
             f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
             working_dir=window_dir,
         )
+        _repair_lipid_hydrogens_after_tleap_lipids(window_dir)
 
     # charge accounting
     def _sum_unit_charge_from_log(logfile: Path) -> Tuple[int, int]:
@@ -2933,6 +2969,7 @@ def create_box_y(ctx: BuildContext) -> None:
         f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
         working_dir=window_dir,
     )
+    _repair_lipid_hydrogens_after_tleap_lipids(window_dir)
 
     # combine with ParmEd
     dum_p = pmd.load_file(

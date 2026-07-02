@@ -32,6 +32,7 @@ from batter_v1.utils import (
     COMPONENTS_DICT,
     builder_fail_report,
 )
+from batter.utils.lipid_hydrogen_repair import repair_lipid_hydrogen_geometry
 
 
 class SystemBuilder(ABC):
@@ -688,6 +689,10 @@ class SystemBuilder(ABC):
             tleap_others.write('quit')
             tleap_others.close()
             p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
+            self._repair_lipid_hydrogens(
+                prefix='solvate_others',
+                report_name='lipid_hydrogen_repair_solvate_others.json',
+            )
 
         # Find out how many cations/anions are needed for neutralization
         neu_cat = 0
@@ -909,6 +914,26 @@ class SystemBuilder(ABC):
         # Apply hydrogen mass repartitioning
         os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
         run_with_log('parmed -O -n -i parmed-hmr.in > parmed-hmr.log')
+
+    def _repair_lipid_hydrogens(self, prefix, report_name):
+        prmtop = f'{prefix}.prmtop'
+        inpcrd = f'{prefix}.inpcrd'
+        pdb = f'{prefix}.pdb'
+        if not os.path.exists(prmtop) or not os.path.exists(inpcrd):
+            return
+        result = repair_lipid_hydrogen_geometry(
+            prmtop,
+            inpcrd,
+            pdb if os.path.exists(pdb) else None,
+            write_report=report_name,
+        )
+        if result.repaired:
+            logger.info(
+                'Repaired {} lipid hydrogen(s) on {} carbon center(s) in {}.',
+                result.repaired_hydrogens,
+                result.repaired_centers,
+                prmtop,
+            )
 
     @abstractmethod
     def _restraints(self):
