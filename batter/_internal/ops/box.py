@@ -1799,6 +1799,7 @@ def create_box(ctx: BuildContext) -> None:
     window_dir.mkdir(parents=True, exist_ok=True)
 
     membrane_builder = sim.membrane_simulation
+    use_membrane_reference_box = membrane_builder and comp != "q"
     lipid_mol = sim.lipid_mol
     other_mol = sim.other_mol
 
@@ -1850,7 +1851,7 @@ def create_box(ctx: BuildContext) -> None:
     reference_dimensions = None
     membrane_dimensions = None
     membrane_water_z_max = None
-    if membrane_builder:
+    if use_membrane_reference_box:
         reference_pdb = window_dir / "equil-reference.pdb"
         if not reference_pdb.exists():
             raise FileNotFoundError(
@@ -1953,9 +1954,9 @@ def create_box(ctx: BuildContext) -> None:
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
-        build_input = "build-dry.pdb" if membrane_builder else "build.pdb"
+        build_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
         f.write(f"model = loadpdb {build_input}\n\n")
-        if membrane_builder:
+        if use_membrane_reference_box:
             assert membrane_dimensions is not None
             f.write(
                 "set model box "
@@ -1976,6 +1977,41 @@ def create_box(ctx: BuildContext) -> None:
     )
     _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
 
+    def _remove_stale_generated_files(patterns: tuple[str, ...]) -> None:
+        for pattern in patterns:
+            for path in window_dir.glob(pattern):
+                if path.is_file():
+                    path.unlink()
+
+    if use_membrane_reference_box:
+        _remove_stale_generated_files(
+            (
+                "solvate_pre_outside_wat.pdb",
+                "solvate_outside_wat.pdb",
+                "solvate_outside_wat.prmtop",
+                "solvate_outside_wat.inpcrd",
+                "tleap_solvate_outside_wat.in",
+                "tleap_outside_wat.log",
+                "solvate_pre_around_water.pdb",
+                "solvate_around_wat.pdb",
+                "solvate_around_wat.prmtop",
+                "solvate_around_wat.inpcrd",
+                "tleap_solvate_around_wat.in",
+                "tleap_around_wat.log",
+            )
+        )
+    else:
+        _remove_stale_generated_files(
+            (
+                "solvate_pre_wat_*.pdb",
+                "solvate_wat_*.pdb",
+                "solvate_wat_*.prmtop",
+                "solvate_wat_*.inpcrd",
+                "tleap_solvate_wat_*.in",
+                "tleap_solvate_wat_*.log",
+            )
+        )
+
     water_chunk_paths = (
         _write_membrane_water_chunks_from_build(
             window_dir,
@@ -1983,7 +2019,7 @@ def create_box(ctx: BuildContext) -> None:
             box=membrane_dimensions,
             z_max=membrane_water_z_max,
         )
-        if membrane_builder
+        if use_membrane_reference_box
         else []
     )
 
@@ -1993,8 +2029,8 @@ def create_box(ctx: BuildContext) -> None:
     )
 
     # pdb4amber is only used here for residue-renumbering and disulfide metadata.
-    # For membrane systems, do not send the full solvent box through pdb4amber.
-    pdb4amber_input = "build-dry.pdb" if membrane_builder else "build.pdb"
+    # For membrane FE systems, do not send the full solvent box through pdb4amber.
+    pdb4amber_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
     run_with_log(
         f"pdb4amber -i {pdb4amber_input} -o build_amber.pdb -y",
         working_dir=window_dir,
@@ -2030,15 +2066,52 @@ def create_box(ctx: BuildContext) -> None:
     with _mdanalysis_pdb_path(window_dir / "full_pre.pdb") as full_pre_pdb:
         u = mda.Universe(str(full_pre_pdb))
         final_system = u.atoms
-        system_dimensions = u.dimensions[:3]
+        system_dimensions = np.asarray(u.dimensions[:3], dtype=float).copy()
 
-        if membrane_builder:
+        if use_membrane_reference_box:
             assert membrane_dimensions is not None
             u.dimensions[:3] = membrane_dimensions
             system_dimensions = membrane_dimensions.copy()
             final_system = u.atoms
+        elif membrane_builder:
+            reference_pdb = window_dir / "equil-reference.pdb"
+            if not reference_pdb.exists():
+                raise FileNotFoundError(
+                    f"Membrane equil box creation requires {reference_pdb} to trim "
+                    "the LEaP-solvated box back to the reference x/y frame."
+                )
+            reference_universe = mda.Universe(str(reference_pdb))
+            if reference_universe.dimensions is None:
+                raise ValueError(f"{reference_pdb} does not contain box dimensions.")
+            reference_dimensions_q = np.asarray(
+                reference_universe.dimensions[:3],
+                dtype=float,
+            )
+            if (
+                reference_dimensions_q.shape != (3,)
+                or not np.all(np.isfinite(reference_dimensions_q))
+            ):
+                raise ValueError(f"{reference_pdb} contains invalid box dimensions.")
+            u.dimensions[0] = reference_dimensions_q[0]
+            u.dimensions[1] = reference_dimensions_q[1]
+            u.dimensions[2] = float(u.dimensions[2]) - 3.0
+            u.atoms.positions[:, 2] -= 3.0
+            system_dimensions = np.asarray(u.dimensions[:3], dtype=float).copy()
+            final_system = u.atoms
 
-        if not membrane_builder:
+            if lipid_mol:
+                membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
+                membrane_phosphates = membrane_region.select_atoms("type P")
+                if len(membrane_phosphates):
+                    memb_z_max = membrane_phosphates.positions[:, 2].max() - 10.0
+                    memb_z_min = membrane_phosphates.positions[:, 2].min() + 10.0
+                    water_in_mem = u.select_atoms(
+                        "byres (resname WAT and "
+                        f"prop z > {memb_z_min} and prop z < {memb_z_max})"
+                    )
+                    final_system = final_system - water_in_mem
+
+        if not use_membrane_reference_box:
             water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
             final_system = final_system | water_around_prot
 
@@ -2051,6 +2124,16 @@ def create_box(ctx: BuildContext) -> None:
                 f"(prop z > {abs_z + min_pos}))"
             )
             final_system = final_system - outside_wat_z
+
+        if membrane_builder and not use_membrane_reference_box:
+            half_x = float(system_dimensions[0]) / 2.0
+            half_y = float(system_dimensions[1]) / 2.0
+            outside_wat_xy = final_system.select_atoms(
+                "byres (resname WAT and "
+                f"((prop x > {half_x}) or (prop x < {-half_x}) or "
+                f"(prop y > {half_y}) or (prop y < {-half_y})))"
+            )
+            final_system = final_system - outside_wat_xy
 
         # renumber residues
         revised_resids = np.array(revised_resids)
@@ -2096,7 +2179,7 @@ def create_box(ctx: BuildContext) -> None:
         final_system_other_mol = (
             final_system_others.select_atoms("not resname WAT") - final_system_ligs
         )
-        if membrane_builder:
+        if use_membrane_reference_box:
             final_system_water_notaround = None
             final_system_water_around = None
         else:
@@ -2286,7 +2369,7 @@ def create_box(ctx: BuildContext) -> None:
         num_ani = 0
 
     water_part_prefixes: list[str] = []
-    if membrane_builder:
+    if use_membrane_reference_box:
         for chunk_index, chunk_path in enumerate(water_chunk_paths):
             unit_name = f"wat{chunk_index:02d}"
             prefix = f"solvate_wat_{chunk_index:02d}"
@@ -2315,7 +2398,7 @@ def create_box(ctx: BuildContext) -> None:
             )
 
     # outside water — ionization
-    if (not membrane_builder) and (window_dir / "solvate_pre_outside_wat.pdb").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_pre_outside_wat.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_outside_wat.in")
         with (window_dir / "tleap_solvate_outside_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -2344,7 +2427,7 @@ def create_box(ctx: BuildContext) -> None:
         )
 
     # around water
-    if (not membrane_builder) and (window_dir / "solvate_pre_around_water.pdb").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_pre_around_water.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_around_wat.in")
         with (window_dir / "tleap_solvate_around_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -2405,7 +2488,7 @@ def create_box(ctx: BuildContext) -> None:
         )
         combined += others_p
         other_parts.append(others_p)
-    if membrane_builder:
+    if use_membrane_reference_box:
         for prefix in water_part_prefixes:
             water_pmd = pmd.load_file(
                 str(window_dir / f"{prefix}.prmtop"),
@@ -2420,7 +2503,7 @@ def create_box(ctx: BuildContext) -> None:
         )
         combined += out_wat_pmd
         other_parts.append(out_wat_pmd)
-    if (not membrane_builder) and (window_dir / "solvate_around_wat.prmtop").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_around_wat.prmtop").exists():
         around_wat_pmd = pmd.load_file(
             str(window_dir / "solvate_around_wat.prmtop"),
             str(window_dir / "solvate_around_wat.inpcrd"),
@@ -2465,7 +2548,7 @@ def create_box(ctx: BuildContext) -> None:
             )
             combined.coordinates = combined_coordinates
 
-    if membrane_builder:
+    if use_membrane_reference_box:
         reference_translation = _parmed_reference_translation(
             combined,
             window_dir / "equil-reference.pdb",
