@@ -2102,7 +2102,7 @@ def create_box(ctx: BuildContext) -> None:
         solvate_pre_prot.write_text("".join(prot_lines))
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:
-            logger.info(
+            logger.debug(
                 "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before LEaP.",
                 cap_count,
             )
