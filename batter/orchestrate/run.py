@@ -426,6 +426,7 @@ def _build_rbfe_network_plan(
         resolve_network_scorer_name,
         write_planned_mapping_artifacts,
         deduplicate_identical_ligands,
+        validate_rbfe_network_ligand_coverage,
     )
     try:
         import konnektor
@@ -525,6 +526,7 @@ def _build_rbfe_network_plan(
         network_scorer,
         protocol=protocol,
     )
+    minimal_mapping_atom = getattr(rbfe_cfg, "minimal_mapping_atom", 3)
     mapper_options = _rbfe_mapper_options(rbfe_cfg)
     atom_mapping_overrides = None
     atom_mapping_file = getattr(rbfe_cfg, "atom_mapping_file", None)
@@ -597,6 +599,7 @@ def _build_rbfe_network_plan(
             mapping_source["mapping"] = mapping_name
     mapping_source["atom_mapper"] = atom_mapper
     mapping_source["network_scorer"] = resolved_network_scorer
+    mapping_source["minimal_mapping_atom"] = minimal_mapping_atom
     if network_scorer != "auto":
         mapping_source["network_scorer_requested"] = network_scorer
     if any(mapper_options.values()):
@@ -667,6 +670,12 @@ def _build_rbfe_network_plan(
         if unused_pairs:
             mapping_source["unused_atom_mapping_overrides"] = unused_pairs
 
+    validate_rbfe_network_ligand_coverage(
+        available,
+        list(network.pairs),
+        context="Planned RBFE network",
+    )
+
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
         bidirectional_pairs: List[List[str]] = []
@@ -694,6 +703,8 @@ def _build_rbfe_network_plan(
         lomap_options=mapper_options["lomap"],
         atom_mapper_options=selected_mapper_options,
         atom_mapping_overrides=atom_mapping_overrides,
+        protocol=protocol,
+        minimal_mapping_atom=minimal_mapping_atom,
     )
     skipped_full_atom_map_edges: List[dict[str, Any]] = []
     filtered_pairs: List[List[str]] = []
@@ -728,6 +739,11 @@ def _build_rbfe_network_plan(
     if skipped_full_atom_map_edges:
         payload["pairs"] = filtered_pairs
         mapping_source["skipped_full_atom_map_edges"] = skipped_full_atom_map_edges
+        validate_rbfe_network_ligand_coverage(
+            available,
+            payload.get("pairs", []),
+            context="Planned RBFE network after full-map edge filtering",
+        )
     mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"

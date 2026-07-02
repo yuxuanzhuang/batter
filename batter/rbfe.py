@@ -70,6 +70,9 @@ def resolve_network_scorer_name(
 
 def _shape_difference_network_score(mapping) -> float:
     """High-is-good score that minimizes Kartograf shape mismatch distance."""
+    mapped_count = _mapping_mapped_atom_count(mapping)
+    if mapped_count is not None and mapped_count < 2:
+        return 0.0
     try:
         from kartograf.mapping_metrics.metric_shape_difference import (
             MappingShapeMismatchScorer,
@@ -766,6 +769,52 @@ def _component_num_atoms(component: Any) -> int | None:
     return None
 
 
+def _mapping_mapped_atom_count(mapping: Any) -> int | None:
+    for attr_name in ("componentB_to_componentA", "componentA_to_componentB"):
+        try:
+            mapped = getattr(mapping, attr_name)
+        except Exception:
+            continue
+        if mapped is not None:
+            try:
+                return len(mapped)
+            except Exception:
+                pass
+    return None
+
+
+def _normalize_minimal_mapping_atom(value: int | None) -> int:
+    if value is None:
+        return 3
+    try:
+        minimum = int(value)
+    except Exception as exc:
+        raise ValueError("rbfe.minimal_mapping_atom must be an integer >= 1.") from exc
+    if minimum < 1:
+        raise ValueError("rbfe.minimal_mapping_atom must be an integer >= 1.")
+    return minimum
+
+
+def _validate_minimal_mapping_atom(
+    pair_id: str,
+    n_mapped: int | None,
+    minimal_mapping_atom: int | None,
+) -> None:
+    if n_mapped is None:
+        return
+    minimum = _normalize_minimal_mapping_atom(minimal_mapping_atom)
+    if n_mapped >= minimum:
+        return
+    atom_label = "atom" if n_mapped == 1 else "atoms"
+    raise ValueError(
+        f"RBFE atom mapping for planned pair {pair_id} maps only "
+        f"{n_mapped} {atom_label}, below rbfe.minimal_mapping_atom={minimum}. "
+        "You can lower rbfe.minimal_mapping_atom in the config if this "
+        "transformation is intentional, but a mapping this small is often "
+        "wrong; check the ligand pairing, ligand chemistry, and atom mapper."
+    )
+
+
 def _mol_num_atoms(mol: Any) -> int | None:
     if mol is None or not hasattr(mol, "GetNumAtoms"):
         return None
@@ -859,6 +908,7 @@ def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
         return {}
 
     metric_calls: list[tuple[str, Any, str]] = []
+    mapped_count = _mapping_mapped_atom_count(mapping)
     try:
         from kartograf.mapping_metrics.metric_mapping_rmsd import MappingRMSDScorer
 
@@ -880,33 +930,35 @@ def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
                 "get_score",
             )
         )
-        metric_calls.append(
-            ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
-        )
+        if mapped_count is None or mapped_count >= 4:
+            metric_calls.append(
+                ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
+            )
     except Exception:
         pass
-    try:
-        from kartograf.mapping_metrics.metric_shape_difference import (
-            MappingShapeMismatchScorer,
-            MappingShapeOverlapScorer,
-        )
+    if mapped_count is None or mapped_count >= 2:
+        try:
+            from kartograf.mapping_metrics.metric_shape_difference import (
+                MappingShapeMismatchScorer,
+                MappingShapeOverlapScorer,
+            )
 
-        metric_calls.append(
-            (
-                "mapping_score_shape_mismatch",
-                MappingShapeMismatchScorer(),
-                "get_score",
+            metric_calls.append(
+                (
+                    "mapping_score_shape_mismatch",
+                    MappingShapeMismatchScorer(),
+                    "get_score",
+                )
             )
-        )
-        metric_calls.append(
-            (
-                "mapping_score_shape_overlap",
-                MappingShapeOverlapScorer(),
-                "get_score",
+            metric_calls.append(
+                (
+                    "mapping_score_shape_overlap",
+                    MappingShapeOverlapScorer(),
+                    "get_score",
+                )
             )
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     scores: dict[str, float] = {}
     for key, scorer, method_name in metric_calls:
@@ -1436,6 +1488,30 @@ def _normalize_pair(pair: Any) -> RBFEPair:
     return (sanitize_ligand_name(str(left)), sanitize_ligand_name(str(right)))
 
 
+def validate_rbfe_network_ligand_coverage(
+    ligands: Sequence[str],
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    *,
+    context: str = "RBFE network",
+) -> None:
+    lig_list = [sanitize_ligand_name(str(lig)) for lig in ligands if str(lig)]
+    if not lig_list:
+        return
+
+    connected: set[str] = set()
+    for pair in pairs:
+        ref, alt = _normalize_pair(pair)
+        connected.add(ref)
+        connected.add(alt)
+
+    missing = [lig for lig in lig_list if lig not in connected]
+    if missing:
+        raise ValueError(
+            f"{context} does not include any mapping edge for ligand(s): "
+            + ", ".join(missing)
+        )
+
+
 def _pairs_from_data(data: Any) -> List[RBFEPair]:
     if isinstance(data, dict):
         if "pairs" in data:
@@ -1550,24 +1626,30 @@ def _mapping_png_data_uri(path: Path) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]:
+def _edge_asset_from_mapping_dir(
+    pair_id: str,
+    pair_dir: Path,
+    *,
+    prefer_pocket_shape: bool = False,
+) -> dict[str, Any]:
     asset: dict[str, Any] = {
         "mapping_path": (pair_dir / "mapping.json").as_posix(),
         "mapping_dir": pair_dir.as_posix(),
     }
     shape_png = pair_dir / "pocket_shape_overlap.png"
     if shape_png.is_file():
-        asset["image_data_uri"] = _mapping_png_data_uri(shape_png)
-        asset["image_alt"] = f"Pocket shape overlap for {pair_id}"
-        asset["image_kind"] = "pocket_shape_overlap"
         asset["shape_overlap_path"] = shape_png.as_posix()
     mapping_png = pair_dir / "mapping.png"
     if mapping_png.is_file():
         mapping_uri = _mapping_png_data_uri(mapping_png)
         asset["atom_mapping_image_data_uri"] = mapping_uri
         asset["atom_mapping_image_alt"] = f"Atom mapping for {pair_id}"
-    if mapping_png.is_file() and "image_data_uri" not in asset:
-        asset["image_data_uri"] = _mapping_png_data_uri(mapping_png)
+    if prefer_pocket_shape and shape_png.is_file():
+        asset["image_data_uri"] = _mapping_png_data_uri(shape_png)
+        asset["image_alt"] = f"Pocket shape overlap for {pair_id}"
+        asset["image_kind"] = "pocket_shape_overlap"
+    elif mapping_png.is_file():
+        asset["image_data_uri"] = asset.get("atom_mapping_image_data_uri")
         asset["image_alt"] = f"Atom mapping for {pair_id}"
         asset["image_kind"] = "atom_mapping"
     status = pair_dir / "mapping_status.json"
@@ -1605,6 +1687,27 @@ def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]
     return asset
 
 
+def _cached_pair_mapping_atom_count(
+    pair_dir: Path,
+    asset: Mapping[str, Any] | None = None,
+) -> int | None:
+    if asset is not None and asset.get("n_mapped") is not None:
+        try:
+            return int(asset["n_mapped"])
+        except Exception:
+            pass
+
+    mapping_json = pair_dir / "mapping.json"
+    if not mapping_json.is_file():
+        return None
+    try:
+        data = json.loads(mapping_json.read_text())
+        return len(_atom_mapping_payload_to_b_to_a(data, context=mapping_json.name))
+    except Exception:
+        logger.debug(f"Could not read cached RBFE mapping atom count: {mapping_json}")
+        return None
+
+
 def _serialize_atom_mapping(mapping: Mapping[Any, Any]) -> dict[int, int]:
     return {int(k): int(v) for k, v in mapping.items()}
 
@@ -1639,11 +1742,18 @@ def _write_manual_pair_mapping_artifacts(
     pair_dir: Path,
     map_b_to_a: Mapping[int, int],
     source_label: str,
+    include_pocket_shape: bool = False,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, Any]:
     pair_id = f"{ref}~{alt}"
     serialized = _serialize_atom_mapping(map_b_to_a)
     if not serialized:
         raise ValueError(f"Manual RBFE atom mapping for {pair_id} is empty.")
+    _validate_minimal_mapping_atom(
+        pair_id,
+        len(serialized),
+        minimal_mapping_atom,
+    )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     _remove_optional_mapping_artifacts(pair_dir)
@@ -1671,19 +1781,20 @@ def _write_manual_pair_mapping_artifacts(
             serialized,
         )
         metric_scores = _mapping_metric_scores(atom_mapping_obj)
-        metric_scores.update(
-            _pocket_similarity_metric_scores(
+        if include_pocket_shape:
+            metric_scores.update(
+                _pocket_similarity_metric_scores(
+                    rdmol_ref,
+                    rdmol_alt,
+                    atom_mapping_obj,
+                )
+            )
+            _write_pocket_shape_overlap_png(
                 rdmol_ref,
                 rdmol_alt,
-                atom_mapping_obj,
+                pair_dir / "pocket_shape_overlap.png",
+                pair_id=pair_id,
             )
-        )
-        _write_pocket_shape_overlap_png(
-            rdmol_ref,
-            rdmol_alt,
-            pair_dir / "pocket_shape_overlap.png",
-            pair_id=pair_id,
-        )
     except Exception as exc:
         logger.debug(
             f"Could not compute manual RBFE mapping coverage for {pair_id}: {exc}"
@@ -1719,7 +1830,11 @@ def _write_manual_pair_mapping_artifacts(
                 f"Could not draw manual RBFE atom-mapping image for {pair_id}: {exc}"
             )
 
-    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+    return _edge_asset_from_mapping_dir(
+        pair_id,
+        pair_dir,
+        prefer_pocket_shape=include_pocket_shape,
+    )
 
 
 def write_pair_mapping_artifacts(
@@ -1734,6 +1849,8 @@ def write_pair_mapping_artifacts(
     atom_mapper_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
     overwrite: bool = False,
+    include_pocket_shape: bool = False,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, Any]:
     """Generate reusable atom-mapping artifacts for one planned RBFE pair."""
     pair_id = f"{ref}~{alt}"
@@ -1750,6 +1867,8 @@ def write_pair_mapping_artifacts(
             pair_dir=pair_dir,
             map_b_to_a=manual_map,
             source_label=overrides.source_label(ref, alt) if overrides else "manual",
+            include_pocket_shape=include_pocket_shape,
+            minimal_mapping_atom=minimal_mapping_atom,
         )
 
     if mapping_json.is_file() and not overwrite:
@@ -1760,10 +1879,20 @@ def write_pair_mapping_artifacts(
             )
             _remove_optional_mapping_artifacts(pair_dir)
         else:
-            cached_asset = _edge_asset_from_mapping_dir(pair_id, pair_dir)
-            if (
-                "pocket_shape_score" in cached_asset
-                and cached_asset.get("image_kind") == "pocket_shape_overlap"
+            cached_asset = _edge_asset_from_mapping_dir(
+                pair_id,
+                pair_dir,
+                prefer_pocket_shape=include_pocket_shape,
+            )
+            _validate_minimal_mapping_atom(
+                pair_id,
+                _cached_pair_mapping_atom_count(pair_dir, cached_asset),
+                minimal_mapping_atom,
+            )
+            if not include_pocket_shape:
+                return cached_asset
+            if "pocket_shape_score" in cached_asset and (
+                cached_asset.get("image_kind") == "pocket_shape_overlap"
             ):
                 return cached_asset
             logger.debug(
@@ -1806,6 +1935,11 @@ def write_pair_mapping_artifacts(
     map_b_to_a = _serialize_atom_mapping(map_b_to_a)
     if not map_b_to_a:
         raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+    _validate_minimal_mapping_atom(
+        pair_id,
+        len(map_b_to_a),
+        minimal_mapping_atom,
+    )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     mapping_json.write_text(json.dumps(map_b_to_a, indent=2, sort_keys=True))
@@ -1818,19 +1952,20 @@ def write_pair_mapping_artifacts(
     }
     status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
     status_payload.update(_mapping_metric_scores(atom_mapping_obj))
-    status_payload.update(
-        _pocket_similarity_metric_scores(
+    if include_pocket_shape:
+        status_payload.update(
+            _pocket_similarity_metric_scores(
+                rdmol_ref,
+                rdmol_alt,
+                atom_mapping_obj,
+            )
+        )
+        _write_pocket_shape_overlap_png(
             rdmol_ref,
             rdmol_alt,
-            atom_mapping_obj,
+            pair_dir / "pocket_shape_overlap.png",
+            pair_id=pair_id,
         )
-    )
-    _write_pocket_shape_overlap_png(
-        rdmol_ref,
-        rdmol_alt,
-        pair_dir / "pocket_shape_overlap.png",
-        pair_id=pair_id,
-    )
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )
@@ -1845,7 +1980,11 @@ def write_pair_mapping_artifacts(
     except Exception as exc:
         logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
 
-    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+    return _edge_asset_from_mapping_dir(
+        pair_id,
+        pair_dir,
+        prefer_pocket_shape=include_pocket_shape,
+    )
 
 
 def write_planned_mapping_artifacts(
@@ -1859,18 +1998,22 @@ def write_planned_mapping_artifacts(
     atom_mapper_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
     overwrite: bool = False,
+    protocol: str | None = None,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, dict[str, Any]]:
     """
     Generate reusable atom-mapping artifacts for a planned RBFE network.
 
     Each edge gets ``mapping.json``, optional ``mapping.pkl``/``mapping.png``,
-    ``pocket_shape_overlap.png``, and ``mapping_status.json`` under ``out_dir``.
-    The returned metadata is fed directly into the interactive network HTML so
-    users can inspect receptor-frame pocket overlap, coverage, mapper identity,
-    and metric scores before production.
+    and ``mapping_status.json`` under ``out_dir``. For ``rbfe_septop`` only,
+    pocket-shape overlap metrics and images are also generated. The returned
+    metadata is fed directly into the interactive network HTML so users can
+    inspect mapping coverage, mapper identity, and metric scores before
+    production.
     """
     assets: dict[str, dict[str, Any]] = {}
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
+    include_pocket_shape = _normalize_protocol(protocol) == "rbfe_septop"
     for ref_raw, alt_raw in pairs:
         ref = sanitize_ligand_name(str(ref_raw))
         alt = sanitize_ligand_name(str(alt_raw))
@@ -1890,6 +2033,8 @@ def write_planned_mapping_artifacts(
             atom_mapper_options=atom_mapper_options,
             atom_mapping_overrides=overrides,
             overwrite=overwrite,
+            include_pocket_shape=include_pocket_shape,
+            minimal_mapping_atom=minimal_mapping_atom,
         )
     return assets
 

@@ -239,12 +239,14 @@ def test_build_rbfe_network_plan_writes_planned_html(
     cfg = RBFENetworkArgs(
         mapping_file=mapping_file,
         atom_mapping_file=atom_mapping_file,
+        minimal_mapping_atom=4,
     )
     seen: dict[str, object] = {}
 
     def _fake_mapping_artifacts(**kwargs):
         overrides = kwargs["atom_mapping_overrides"]
         seen["manual_A_B"] = overrides.get_b_to_a("A", "B")
+        seen["minimal_mapping_atom"] = kwargs["minimal_mapping_atom"]
         return {
             "A~B": {
                 "image_data_uri": "data:image/png;base64,ZmFrZQ==",
@@ -272,7 +274,9 @@ def test_build_rbfe_network_plan_writes_planned_html(
     assert payload["pairs"] == [["A", "B"], ["A", "C"]]
     assert payload["atom_mapping_file"] == str(atom_mapping_file)
     assert payload["n_atom_mapping_overrides"] == 1
+    assert payload["minimal_mapping_atom"] == 4
     assert seen["manual_A_B"] == {0: 1, 2: 3}
+    assert seen["minimal_mapping_atom"] == 4
     html_path = tmp_path / "rbfe_network.html"
     assert html_path.exists()
     html_text = html_path.read_text()
@@ -513,7 +517,9 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
         lambda path: Path(path).stem,
     )
     mapping_file = tmp_path / "mapping.json"
-    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+    mapping_file.write_text(
+        json.dumps({"pairs": [["A", "B"], ["A", "C"], ["B", "C"]]})
+    )
     seen: dict[str, object] = {}
 
     def _fake_mapping_artifacts(**kwargs):
@@ -534,6 +540,12 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
                 "n_ref_atoms": 6,
                 "n_alt_atoms": 7,
             },
+            "B~C": {
+                "full_atom_mapping": False,
+                "n_mapped": 4,
+                "n_ref_atoms": 8,
+                "n_alt_atoms": 7,
+            },
         }
 
     monkeypatch.setattr(
@@ -552,8 +564,8 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
         tmp_path,
     )
 
-    assert seen["pairs"] == [["A", "B"], ["A", "C"]]
-    assert payload["pairs"] == [["A", "C"]]
+    assert seen["pairs"] == [["A", "B"], ["A", "C"], ["B", "C"]]
+    assert payload["pairs"] == [["A", "C"], ["B", "C"]]
     assert payload["skipped_full_atom_map_edges"] == [
         {
             "pair": ["A", "B"],
@@ -565,6 +577,67 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
             "reason": "full_heavy_atom_mapping",
         }
     ]
+
+
+def test_build_rbfe_network_plan_rejects_orphan_ligand(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+
+    with pytest.raises(ValueError, match="C"):
+        run_mod._build_rbfe_network_plan(
+            ["A", "B", "C"],
+            {
+                "A": str(tmp_path / "A.sdf"),
+                "B": str(tmp_path / "B.sdf"),
+                "C": str(tmp_path / "C.sdf"),
+            },
+            RBFENetworkArgs(mapping_file=mapping_file),
+            tmp_path,
+        )
+
+
+def test_build_rbfe_network_plan_rejects_orphan_after_full_map_filter(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    monkeypatch.setattr(
+        "batter.rbfe.ligand_identity_key",
+        lambda path: Path(path).stem,
+    )
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+
+    def _fake_mapping_artifacts(**kwargs):
+        return {
+            "A~B": {"full_atom_mapping": False, "n_mapped": 4},
+            "A~C": {"full_heavy_atom_mapping": True, "n_mapped": 6},
+        }
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    with pytest.raises(ValueError, match="C"):
+        run_mod._build_rbfe_network_plan(
+            ["A", "B", "C"],
+            {
+                "A": str(tmp_path / "A.sdf"),
+                "B": str(tmp_path / "B.sdf"),
+                "C": str(tmp_path / "C.sdf"),
+            },
+            RBFENetworkArgs(mapping_file=mapping_file),
+            tmp_path,
+        )
 
 
 def test_build_rbfe_network_plan_treats_reverse_atom_mapping_edge_as_planned(
@@ -609,7 +682,7 @@ def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_d
 
     monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
     mapping_file = tmp_path / "mapping.json"
-    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
     atom_mapping_file = tmp_path / "atom_mapping.json"
     atom_mapping_file.write_text(json.dumps({"B~C": {"0": 1}}))
 
@@ -632,7 +705,7 @@ def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_d
         tmp_path,
     )
 
-    assert payload["pairs"] == [["A", "B"]]
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
     assert payload["add_atom_mapping_edges"] is False
     assert payload["unused_atom_mapping_overrides"] == [["B", "C"]]
 

@@ -287,6 +287,12 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.allow_bond_breaks is False
     assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
+    assert cfg.minimal_mapping_atom == 3
+
+
+def test_rbfe_minimal_mapping_atom_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="minimal_mapping_atom"):
+        RBFENetworkArgs(minimal_mapping_atom=0)
 
 
 def test_run_config_rejects_rbfe_kartograf_hydrogen_mapping_options(

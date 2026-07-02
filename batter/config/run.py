@@ -890,6 +890,14 @@ class RBFENetworkArgs(BaseModel):
             "not already present in the planned network in either direction."
         ),
     )
+    minimal_mapping_atom: int = Field(
+        3,
+        ge=1,
+        description=(
+            "Minimum number of atoms that each planned RBFE pair mapping must "
+            "include before BATTER accepts the edge."
+        ),
+    )
     mapping_file: Optional[Path] = Field(
         None,
         description="Optional path to a mapping file (JSON/YAML/text).",

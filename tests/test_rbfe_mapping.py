@@ -13,6 +13,7 @@ from rdkit.Geometry import Point3D
 from batter.rbfe import (
     _edge_asset_from_mapping_dir,
     _kartograf_mapper_kwargs,
+    _mapping_metric_scores,
     _pocket_grid_overlap_metrics,
     _pocket_grid_overlap_score,
     _write_pocket_shape_overlap_png,
@@ -24,6 +25,7 @@ from batter.rbfe import (
     load_mapping_file,
     resolve_network_scorer_name,
     resolve_mapping_fn,
+    validate_rbfe_network_ligand_coverage,
     write_pair_mapping_artifacts,
 )
 
@@ -149,7 +151,7 @@ def test_manual_override_mapper_to_dict_is_json_compatible() -> None:
 
 
 def test_write_pair_mapping_artifacts_uses_manual_override(tmp_path: Path) -> None:
-    overrides = ManualAtomMappingOverrides({("A", "B"): {0: 1, 2: 3}})
+    overrides = ManualAtomMappingOverrides({("A", "B"): {0: 1, 2: 3, 4: 5}})
     ligand_files = {
         "A": tmp_path / "A.sdf",
         "B": tmp_path / "B.sdf",
@@ -164,12 +166,76 @@ def test_write_pair_mapping_artifacts_uses_manual_override(tmp_path: Path) -> No
     )
 
     pair_dir = tmp_path / "mappings" / "A~B"
-    assert json.loads((pair_dir / "mapping.json").read_text()) == {"0": 1, "2": 3}
+    assert json.loads((pair_dir / "mapping.json").read_text()) == {
+        "0": 1,
+        "2": 3,
+        "4": 5,
+    }
     status = json.loads((pair_dir / "mapping_status.json").read_text())
     assert status["mapper"] == "manual"
     assert status["mapping_override"] is True
-    assert status["n_mapped"] == 2
+    assert status["n_mapped"] == 3
     assert asset["mapper"] == "manual"
+
+
+def test_write_pair_mapping_artifacts_rejects_tiny_manual_mapping(
+    tmp_path: Path,
+) -> None:
+    overrides = ManualAtomMappingOverrides({("A", "B"): {29: 22}})
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"A~B maps only 1 atom, below rbfe\.minimal_mapping_atom=3.*"
+            r"lower rbfe\.minimal_mapping_atom"
+        ),
+    ):
+        write_pair_mapping_artifacts(
+            ref="A",
+            alt="B",
+            ligand_files={"A": tmp_path / "A.sdf", "B": tmp_path / "B.sdf"},
+            out_dir=tmp_path / "mappings",
+            atom_mapping_overrides=overrides,
+        )
+
+
+def test_write_pair_mapping_artifacts_allows_lower_minimal_mapping_atom(
+    tmp_path: Path,
+) -> None:
+    overrides = ManualAtomMappingOverrides({("A", "B"): {29: 22}})
+
+    asset = write_pair_mapping_artifacts(
+        ref="A",
+        alt="B",
+        ligand_files={"A": tmp_path / "A.sdf", "B": tmp_path / "B.sdf"},
+        out_dir=tmp_path / "mappings",
+        atom_mapping_overrides=overrides,
+        minimal_mapping_atom=1,
+    )
+
+    assert asset["n_mapped"] == 1
+
+
+def test_write_pair_mapping_artifacts_rejects_tiny_cached_mapping(
+    tmp_path: Path,
+) -> None:
+    pair_dir = tmp_path / "mappings" / "A~B"
+    pair_dir.mkdir(parents=True)
+    (pair_dir / "mapping.json").write_text(json.dumps({"29": 22}))
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps({"pair_id": "A~B", "n_mapped": 1})
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"A~B maps only 1 atom, below rbfe\.minimal_mapping_atom=3",
+    ):
+        write_pair_mapping_artifacts(
+            ref="A",
+            alt="B",
+            ligand_files={"A": tmp_path / "A.sdf", "B": tmp_path / "B.sdf"},
+            out_dir=tmp_path / "mappings",
+        )
 
 
 def test_konnektor_pairs_missing_dependency(tmp_path: Path) -> None:
@@ -322,7 +388,7 @@ def test_write_pocket_shape_overlap_png(tmp_path: Path) -> None:
     assert out.stat().st_size > 0
 
 
-def test_edge_asset_prefers_pocket_shape_overlap_image(tmp_path: Path) -> None:
+def test_edge_asset_defaults_to_atom_mapping_image(tmp_path: Path) -> None:
     pair_dir = tmp_path / "A~B"
     pair_dir.mkdir()
     (pair_dir / "mapping.json").write_text("{}")
@@ -334,11 +400,99 @@ def test_edge_asset_prefers_pocket_shape_overlap_image(tmp_path: Path) -> None:
 
     asset = _edge_asset_from_mapping_dir("A~B", pair_dir)
 
+    assert asset["image_kind"] == "atom_mapping"
+    assert asset["image_alt"] == "Atom mapping for A~B"
+    assert asset["image_data_uri"].endswith("YXRvbQ==")
+    assert asset["atom_mapping_image_data_uri"].endswith("YXRvbQ==")
+    assert asset["shape_overlap_path"].endswith("pocket_shape_overlap.png")
+    assert asset["pocket_shape_score"] == 0.75
+
+
+def test_edge_asset_can_prefer_pocket_shape_overlap_image(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "A~B"
+    pair_dir.mkdir()
+    (pair_dir / "mapping.json").write_text("{}")
+    (pair_dir / "mapping.png").write_bytes(b"atom")
+    (pair_dir / "pocket_shape_overlap.png").write_bytes(b"shape")
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps({"pocket_shape_score": 0.75})
+    )
+
+    asset = _edge_asset_from_mapping_dir(
+        "A~B",
+        pair_dir,
+        prefer_pocket_shape=True,
+    )
+
     assert asset["image_kind"] == "pocket_shape_overlap"
     assert asset["image_alt"] == "Pocket shape overlap for A~B"
     assert asset["image_data_uri"].endswith("c2hhcGU=")
     assert asset["atom_mapping_image_data_uri"].endswith("YXRvbQ==")
-    assert asset["pocket_shape_score"] == 0.75
+
+
+def test_mapping_metric_scores_skips_grid_metrics_for_single_atom_mapping(
+    monkeypatch,
+) -> None:
+    class OneAtomMapping:
+        componentB_to_componentA = {0: 0}
+        componentA_to_componentB = {0: 0}
+
+    metric_mapping_rmsd = types.ModuleType(
+        "kartograf.mapping_metrics.metric_mapping_rmsd"
+    )
+    metric_volume_ratio = types.ModuleType(
+        "kartograf.mapping_metrics.metric_volume_ratio"
+    )
+    metric_shape_difference = types.ModuleType(
+        "kartograf.mapping_metrics.metric_shape_difference"
+    )
+
+    class MappingRMSDScorer:
+        def get_rmsd(self, mapping):
+            return 0.0
+
+        def get_score(self, mapping):
+            return 1.0
+
+    class MappingRatioMappedAtomsScorer:
+        def get_score(self, mapping):
+            return 0.5
+
+    class MappingVolumeRatioScorer:
+        def __init__(self):
+            raise AssertionError("volume ratio scorer should be skipped")
+
+    def _shape_getattr(name):
+        raise AssertionError("shape grid scorers should be skipped")
+
+    metric_mapping_rmsd.MappingRMSDScorer = MappingRMSDScorer
+    metric_volume_ratio.MappingRatioMappedAtomsScorer = MappingRatioMappedAtomsScorer
+    metric_volume_ratio.MappingVolumeRatioScorer = MappingVolumeRatioScorer
+    metric_shape_difference.__getattr__ = _shape_getattr
+
+    monkeypatch.setitem(
+        sys.modules,
+        "kartograf.mapping_metrics.metric_mapping_rmsd",
+        metric_mapping_rmsd,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "kartograf.mapping_metrics.metric_volume_ratio",
+        metric_volume_ratio,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "kartograf.mapping_metrics.metric_shape_difference",
+        metric_shape_difference,
+    )
+
+    scores = _mapping_metric_scores(OneAtomMapping())
+
+    assert scores == {
+        "mapping_rmsd": 0.0,
+        "mapping_score_rmsd": 1.0,
+        "mapping_score_ratio_mapped_atoms": 0.5,
+    }
 
 
 def test_network_scorer_auto_defaults_to_pocket_shape_for_septop() -> None:
@@ -352,6 +506,15 @@ def test_network_scorer_auto_defaults_to_pocket_shape_for_septop() -> None:
         == "shape_difference"
     )
     assert resolve_network_scorer_name("grid-shape", protocol="rbfe") == "pocket_shape"
+
+
+def test_validate_rbfe_network_ligand_coverage_rejects_orphan_ligand() -> None:
+    with pytest.raises(ValueError, match="C"):
+        validate_rbfe_network_ligand_coverage(
+            ["A", "B", "C"],
+            [("A", "B")],
+            context="test network",
+        )
 
 
 def test_konnektor_pairs_septop_auto_uses_pocket_shape_scorer(
