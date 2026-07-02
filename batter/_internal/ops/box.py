@@ -1043,7 +1043,11 @@ def _rewrite_separate_terminal_methylamide_cap(
     return rewritten, changed
 
 
-def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
+def _rewrite_terminal_amide_caps_for_leap(
+    pdb_path: Path,
+    *,
+    exclude_residue_names: Sequence[str] | None = None,
+) -> int:
     """
     Rewrite terminal amide caps into Amber residue/atom names.
 
@@ -1053,6 +1057,11 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
     standard aminoct library type the cap and bond it to the preceding residue.
     """
     lines = pdb_path.read_text().splitlines(True)
+    excluded = {
+        str(name).strip()
+        for name in (exclude_residue_names or ())
+        if str(name).strip()
+    }
     rewritten: list[str] = []
     block: list[str] = []
     cap_count = 0
@@ -1094,6 +1103,12 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
             block.clear()
             return
 
+        terminal_key = residue_keys[-1]
+        if terminal_key[2] in excluded:
+            rewritten.extend(block)
+            block.clear()
+            return
+
         separate_methylamide = _rewrite_separate_terminal_methylamide_cap(
             block, residue_keys
         )
@@ -1105,7 +1120,6 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
             block.clear()
             return
 
-        terminal_key = residue_keys[-1]
         terminal_atom_names = _atom_names_for_residue(block, terminal_key)
         if (
             "N1" not in terminal_atom_names
@@ -1879,7 +1893,10 @@ def create_box(ctx: BuildContext) -> None:
     else:
         water_box = f"{water_model}BOX"
 
-    build_cap_count = _rewrite_terminal_amide_caps_for_leap(window_dir / "build.pdb")
+    build_cap_count = _rewrite_terminal_amide_caps_for_leap(
+        window_dir / "build.pdb",
+        exclude_residue_names=[mol],
+    )
     if build_cap_count:
         logger.debug(
             "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before pre-solvation LEaP.",
