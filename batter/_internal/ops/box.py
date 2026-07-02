@@ -64,7 +64,7 @@ def _repair_lipid_hydrogens_in_amber_files(
         write_report=window_dir / report_name,
     )
     if result.repaired:
-        logger.info(
+        logger.debug(
             "Repaired {} lipid hydrogen(s) on {} carbon center(s) in {}.",
             result.repaired_hydrogens,
             result.repaired_centers,

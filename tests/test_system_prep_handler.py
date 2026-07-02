@@ -55,6 +55,29 @@ def _make_protein_pdb(path: Path) -> None:
     )
 
 
+def _make_protein_pdb_with_incomplete_residue(path: Path) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line(1, "N", "ALA", "A", 1, 0.0, 0.0, 0.0, "N"),
+            _atom_line(2, "CA", "ALA", "A", 1, 1.0, 0.0, 0.0, "C"),
+            _atom_line(3, "C", "ALA", "A", 1, 1.5, 1.0, 0.0, "C"),
+            _atom_line(4, "O", "ALA", "A", 1, 1.5, 2.0, 0.0, "O"),
+            _atom_line(5, "N", "ASP", "A", 2, 2.5, 0.5, 0.0, "N"),
+            _atom_line(6, "H", "ASP", "A", 2, 2.2, 0.4, 0.0, "H"),
+            _atom_line(7, "N", "GLY", "A", 3, 3.5, 0.5, 0.0, "N"),
+            _atom_line(8, "CA", "GLY", "A", 3, 4.5, 1.0, 0.0, "C"),
+            _atom_line(9, "C", "GLY", "A", 3, 5.5, 0.0, 0.0, "C"),
+            _atom_line(10, "O", "GLY", "A", 3, 6.5, 0.5, 0.0, "O"),
+            "TER\n",
+            _atom_line(11, "N", "SER", "B", 1, 8.0, 0.0, 0.0, "N"),
+            _atom_line(12, "CA", "SER", "B", 1, 9.0, 0.0, 0.0, "C"),
+            _atom_line(13, "C", "SER", "B", 1, 9.5, 1.0, 0.0, "C"),
+            _atom_line(14, "O", "SER", "B", 1, 9.5, 2.0, 0.0, "O"),
+        ],
+    )
+
+
 def _make_fragmented_protein_pdb(
     path: Path,
     *,
@@ -205,7 +228,7 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     runner._protein_input = str(protein)
     runner.ligands_folder.mkdir(parents=True, exist_ok=True)
 
-    expected = np.array([["H", "E", "-"]], dtype="<U1")
+    expected = np.array([["H", "E"]], dtype="<U1")
 
     class DummyDSSP:
         def __init__(self, _u):
@@ -219,8 +242,8 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
 
     result = runner._run_input_protein_dssp()
 
-    assert result["shape"] == [1, 3]
-    assert result["results"] == [["H", "E", "-"]]
+    assert result["shape"] == [1, 2]
+    assert result["results"] == [["H", "E"]]
 
     dssp_npy = Path(result["npy"])
     dssp_json = Path(result["json"])
@@ -228,7 +251,58 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     assert dssp_json.exists()
 
     np.testing.assert_array_equal(np.load(dssp_npy, allow_pickle=False), expected)
-    assert json.loads(dssp_json.read_text()) == [["H", "E", "-"]]
+    assert json.loads(dssp_json.read_text()) == [["H", "E"]]
+
+
+def test_run_input_protein_dssp_splits_chains_and_skips_incomplete_residues(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    protein = tmp_path / "protein.pdb"
+    _make_protein_pdb_with_incomplete_residue(protein)
+    runner._protein_input = str(protein)
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    calls = []
+
+    class DummyDSSP:
+        def __init__(self, atoms):
+            self.residues = list(atoms.residues)
+            self.results = {}
+            calls.append(
+                (
+                    self.residues[0].atoms.chainIDs[0],
+                    tuple(int(residue.resid) for residue in self.residues),
+                )
+            )
+
+        def run(self):
+            code_by_residue = {
+                ("A", 1): "H",
+                ("A", 3): "E",
+                ("B", 1): "H",
+            }
+            self.results["dssp"] = np.array(
+                [
+                    [
+                        code_by_residue[
+                            (residue.atoms.chainIDs[0], int(residue.resid))
+                        ]
+                        for residue in self.residues
+                    ]
+                ],
+                dtype="<U1",
+            )
+            return self
+
+    monkeypatch.setattr(system_prep_mod, "DSSP", DummyDSSP)
+
+    result = runner._run_input_protein_dssp()
+
+    assert calls == [("A", (1,)), ("A", (3,)), ("B", (1,))]
+    assert result["shape"] == [1, 4]
+    assert result["results"] == [["H", "-", "E", "H"]]
 
 
 def test_find_min_xy_box_rotation_reduces_diagonal_xy_area() -> None:
