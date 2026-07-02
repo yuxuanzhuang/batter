@@ -18,6 +18,7 @@ from batter.analysis.sim_validation import (
     STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
     SimValidator,
 )
+from batter._internal.ops.box import _restore_protein_resids_from_renum
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
@@ -538,7 +539,7 @@ def equil_analysis_handler(
             names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
         )
         uu = mda.Universe(str(p["rep_pdb"]))
-        uu.select_atoms("protein").residues.resids = renum["old_resid"].values
+        _restore_protein_resids_from_renum(uu.atoms, renum)
         uu.atoms.write(str(p["rep_pdb"]))
 
     # align representative to initial complex and extract poses
