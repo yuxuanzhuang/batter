@@ -110,7 +110,7 @@ start_ps=$(production_start_ps "$production_start_marker" "$production_initial_r
 select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry"
 rst_in="$SELECTED_MD_RESTART"
 require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
-restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+restart_ps=$(production_restart_ps)
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
@@ -171,7 +171,7 @@ if (( remaining_steps > 0 )); then
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the rolling restart.
-    restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    restart_ps=$(production_restart_ps)
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
@@ -181,7 +181,7 @@ if (( remaining_steps > 0 )); then
     last_rst="md-current.rst7"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
     require_nonempty_file_or_attempt_fail "$last_rst" "[ERROR] Production is marked complete but restart $last_rst is missing."
     print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
 parm $PRMTOP

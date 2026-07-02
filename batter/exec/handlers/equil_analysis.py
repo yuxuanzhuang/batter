@@ -179,7 +179,7 @@ def _write_stable_boresch_distance(
     stable_record["mode"] = mode
     stable_record["usable"] = True
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
-    logger.info(
+    logger.debug(
         "[equil_check:{}] stable Boresch pair: {} to {} "
         "(mean={:.2f} Å, std={:.2f} Å, frames={} from frame {}, "
         "ranked_pairs={}, mode={}).",

@@ -305,6 +305,223 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
     out_pdb.write_text("".join(lines))
 
 
+def _pdb_line_resname(line: str) -> str:
+    return line[17:20].strip() if len(line) >= 20 else ""
+
+
+def _pdb_line_atom_name(line: str) -> str:
+    return line[12:16].strip() if len(line) >= 16 else ""
+
+
+def _renumber_pdb_atom_line(
+    line: str,
+    *,
+    serial: int,
+    resid: int,
+    chain: str = "W",
+) -> str:
+    line = line.rstrip("\n")
+    if len(line) < 54:
+        line = line.ljust(54)
+    return (
+        f"{line[:6]}{serial:5d}"
+        f"{line[11:21]}{chain[:1]}{resid:4d}{line[26:]}\n"
+    )
+
+
+def _iter_water_blocks_from_pdb(pdb_path: Path) -> Iterator[list[str]]:
+    current: list[str] = []
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if _pdb_line_resname(line) != "WAT":
+            continue
+        atom_name = _pdb_line_atom_name(line).upper()
+        if atom_name in {"O", "OW", "OH2"} and current:
+            yield current
+            current = []
+        current.append(line)
+    if current:
+        yield current
+
+
+def _pdb_atom_xyz(line: str) -> np.ndarray | None:
+    try:
+        return np.asarray(
+            [float(line[30:38]), float(line[38:46]), float(line[46:54])],
+            dtype=float,
+        )
+    except Exception:
+        return None
+
+
+def _pdb_atom_name_is_hydrogen(name: str) -> bool:
+    stripped = name.strip().upper()
+    return stripped.startswith("H") or (
+        len(stripped) > 1 and stripped[0].isdigit() and stripped[1] == "H"
+    )
+
+
+def _extra_ligand_heavy_coords_from_build(
+    build_pdb: Path,
+    ligand_resname: str,
+) -> np.ndarray:
+    ligand_blocks: list[list[np.ndarray]] = []
+    current_key: tuple[str, str, str] | None = None
+    current_coords: list[np.ndarray] = []
+    for line in build_pdb.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if _pdb_line_resname(line) != ligand_resname:
+            continue
+        key = (line[21:22], line[22:26], line[26:27])
+        if current_key is not None and key != current_key:
+            ligand_blocks.append(current_coords)
+            current_coords = []
+        current_key = key
+        if not _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
+            xyz = _pdb_atom_xyz(line)
+            if xyz is not None:
+                current_coords.append(xyz)
+    if current_key is not None:
+        ligand_blocks.append(current_coords)
+    if len(ligand_blocks) <= 1:
+        return np.empty((0, 3), dtype=float)
+    coords = [coord for block in ligand_blocks[1:] for coord in block]
+    if not coords:
+        return np.empty((0, 3), dtype=float)
+    return np.asarray(coords, dtype=float)
+
+
+def _water_block_overlaps_coords(
+    block: Sequence[str],
+    coords: np.ndarray,
+    *,
+    box: np.ndarray,
+    cutoff: float,
+) -> bool:
+    if coords.size == 0:
+        return False
+    cutoff2 = float(cutoff) * float(cutoff)
+    for line in block:
+        if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
+            continue
+        water_xyz = _pdb_atom_xyz(line)
+        if water_xyz is None:
+            continue
+        delta = coords - water_xyz
+        if box.shape == (3,) and np.all(np.isfinite(box)) and np.all(box > 0.0):
+            delta = delta - box * np.round(delta / box)
+        if float(np.min(np.sum(delta * delta, axis=1))) < cutoff2:
+            return True
+    return False
+
+
+def _pdb_min_z(pdb_path: Path) -> float:
+    min_z = float("inf")
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        xyz = _pdb_atom_xyz(line)
+        if xyz is None:
+            continue
+        min_z = min(min_z, float(xyz[2]))
+    if not np.isfinite(min_z):
+        raise ValueError(f"No readable atom z coordinates found in {pdb_path}")
+    return min_z
+
+
+def _write_membrane_water_chunks_from_build(
+    window_dir: Path,
+    *,
+    ligand_resname: str,
+    box: Sequence[float],
+    z_max: float | None = None,
+    ligand_clash_cutoff: float = 2.2,
+    max_waters_per_chunk: int = 8000,
+) -> list[Path]:
+    for pattern in (
+        "solvate_pre_wat_*.pdb",
+        "solvate_wat_*.pdb",
+        "solvate_wat_*.prmtop",
+        "solvate_wat_*.inpcrd",
+        "tleap_solvate_wat_*.in",
+        "tleap_solvate_wat_*.log",
+    ):
+        for old_path in window_dir.glob(pattern):
+            old_path.unlink(missing_ok=True)
+
+    chunks: list[Path] = []
+    current_blocks: list[list[str]] = []
+    build_pdb = window_dir / "build.pdb"
+    extra_ligand_coords = _extra_ligand_heavy_coords_from_build(
+        build_pdb, ligand_resname
+    )
+    box_array = np.asarray(box, dtype=float)
+    skipped_z = 0
+    skipped_overlap = 0
+
+    def flush() -> None:
+        if not current_blocks:
+            return
+        chunk_index = len(chunks)
+        out_pdb = window_dir / f"solvate_pre_wat_{chunk_index:02d}.pdb"
+        serial = 1
+        lines: list[str] = []
+        for resid, block in enumerate(current_blocks, start=1):
+            for atom_line in block:
+                lines.append(
+                    _renumber_pdb_atom_line(atom_line, serial=serial, resid=resid)
+                )
+                serial += 1
+            lines.append("TER\n")
+        lines.append("END\n")
+        out_pdb.write_text("".join(lines))
+        chunks.append(out_pdb)
+        current_blocks.clear()
+
+    for block in _iter_water_blocks_from_pdb(build_pdb):
+        if z_max is not None:
+            keep_block = True
+            for line in block:
+                if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
+                    continue
+                water_xyz = _pdb_atom_xyz(line)
+                if water_xyz is not None and float(water_xyz[2]) > float(z_max):
+                    keep_block = False
+                    break
+            if not keep_block:
+                skipped_z += 1
+                continue
+        if _water_block_overlaps_coords(
+            block,
+            extra_ligand_coords,
+            box=box_array,
+            cutoff=ligand_clash_cutoff,
+        ):
+            skipped_overlap += 1
+            continue
+        current_blocks.append(block)
+        if len(current_blocks) >= max_waters_per_chunk:
+            flush()
+    flush()
+    if not chunks:
+        raise ValueError(f"No membrane waters found in {build_pdb}")
+    if skipped_z:
+        logger.debug(
+            "Removed {} membrane water(s) outside the SDR z extent in {}.",
+            skipped_z,
+            window_dir,
+        )
+    if skipped_overlap:
+        logger.debug(
+            "Removed {} membrane water(s) overlapping extra ligand copy/copies in {}.",
+            skipped_overlap,
+            window_dir,
+        )
+    return chunks
+
+
 _REFERENCE_PROTON_RESTORE_EXCLUDED_RESNAMES = {
     "WAT",
     "HOH",
@@ -520,7 +737,7 @@ def _restore_reference_hydrogen_coordinates(
 
     if restored:
         target_pdb.write_text("".join(target_lines))
-        logger.info(
+        logger.debug(
             "Restored {} existing hydrogen coordinate(s) in {} from {}.",
             restored,
             target_pdb.name,
@@ -542,6 +759,50 @@ def _restore_existing_protons_from_reference(window_dir: Path, target_pdb: Path)
         if reference_pdb.exists():
             return _restore_reference_hydrogen_coordinates(target_pdb, reference_pdb)
     return 0
+
+
+def _parmed_reference_translation(
+    structure: pmd.Structure,
+    reference_pdb: Path,
+    *,
+    selection: str = "protein and name CA",
+) -> np.ndarray | None:
+    if not reference_pdb.exists() or structure.coordinates is None:
+        return None
+    current_indices = [
+        atom.idx
+        for atom in structure.atoms
+        if str(atom.name).strip() == "CA"
+    ]
+    if not current_indices:
+        return None
+    reference = mda.Universe(str(reference_pdb))
+    reference_atoms = reference.select_atoms(selection)
+    if reference_atoms.n_atoms != len(current_indices):
+        logger.debug(
+            "Could not compute reference-frame translation: {} current CA atoms, "
+            "{} reference atoms from {!r}.",
+            len(current_indices),
+            reference_atoms.n_atoms,
+            selection,
+        )
+        return None
+    current = np.asarray(structure.coordinates, dtype=float)[current_indices]
+    translation = np.median(reference_atoms.positions - current, axis=0)
+    if not np.all(np.isfinite(translation)):
+        return None
+    return np.asarray(translation, dtype=float)
+
+
+def _translate_parmed_structure(structure: pmd.Structure, translation: Sequence[float]) -> None:
+    if structure.coordinates is None:
+        return
+    vector = np.asarray(translation, dtype=float)
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        return
+    if float(np.linalg.norm(vector)) <= 1.0e-4:
+        return
+    structure.coordinates = np.asarray(structure.coordinates, dtype=float) + vector
 
 
 _TERMINAL_AMIDE_CAP_ATOMS = {"N1": "N", "H1": "HN1", "H2": "HN2"}
@@ -1425,6 +1686,8 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
     _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
+    if work != build_dir:
+        _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
 
     u_full = mda.Universe(str(window_dir / "full.pdb"))
     u_vac = mda.Universe(str(window_dir / "vac.pdb"))
@@ -1517,10 +1780,12 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z = max(0.0, buffer_z - solv_shell)
 
 
+    sdr_abs_z: float | None = None
     if comp == "l":
         buffer_z_left = buffer_z
     elif comp != "q":
         sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+        sdr_abs_z = abs_z
         if buffer_z_left < _MIN_SDR_SOLVATION_BUFFER_Z:
             logger.debug(
                 "[create_box:{}] SDR solvation z buffer {:.3f} Å is below {:.1f} Å; using {:.1f} Å.",
@@ -1532,6 +1797,33 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z_left = _MIN_SDR_SOLVATION_BUFFER_Z
     else:
         buffer_z_left = buffer_z
+
+    reference_dimensions = None
+    membrane_dimensions = None
+    membrane_water_z_max = None
+    if membrane_builder:
+        reference_pdb = window_dir / "equil-reference.pdb"
+        if not reference_pdb.exists():
+            raise FileNotFoundError(
+                f"Membrane FE box creation requires {reference_pdb} to preserve "
+                "the equilibrated coordinate frame."
+            )
+        reference_universe = mda.Universe(str(reference_pdb))
+        if reference_universe.dimensions is None:
+            raise ValueError(f"{reference_pdb} does not contain box dimensions.")
+        reference_dimensions = np.asarray(reference_universe.dimensions[:3], dtype=float)
+        if reference_dimensions.shape != (3,) or not np.all(np.isfinite(reference_dimensions)):
+            raise ValueError(f"{reference_pdb} contains invalid box dimensions.")
+        membrane_dimensions = reference_dimensions.copy()
+        if comp in {"e", "v", "o", "z", "d"}:
+            if sdr_abs_z is None:
+                raise ValueError(
+                    f"Component {comp} requires SDR z information for membrane box creation."
+                )
+            membrane_dimensions[2] = float(sdr_abs_z)
+            solvated_build_pdb = window_dir / "build.pdb"
+            if solvated_build_pdb.exists():
+                membrane_water_z_max = _pdb_min_z(solvated_build_pdb) + float(sdr_abs_z)
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
@@ -1609,10 +1901,20 @@ def create_box(ctx: BuildContext) -> None:
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
-        f.write("model = loadpdb build.pdb\n\n")
-        f.write(
-            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
-        )
+        build_input = "build-dry.pdb" if membrane_builder else "build.pdb"
+        f.write(f"model = loadpdb {build_input}\n\n")
+        if membrane_builder:
+            assert membrane_dimensions is not None
+            f.write(
+                "set model box "
+                f"{{{membrane_dimensions[0]:.6f} "
+                f"{membrane_dimensions[1]:.6f} "
+                f"{membrane_dimensions[2]:.6f}}}\n\n"
+            )
+        else:
+            f.write(
+                f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
+            )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
         f.write("quit\n")
@@ -1622,13 +1924,29 @@ def create_box(ctx: BuildContext) -> None:
     )
     _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
 
+    water_chunk_paths = (
+        _write_membrane_water_chunks_from_build(
+            window_dir,
+            ligand_resname=mol,
+            box=membrane_dimensions,
+            z_max=membrane_water_z_max,
+        )
+        if membrane_builder
+        else []
+    )
+
     # Count waters in build.pdb
     num_waters = sum(
         1 for ln in (window_dir / "build.pdb").read_text().splitlines() if "WAT" in ln
     )
 
-    # pdb4amber
-    run_with_log("pdb4amber -i build.pdb -o build_amber.pdb -y", working_dir=window_dir)
+    # pdb4amber is only used here for residue-renumbering and disulfide metadata.
+    # For membrane systems, do not send the full solvent box through pdb4amber.
+    pdb4amber_input = "build-dry.pdb" if membrane_builder else "build.pdb"
+    run_with_log(
+        f"pdb4amber -i {pdb4amber_input} -o build_amber.pdb -y",
+        working_dir=window_dir,
+    )
     renum_df = pd.read_csv(
         window_dir / "build_amber_renum.txt",
         sep=r"\s+",
@@ -1663,33 +1981,16 @@ def create_box(ctx: BuildContext) -> None:
         system_dimensions = u.dimensions[:3]
 
         if membrane_builder:
-            u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))
-            u.dimensions[0] = u_ref.dimensions[0]
-            u.dimensions[1] = u_ref.dimensions[1]
-            u.dimensions[2] = u.dimensions[2] - 3
-            u.atoms.positions[:, 2] -= 3
+            assert membrane_dimensions is not None
+            u.dimensions[:3] = membrane_dimensions
+            system_dimensions = membrane_dimensions.copy()
+            final_system = u.atoms
 
-            membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
-            memb_z_max = membrane_region.select_atoms("type P").positions[:, 2].max() - 10
-            memb_z_min = membrane_region.select_atoms("type P").positions[:, 2].min() + 10
-            water_in_mem = u.select_atoms(
-                f"byres (resname WAT and prop z > {memb_z_min} and prop z < {memb_z_max})"
-            )
-            final_system = final_system - water_in_mem
+        if not membrane_builder:
+            water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
+            final_system = final_system | water_around_prot
 
-        box_xy = [u.dimensions[0], u.dimensions[1]]
-        water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
-        final_system = final_system | water_around_prot
-
-        if membrane_builder:
-            outside_wat = final_system.select_atoms(
-                "byres (resname WAT and "
-                f"((prop x > {box_xy[0]/2}) or (prop x < -{box_xy[0]/2}) or "
-                f"(prop y > {box_xy[1]/2}) or (prop y < -{box_xy[1]/2})))"
-            )
-            final_system = final_system - outside_wat
-
-        if comp in ["e", "v", "o", "z", "d"]:
+        if comp in ["e", "v", "o", "z", "d"] and not membrane_builder:
             min_pos = final_system.positions[:, 2].min()
             system_dimensions[2] = abs_z
 
@@ -1743,11 +2044,15 @@ def create_box(ctx: BuildContext) -> None:
         final_system_other_mol = (
             final_system_others.select_atoms("not resname WAT") - final_system_ligs
         )
-        final_system_water = final_system_others.select_atoms("resname WAT")
-        final_system_water_notaround = final_system.select_atoms(
-            f"byres (resname WAT and not (around 6 {_PROTEIN_WITH_TERMINAL_CAPS}))"
-        )
-        final_system_water_around = final_system_water - final_system_water_notaround
+        if membrane_builder:
+            final_system_water_notaround = None
+            final_system_water_around = None
+        else:
+            final_system_water = final_system_others.select_atoms("resname WAT")
+            final_system_water_notaround = final_system.select_atoms(
+                f"byres (resname WAT and not (around 6 {_PROTEIN_WITH_TERMINAL_CAPS}))"
+            )
+            final_system_water_around = final_system_water - final_system_water_notaround
 
         # write parts
         _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
@@ -1794,13 +2099,19 @@ def create_box(ctx: BuildContext) -> None:
         if other_lines_exist:
             _write_res_blocks(final_system_other_mol, window_dir / "solvate_pre_others.pdb")
 
-        outside_wat_exist = len(final_system_water_notaround.residues) != 0
+        outside_wat_exist = (
+            final_system_water_notaround is not None
+            and len(final_system_water_notaround.residues) != 0
+        )
         if outside_wat_exist:
             _write_res_blocks(
                 final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
             )
 
-        around_wat_exist = len(final_system_water_around.residues) != 0
+        around_wat_exist = (
+            final_system_water_around is not None
+            and len(final_system_water_around.residues) != 0
+        )
         if around_wat_exist:
             _write_res_blocks(
                 final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
@@ -1921,8 +2232,37 @@ def create_box(ctx: BuildContext) -> None:
         num_ions = neu_cat
         num_ani = 0
 
+    water_part_prefixes: list[str] = []
+    if membrane_builder:
+        for chunk_index, chunk_path in enumerate(water_chunk_paths):
+            unit_name = f"wat{chunk_index:02d}"
+            prefix = f"solvate_wat_{chunk_index:02d}"
+            water_part_prefixes.append(prefix)
+            tleap_chunk = window_dir / f"tleap_{prefix}.in"
+            _cp(window_dir / "tleap.in", tleap_chunk)
+            with tleap_chunk.open("a") as f:
+                if water_model != "TIP3PF":
+                    f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+                else:
+                    f.write("source leaprc.water.fb3\n\n")
+                f.write(f"{unit_name} = loadpdb {chunk_path.name}\n\n")
+                f.write(
+                    f"set {unit_name} box "
+                    f"{{{system_dimensions[0]:.6f} "
+                    f"{system_dimensions[1]:.6f} "
+                    f"{system_dimensions[2]:.6f}}}\n"
+                )
+                f.write(f"savepdb {unit_name} {prefix}.pdb\n")
+                f.write(
+                    f"saveamberparm {unit_name} {prefix}.prmtop {prefix}.inpcrd\nquit\n"
+                )
+            run_with_log(
+                f"{tleap} -s -f {tleap_chunk.name} > tleap_{prefix}.log",
+                working_dir=window_dir,
+            )
+
     # outside water — ionization
-    if (window_dir / "solvate_pre_outside_wat.pdb").exists():
+    if (not membrane_builder) and (window_dir / "solvate_pre_outside_wat.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_outside_wat.in")
         with (window_dir / "tleap_solvate_outside_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -1951,7 +2291,7 @@ def create_box(ctx: BuildContext) -> None:
         )
 
     # around water
-    if (window_dir / "solvate_pre_around_water.pdb").exists():
+    if (not membrane_builder) and (window_dir / "solvate_pre_around_water.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_around_wat.in")
         with (window_dir / "tleap_solvate_around_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -2012,14 +2352,22 @@ def create_box(ctx: BuildContext) -> None:
         )
         combined += others_p
         other_parts.append(others_p)
-    if (window_dir / "solvate_outside_wat.prmtop").exists():
+    if membrane_builder:
+        for prefix in water_part_prefixes:
+            water_pmd = pmd.load_file(
+                str(window_dir / f"{prefix}.prmtop"),
+                str(window_dir / f"{prefix}.inpcrd"),
+            )
+            combined += water_pmd
+            other_parts.append(water_pmd)
+    elif (window_dir / "solvate_outside_wat.prmtop").exists():
         out_wat_pmd =  pmd.load_file(
             str(window_dir / "solvate_outside_wat.prmtop"),
             str(window_dir / "solvate_outside_wat.inpcrd"),
         )
         combined += out_wat_pmd
         other_parts.append(out_wat_pmd)
-    if (window_dir / "solvate_around_wat.prmtop").exists():
+    if (not membrane_builder) and (window_dir / "solvate_around_wat.prmtop").exists():
         around_wat_pmd = pmd.load_file(
             str(window_dir / "solvate_around_wat.prmtop"),
             str(window_dir / "solvate_around_wat.inpcrd"),
@@ -2027,14 +2375,11 @@ def create_box(ctx: BuildContext) -> None:
         combined += around_wat_pmd
         other_parts.append(around_wat_pmd)
 
-    if len(other_parts) == 1:
-        other_parts_pmd = other_parts[0]
-    elif len(other_parts) == 2:
-        other_parts_pmd = other_parts[0] + other_parts[1]
-    elif len(other_parts) == 3:
-        other_parts_pmd = other_parts[0] + other_parts[1] + other_parts[2]
-    else:
-        raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
+    if not other_parts:
+        raise ValueError("No non-vacuum solvent/other parts were generated.")
+    other_parts_pmd = other_parts[0]
+    for part in other_parts[1:]:
+        other_parts_pmd = other_parts_pmd + part
 
     if comp == "q" and bool(getattr(sim, "fix_ring_penetration", True)):
         pre_repair_vac_coordinates = np.asarray(vac.coordinates, dtype=float).copy()
@@ -2067,6 +2412,24 @@ def create_box(ctx: BuildContext) -> None:
             )
             combined.coordinates = combined_coordinates
 
+    if membrane_builder:
+        reference_translation = _parmed_reference_translation(
+            combined,
+            window_dir / "equil-reference.pdb",
+        )
+        if reference_translation is not None:
+            _translate_parmed_structure(combined, reference_translation)
+            _translate_parmed_structure(vac, reference_translation)
+            _translate_parmed_structure(other_parts_pmd, reference_translation)
+            logger.debug(
+                "Translated final {} system back to equil-reference frame by "
+                "[{:.3f}, {:.3f}, {:.3f}] Å.",
+                comp,
+                float(reference_translation[0]),
+                float(reference_translation[1]),
+                float(reference_translation[2]),
+            )
+
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
     combined.save(str(window_dir / "full.pdb"), overwrite=True)
@@ -2075,6 +2438,8 @@ def create_box(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
     _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
+    if work != build_dir:
+        _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
 
     other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
     other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)

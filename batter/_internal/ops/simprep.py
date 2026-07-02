@@ -911,10 +911,13 @@ def write_build_from_aligned(
             ):
                 offset = np.asarray(extra_ligand_offsets[i - 1], dtype=float)
             else:
+                target_center = _coords_from_ligand_block(target_block).mean(axis=0)
                 offset = np.asarray(
                     [
-                        x_max + (i - 1) * ABFE_DIFF_BULK_COPY_SEPARATION,
-                        y_max,
+                        x_max
+                        + (i - 1) * ABFE_DIFF_BULK_COPY_SEPARATION
+                        - float(target_center[0]),
+                        y_max - float(target_center[1]),
                         float(shift_sdr_dist),
                     ],
                     dtype=float,

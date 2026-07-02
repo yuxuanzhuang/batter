@@ -161,6 +161,7 @@ def _python_split_rec_file(
     solv_shell: float,
     other_mol: Sequence[str],
     lipid_mol: Sequence[str],
+    keep_all_waters: bool = False,
 ) -> None:
     """Python fallback for split-ini.tcl when VMD is unavailable."""
     rec_file = workdir / "rec_file.pdb"
@@ -186,16 +187,22 @@ def _python_split_rec_file(
     if lipid_mol:
         near_terms.append(f"resname {' '.join(str(name) for name in lipid_mol)}")
     near_sel = "(" + " or ".join(near_terms) + ")"
-    wat = u.select_atoms(
-        f"water and same residue as (around {float(solv_shell):.6g} {near_sel})"
-    )
+    if keep_all_waters:
+        wat = u.select_atoms("water")
+    else:
+        wat = u.select_atoms(
+            f"water and same residue as (around {float(solv_shell):.6g} {near_sel})"
+        )
     if wat.n_atoms:
         wat.residues.resnames = "WAT"
 
-    ion = u.select_atoms(
-        "resname Na+ Cl- K+ and same residue as "
-        "(around 5 (protein or resname ACE NMA NME NHE))"
-    )
+    if keep_all_waters:
+        ion = u.select_atoms("resname Na+ Cl- K+")
+    else:
+        ion = u.select_atoms(
+            "resname Na+ Cl- K+ and same residue as "
+            "(around 5 (protein or resname ACE NMA NME NHE))"
+        )
 
     _write_atomgroup_pdb(dum, workdir / "dummy.pdb")
     _write_atomgroup_pdb(prot, workdir / "protein.pdb")
@@ -239,6 +246,69 @@ def _python_measure_fit(
     rotation, translation = _kabsch_transform(np.asarray(mob_pos), np.asarray(ref_pos))
     mob.atoms.positions = np.asarray(mob.atoms.positions) @ rotation + translation
     mob.atoms.write(str(workdir / output_pdb))
+
+
+def _translate_pdb_to_reference_frame(
+    *,
+    target_pdb: Path,
+    reference_pdb: Path,
+    selection: str = "protein and name CA",
+) -> np.ndarray | None:
+    """Translate a generated PDB back to the reference coordinate frame."""
+    if not target_pdb.exists() or not reference_pdb.exists():
+        return None
+
+    target = mda.Universe(str(target_pdb))
+    reference = mda.Universe(str(reference_pdb))
+    target_sel = target.select_atoms(selection)
+    reference_sel = reference.select_atoms(selection)
+    if target_sel.n_atoms == 0 or reference_sel.n_atoms == 0:
+        logger.debug(
+            "Could not restore {} to reference frame: empty selection {!r}.",
+            target_pdb.name,
+            selection,
+        )
+        return None
+    if target_sel.n_atoms != reference_sel.n_atoms:
+        logger.debug(
+            "Could not restore {} to reference frame: selection {!r} has {} target "
+            "atoms and {} reference atoms.",
+            target_pdb.name,
+            selection,
+            target_sel.n_atoms,
+            reference_sel.n_atoms,
+        )
+        return None
+
+    translation = np.median(reference_sel.positions - target_sel.positions, axis=0)
+    if not np.all(np.isfinite(translation)):
+        return None
+    if float(np.linalg.norm(translation)) <= 1.0e-4:
+        return translation
+
+    target.atoms.positions = target.atoms.positions + translation
+    target.atoms.write(str(target_pdb))
+    logger.debug(
+        "Translated {} back to reference frame by [{:.3f}, {:.3f}, {:.3f}] Å.",
+        target_pdb.name,
+        float(translation[0]),
+        float(translation[1]),
+        float(translation[2]),
+    )
+    return translation
+
+
+def _translate_pdb_by_vector(target_pdb: Path, translation: Sequence[float]) -> None:
+    if not target_pdb.exists():
+        return
+    vector = np.asarray(translation, dtype=float)
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        return
+    if float(np.linalg.norm(vector)) <= 1.0e-4:
+        return
+    target = mda.Universe(str(target_pdb))
+    target.atoms.positions = target.atoms.positions + vector
+    target.atoms.write(str(target_pdb))
 
 
 def _write_python_prep_script_marker(workdir: Path) -> None:
@@ -406,7 +476,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
     values = _boresch_frame_values(receptor_atoms, ligand_atoms)
     margins = _boresch_frame_margins(values or ())
     if list(selected_names[:3]) != guarded_names:
-        logger.info(
+        logger.debug(
             "[build_complex_z] Replaced ABFE Boresch ligand anchors for {}: {} -> {} "
             "(angle margin {:.1f} deg, torsion margin {:.1f} deg).",
             ligand_label,
@@ -1735,6 +1805,12 @@ def build_complex_z(ctx) -> bool:
     lipid_mol_vmd = " ".join(lipid_mol) if lipid_mol else "XXX"
     with open(_p("split-ini.tcl"), "rt") as fin, open(_p("split.tcl"), "wt") as fout:
         for line in fin:
+            if membrane_builder and line.startswith("set wat "):
+                fout.write('set wat [atomselect 0 "water"]\n')
+                continue
+            if membrane_builder and line.startswith("set ion "):
+                fout.write('set ion [atomselect 0 "resname \'Na+\' \'Cl-\' \'K+\'"]\n')
+                continue
             fout.write(
                 line.replace("SHLL", f"{solv_shell:4.2f}")
                 .replace("OTHRS", str(other_mol_vmd))
@@ -1751,6 +1827,7 @@ def build_complex_z(ctx) -> bool:
             solv_shell=float(solv_shell),
             other_mol=other_mol,
             lipid_mol=lipid_mol,
+            keep_all_waters=bool(membrane_builder),
         )
 
     # 6) merge -> complex.pdb (strip headers/CRYST1/CONECT/END)
@@ -1821,11 +1898,14 @@ def build_complex_z(ctx) -> bool:
         for ln in fin:
             if len(ln.split()) > 3:
                 fout.write(ln)
-    _run_pdb4amber_or_copy(
-        _p("aligned-clean.pdb"),
-        _p("aligned_amber.pdb"),
-        working_dir=workdir,
-    )
+    if membrane_builder:
+        shutil.copy2(_p("aligned-clean.pdb"), _p("aligned_amber.pdb"))
+    else:
+        _run_pdb4amber_or_copy(
+            _p("aligned-clean.pdb"),
+            _p("aligned_amber.pdb"),
+            working_dir=workdir,
+        )
     u = mda.Universe(str(_p("aligned_amber.pdb")))
 
     # optional lipid resid fix post-amber
@@ -2004,6 +2084,14 @@ def build_complex_z(ctx) -> bool:
                 all_lig_name_str = " ".join(str(x) for x in lig_names)
                 _run_prep(all_lig_name_str)
                 lig_name_str = all_lig_name_str
+
+    prep_translation = _translate_pdb_to_reference_frame(
+        target_pdb=_p(f"fe-{mol}.pdb"),
+        reference_pdb=_p("aligned_amber.pdb"),
+    )
+    if prep_translation is not None:
+        _translate_pdb_by_vector(_p(f"{mol}.pdb"), prep_translation)
+        _translate_pdb_by_vector(_p(f"{mol}-noh.pdb"), prep_translation)
 
     # 12) anchors.txt -> validate, rename with ligand tag, write header into fe-<mol>.pdb
     anchors_txt = _p("anchors.txt")

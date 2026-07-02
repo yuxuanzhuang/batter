@@ -211,11 +211,15 @@ if (( remaining_steps > 0 )); then
         reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
         exit 1
     fi
+    read restart_ps last_idx < <(window_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+    [[ -z $restart_ps ]] && restart_ps=0
+    current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
+    [[ -z $current_ps ]] && current_ps=0
 else
     current_ps="$total_ps"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
     echo "FINISHED" > ${PFOLDER}/FINISHED
     echo "[INFO] Simulation complete; writing per-window FINISHED markers."
     for ((i = 0; i < N_WINDOWS; i++)); do

@@ -944,7 +944,7 @@ report_progress() {
     [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
     if [[ $seg -ge 0 ]]; then
         stage="production"
-        tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
+        tps=$(production_restart_ps 2>/dev/null || echo 0)
         if [[ -s production-start.ps ]]; then
             tps=$(production_elapsed_ps "$tps" "$(cat production-start.ps)")
         fi
@@ -1191,6 +1191,14 @@ remaining_steps_from_time() {
         BEGIN {
             rem = tot - cur
             if (dt <= 0 || rem <= 0) {
+                print 0
+                exit
+            }
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            if (rem <= tol) {
                 print 0
                 exit
             }
@@ -1558,6 +1566,25 @@ completed_steps() {
     echo "$tps"
 }
 
+production_restart_ps() {
+    local current_rst=${1:-md-current.rst7}
+    local previous_rst=${2:-md-previous.rst7}
+    local tps prev_tps
+
+    tps=$(completed_time_ps_from_rst "$current_rst")
+
+    if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
+        prev_tps=$(completed_time_ps_from_rst "$previous_rst")
+        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
+            tps="$prev_tps"
+        else
+            tps=0
+        fi
+    fi
+
+    echo "$tps"
+}
+
 production_start_ps() {
     local marker=${1:-production-start.ps}
     local initial_rst=${2:-eq.rst7}
@@ -1605,10 +1632,26 @@ completed_production_ps() {
     local initial_rst=${3:-eq.rst7}
     local absolute_ps start_ps
 
-    absolute_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    absolute_ps=$(production_restart_ps)
     [[ -n $absolute_ps ]] || absolute_ps=0
     start_ps=$(production_start_ps "$marker" "$initial_rst")
     production_elapsed_ps "$absolute_ps" "$start_ps"
+}
+
+production_is_complete() {
+    local current_ps=$1
+    local total_ps=$2
+    local dt_ps=${3:-0}
+
+    awk -v cur="$current_ps" -v tot="$total_ps" -v dt="$dt_ps" '
+        BEGIN {
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            exit !((cur + tol) >= tot)
+        }
+    '
 }
 
 

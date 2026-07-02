@@ -601,6 +601,14 @@ def _force_fe_mini_constraints(line: str) -> str:
     return line
 
 
+def _force_softcore_mini_constraints(line: str) -> str:
+    if re.search(r"\bntf\s*=", line):
+        return "  ntf = 1,\n"
+    if re.search(r"\bntc\s*=", line):
+        return "  ntc = 2,\n"
+    return line
+
+
 def _force_x_mini_constraints(line: str) -> str:
     if re.search(r"\bntf\s*=", line):
         return "  ntf = 1,\n"
@@ -993,7 +1001,7 @@ def _sim_files_d_sdr_charge_transfer(
     for out_name in ("mini.in", "mini_eq.in"):
         with template_mini.open("rt") as fin, (windows_dir / out_name).open("wt") as fout:
             for line in fin:
-                line = _force_fe_mini_constraints(line)
+                line = _force_softcore_mini_constraints(line)
                 if "restraintmask" in line:
                     line = f"  restraintmask = '{initial_equil_restraint_mask}',\n"
                 elif "gti_bat_sc" in line:
@@ -1297,7 +1305,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
-                line = _force_fe_mini_constraints(line)
+                line = _force_softcore_mini_constraints(line)
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -1428,7 +1436,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
-                line = _force_fe_mini_constraints(line)
+                line = _force_softcore_mini_constraints(line)
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -2066,7 +2074,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini.in").open("wt") as fout,
     ):
         for line in fin:
-            line = _force_fe_mini_constraints(line)
+            line = _force_softcore_mini_constraints(line)
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("lbd_val", f"{float(weight):6.5f}")
@@ -2231,7 +2239,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini_eq.in").open("wt") as fout,
     ):
         for line in fin:
-            line = _force_fe_mini_constraints(line)
+            line = _force_softcore_mini_constraints(line)
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("lbd_val", f"{float(weight):6.5f}")
