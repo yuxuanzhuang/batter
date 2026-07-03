@@ -418,3 +418,94 @@ def test_wait_loop_progress_starts_from_existing_sentinels(
     assert progress.initial == 1
     assert progress.n == 2
     assert progress.postfix["pending"] == 0
+
+
+def test_wait_loop_failed_progress_is_red_and_logs_failed_folder(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    failed_dir = (
+        tmp_path
+        / "executions"
+        / "rep1"
+        / "simulations"
+        / "BAD"
+        / "fe"
+        / "z"
+        / "z-1"
+    )
+    running_dir = (
+        tmp_path
+        / "executions"
+        / "rep1"
+        / "simulations"
+        / "RUN"
+        / "fe"
+        / "z"
+        / "z-1"
+    )
+    failed_dir.mkdir(parents=True)
+    running_dir.mkdir(parents=True)
+    (failed_dir / "FAILED").write_text("FAILED\n")
+    (running_dir / "JOBID").write_text("1\n")
+
+    class FakeTqdm:
+        instances: list["FakeTqdm"] = []
+
+        def __init__(self, iterable=None, total=None, initial=0, desc=None, **kwargs):
+            self.iterable = iterable
+            self.total = total
+            self.initial = initial
+            self.desc = desc
+            self.n = initial
+            self.postfix = {}
+            self.colour = kwargs.get("colour")
+            FakeTqdm.instances.append(self)
+
+        def __iter__(self):
+            return iter(self.iterable or [])
+
+        def set_postfix(self, values):
+            self.postfix = dict(values)
+
+        def refresh(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "tqdm", SimpleNamespace(tqdm=FakeTqdm))
+
+    def fake_squeue(_jobids):
+        (running_dir / "FINISHED").write_text("FINISHED\n")
+        return {}
+
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_squeue", fake_squeue)
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_sacct", lambda _jobids: {})
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda msg: messages.append(str(msg)), format="{message}")
+    try:
+        manager = SlurmJobManager(
+            registry_file=None,
+            poll_s=0.0,
+            resubmit_backoff_s=0.0,
+            max_retries=0,
+        )
+        manager._wait_loop(
+            [
+                SlurmJobSpec(workdir=failed_dir),
+                SlurmJobSpec(workdir=running_dir),
+            ]
+        )
+    finally:
+        logger.remove(sink_id)
+
+    progress = next(inst for inst in FakeTqdm.instances if inst.desc == "SLURM jobs")
+    assert progress.colour == "red"
+    assert progress.postfix["failed"] == 1
+    joined = "".join(messages)
+    assert "[SLURM] folder failed:" in joined
+    assert str(failed_dir) in joined
+    assert "BAD/fe/z/z-1" in joined

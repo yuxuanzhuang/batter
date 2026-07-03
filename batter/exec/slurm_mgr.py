@@ -848,12 +848,32 @@ class SlurmJobManager:
         pending: Dict[Path, SlurmJobSpec] = {}
         completed: set[Path] = set()
         failed_total = 0
+        logged_failed_workdirs: set[Path] = set()
+
+        def _log_failed_workdir(wd: Path, status: str) -> None:
+            if wd in logged_failed_workdirs:
+                return
+            logged_failed_workdirs.add(wd)
+            logger.error(
+                f"[SLURM] folder failed: {wd} "
+                f"({_format_workdir_label(wd)}, status={status})"
+            )
+
+        def _set_progress_failed_colour() -> None:
+            if pbar is None or failed_total <= 0:
+                return
+            try:
+                setattr(pbar, "colour", "red")
+            except Exception:
+                pass
+
         for s in specs:
             done, status = self._sentinel_done(s)
             if done:
                 completed.add(s.workdir)
                 if status == "FAILED":
                     failed_total += 1
+                    _log_failed_workdir(s.workdir, status)
             else:
                 pending[s.workdir] = s
         retries: Dict[Path, int] = {s.workdir: self._retries.get(s.workdir, 0) for s in specs}
@@ -871,6 +891,7 @@ class SlurmJobManager:
             if use_tqdm
             else None
         )
+        _set_progress_failed_colour()
 
         while pending:
             # build current jobid list
@@ -928,12 +949,13 @@ class SlurmJobManager:
                 ):
                     logger.error(
                         f"[SLURM] {wd_label}: exceeded max_retries={self.max_retries} "
-                        f"(state={resub_reason}); marking FAILED"
+                        f"(state={resub_reason}); marking FAILED in {wd}"
                     )
                     try:
                         sp.failed_path().touch()
                     except Exception:
                         pass
+                    _log_failed_workdir(wd, "FAILED")
                     done_now[wd] = "FAILED"
                     continue
 
@@ -973,9 +995,11 @@ class SlurmJobManager:
                     completed.add(wd)
                     if status == "FAILED":
                         failed_total += 1
+                        _log_failed_workdir(wd, status)
 
             if pbar:
                 pbar.n = len(completed)
+                _set_progress_failed_colour()
                 pbar.set_postfix(
                     {
                         "running": running_cnt,
