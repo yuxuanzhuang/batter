@@ -44,6 +44,20 @@ _PRE_RING_REPAIR_FILES = {
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+_WATER_RESNAMES = {
+    "WAT",
+    "HOH",
+    "TIP3",
+    "TIP3P",
+    "TIP4P",
+    "SPC",
+    "SPCE",
+    "OPC",
+    "SOL",
+}
+_WATER_OXYGEN_NAMES = {"O", "OW", "OH2"}
+_PERIODIC_WATER_CLASH_DISTANCE = 1.8
+_PERIODIC_WATER_RAW_DISTANCE_MIN = 5.0
 
 
 def _repair_lipid_hydrogens_in_amber_files(
@@ -369,10 +383,10 @@ def _iter_water_blocks_from_pdb(pdb_path: Path) -> Iterator[list[str]]:
     for line in pdb_path.read_text().splitlines():
         if not line.startswith(("ATOM  ", "HETATM")):
             continue
-        if _pdb_line_resname(line) != "WAT":
+        if _pdb_line_resname(line).upper() not in _WATER_RESNAMES:
             continue
         atom_name = _pdb_line_atom_name(line).upper()
-        if atom_name in {"O", "OW", "OH2"} and current:
+        if atom_name in _WATER_OXYGEN_NAMES and current:
             yield current
             current = []
         current.append(line)
@@ -450,6 +464,364 @@ def _water_block_overlaps_coords(
         if float(np.min(np.sum(delta * delta, axis=1))) < cutoff2:
             return True
     return False
+
+
+def _box_array_is_valid(box: Sequence[float] | np.ndarray) -> bool:
+    box_array = np.asarray(box, dtype=float)
+    return (
+        box_array.shape == (3,)
+        and np.all(np.isfinite(box_array))
+        and np.all(box_array > 0.0)
+    )
+
+
+def _periodic_cells(
+    coords: np.ndarray,
+    box: np.ndarray,
+    *,
+    bin_width: float,
+) -> tuple[dict[tuple[int, int, int], list[int]], np.ndarray]:
+    wrapped = coords - box * np.floor(coords / box)
+    n_bins = np.maximum(np.floor(box / max(float(bin_width), 1.0e-6)).astype(int), 1)
+    cell_width = box / n_bins
+    bins = np.floor(wrapped / cell_width).astype(int)
+    bins = np.minimum(bins, n_bins - 1)
+    cells: dict[tuple[int, int, int], list[int]] = {}
+    for atom_i, key in enumerate(map(tuple, bins)):
+        cells.setdefault(key, []).append(atom_i)
+    return cells, n_bins
+
+
+def _neighbor_periodic_cell_keys(
+    key: tuple[int, int, int],
+    n_bins: np.ndarray,
+) -> Iterator[tuple[int, int, int]]:
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                yield (
+                    (key[0] + dx) % int(n_bins[0]),
+                    (key[1] + dy) % int(n_bins[1]),
+                    (key[2] + dz) % int(n_bins[2]),
+                )
+
+
+def _minimum_image_distance(
+    coord_a: np.ndarray,
+    coord_b: np.ndarray,
+    box: np.ndarray,
+) -> tuple[float, float]:
+    raw_delta = coord_b - coord_a
+    raw_distance = float(np.sqrt(np.dot(raw_delta, raw_delta)))
+    delta = raw_delta - box * np.round(raw_delta / box)
+    return raw_distance, float(np.sqrt(np.dot(delta, delta)))
+
+
+def _water_block_record(path: Path, block_index: int, block: Sequence[str]) -> dict[str, Any]:
+    atom_coords: list[np.ndarray] = []
+    atom_is_hydrogen: list[bool] = []
+    oxygen_coord: np.ndarray | None = None
+    for line in block:
+        coord = _pdb_atom_xyz(line)
+        if coord is None:
+            continue
+        atom_coords.append(coord)
+        atom_is_hydrogen.append(_pdb_atom_is_hydrogen(line))
+        if oxygen_coord is None and _pdb_line_atom_name(line).upper() in _WATER_OXYGEN_NAMES:
+            oxygen_coord = coord
+    return {
+        "path": path,
+        "block_index": block_index,
+        "lines": list(block),
+        "atom_coords": np.asarray(atom_coords, dtype=float),
+        "atom_is_hydrogen": np.asarray(atom_is_hydrogen, dtype=bool),
+        "oxygen_coord": oxygen_coord,
+    }
+
+
+def _read_nonwater_pdb_atoms(paths: Sequence[Path]) -> tuple[np.ndarray, np.ndarray]:
+    coords: list[np.ndarray] = []
+    is_hydrogen: list[bool] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            if not line.startswith(("ATOM  ", "HETATM")):
+                continue
+            if _pdb_line_resname(line).upper() in _WATER_RESNAMES:
+                continue
+            coord = _pdb_atom_xyz(line)
+            if coord is None:
+                continue
+            coords.append(coord)
+            is_hydrogen.append(_pdb_atom_is_hydrogen(line))
+    if not coords:
+        return np.empty((0, 3), dtype=float), np.empty((0,), dtype=bool)
+    return np.asarray(coords, dtype=float), np.asarray(is_hydrogen, dtype=bool)
+
+
+def _rewrite_cleaned_water_pdbs(
+    water_pdbs: Sequence[Path],
+    water_blocks: Sequence[dict[str, Any]],
+    remove_blocks: set[tuple[Path, int]],
+) -> dict[str, int]:
+    blocks_by_path: dict[Path, list[dict[str, Any]]] = {Path(path): [] for path in water_pdbs}
+    for block in water_blocks:
+        blocks_by_path.setdefault(Path(block["path"]), []).append(block)
+
+    kept_by_path: dict[str, int] = {}
+    for path in water_pdbs:
+        retained = [
+            block
+            for block in blocks_by_path.get(Path(path), [])
+            if (Path(block["path"]), int(block["block_index"])) not in remove_blocks
+        ]
+        if not retained:
+            Path(path).unlink(missing_ok=True)
+            kept_by_path[Path(path).name] = 0
+            continue
+
+        serial = 1
+        lines: list[str] = []
+        for resid, block in enumerate(retained, start=1):
+            for atom_line in block["lines"]:
+                lines.append(
+                    _renumber_pdb_atom_line(atom_line, serial=serial, resid=resid)
+                )
+                serial += 1
+            lines.append("TER\n")
+        lines.append("END\n")
+        Path(path).write_text("".join(lines))
+        kept_by_path[Path(path).name] = len(retained)
+    return kept_by_path
+
+
+def _cleanup_periodic_water_pdbs(
+    water_pdbs: Sequence[Path],
+    *,
+    nonwater_pdbs: Sequence[Path] = (),
+    box: Sequence[float] | np.ndarray,
+    cutoff: float = _PERIODIC_WATER_CLASH_DISTANCE,
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    """Remove water residues that clash through periodic boundaries.
+
+    The cleanup is intentionally water-only. It removes duplicate waters whose
+    atoms overlap under the minimum-image convention, and removes waters whose
+    atoms overlap non-water atoms across PBC. Protein, ligand, lipid, ion, and
+    dummy atoms are left untouched.
+    """
+    water_paths = [Path(path) for path in water_pdbs if Path(path).exists()]
+    summary: dict[str, Any] = {
+        "water_files": [path.name for path in water_paths],
+        "nonwater_files": [Path(path).name for path in nonwater_pdbs if Path(path).exists()],
+        "removed_water_residues": 0,
+        "removed_water_water": 0,
+        "removed_water_nonwater": 0,
+        "kept_water_residues_by_file": {},
+    }
+    if report_path is not None:
+        report_path.unlink(missing_ok=True)
+    if not water_paths:
+        return summary
+
+    box_array = np.asarray(box, dtype=float)
+    if not _box_array_is_valid(box_array):
+        return summary
+
+    water_blocks: list[dict[str, Any]] = []
+    for path in water_paths:
+        for block_index, block in enumerate(_iter_water_blocks_from_pdb(path)):
+            record = _water_block_record(path, block_index, block)
+            if record["oxygen_coord"] is not None and record["atom_coords"].size:
+                water_blocks.append(record)
+
+    if not water_blocks:
+        return summary
+
+    remove_blocks: set[tuple[Path, int]] = set()
+    oxygen_coords = np.asarray(
+        [block["oxygen_coord"] for block in water_blocks],
+        dtype=float,
+    )
+    cells, n_bins = _periodic_cells(
+        oxygen_coords,
+        box_array,
+        bin_width=cutoff,
+    )
+    water_oxygen_cutoff2 = float(cutoff) * float(cutoff)
+    visited_oxygen_pairs: set[tuple[int, int]] = set()
+    for key, indices in cells.items():
+        for neighbor_key in _neighbor_periodic_cell_keys(key, n_bins):
+            for atom_i in indices:
+                for atom_j in cells.get(neighbor_key, []):
+                    if atom_j <= atom_i:
+                        continue
+                    pair = (atom_i, atom_j)
+                    if pair in visited_oxygen_pairs:
+                        continue
+                    visited_oxygen_pairs.add(pair)
+                    raw_distance, pbc_distance = _minimum_image_distance(
+                        oxygen_coords[atom_i],
+                        oxygen_coords[atom_j],
+                        box_array,
+                    )
+                    if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
+                        continue
+                    if pbc_distance * pbc_distance >= water_oxygen_cutoff2:
+                        continue
+                    block = water_blocks[atom_j]
+                    block_key = (Path(block["path"]), int(block["block_index"]))
+                    if block_key not in remove_blocks:
+                        remove_blocks.add(block_key)
+                        summary["removed_water_water"] += 1
+
+    water_atom_coords: list[np.ndarray] = []
+    water_atom_hydrogen: list[bool] = []
+    water_atom_blocks: list[int] = []
+    for block_index, block in enumerate(water_blocks):
+        for atom_coord, is_hydrogen in zip(
+            block["atom_coords"],
+            block["atom_is_hydrogen"],
+        ):
+            water_atom_coords.append(atom_coord)
+            water_atom_hydrogen.append(bool(is_hydrogen))
+            water_atom_blocks.append(block_index)
+
+    if water_atom_coords:
+        all_water_coords = np.asarray(water_atom_coords, dtype=float)
+        all_water_hydrogen = np.asarray(water_atom_hydrogen, dtype=bool)
+        atom_cells, atom_n_bins = _periodic_cells(
+            all_water_coords,
+            box_array,
+            bin_width=cutoff,
+        )
+        heavy_hydrogen_cutoff = min(float(cutoff), 1.2)
+        hydrogen_hydrogen_cutoff = min(float(cutoff), 1.0)
+        heavy_heavy_cutoff = min(float(cutoff), 1.5)
+        visited_atom_pairs: set[tuple[int, int]] = set()
+        for key, atom_indices in atom_cells.items():
+            for neighbor_key in _neighbor_periodic_cell_keys(key, atom_n_bins):
+                for atom_i in atom_indices:
+                    block_i = water_atom_blocks[atom_i]
+                    block_i_key = (
+                        Path(water_blocks[block_i]["path"]),
+                        int(water_blocks[block_i]["block_index"]),
+                    )
+                    if block_i_key in remove_blocks:
+                        continue
+                    for atom_j in atom_cells.get(neighbor_key, []):
+                        if atom_j <= atom_i:
+                            continue
+                        pair = (atom_i, atom_j)
+                        if pair in visited_atom_pairs:
+                            continue
+                        visited_atom_pairs.add(pair)
+                        block_j = water_atom_blocks[atom_j]
+                        if block_i == block_j:
+                            continue
+                        block_j_key = (
+                            Path(water_blocks[block_j]["path"]),
+                            int(water_blocks[block_j]["block_index"]),
+                        )
+                        if block_j_key in remove_blocks:
+                            continue
+                        raw_distance, pbc_distance = _minimum_image_distance(
+                            all_water_coords[atom_i],
+                            all_water_coords[atom_j],
+                            box_array,
+                        )
+                        if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
+                            continue
+                        if all_water_hydrogen[atom_i] and all_water_hydrogen[atom_j]:
+                            pair_cutoff = hydrogen_hydrogen_cutoff
+                        elif all_water_hydrogen[atom_i] or all_water_hydrogen[atom_j]:
+                            pair_cutoff = heavy_hydrogen_cutoff
+                        else:
+                            pair_cutoff = heavy_heavy_cutoff
+                        if pbc_distance < pair_cutoff:
+                            remove_blocks.add(block_j_key)
+                            summary["removed_water_water"] += 1
+
+    other_coords, other_hydrogen = _read_nonwater_pdb_atoms(nonwater_pdbs)
+    if other_coords.size:
+        other_cells, other_n_bins = _periodic_cells(
+            other_coords,
+            box_array,
+            bin_width=cutoff,
+        )
+        heavy_hydrogen_cutoff = min(float(cutoff), 1.2)
+        hydrogen_hydrogen_cutoff = min(float(cutoff), 1.0)
+        heavy_heavy_cutoff = min(float(cutoff), 1.5)
+
+        for block_index, block in enumerate(water_blocks):
+            block_key = (Path(block["path"]), int(block["block_index"]))
+            if block_key in remove_blocks:
+                continue
+            atom_coords = block["atom_coords"]
+            atom_hydrogen = block["atom_is_hydrogen"]
+            water_cells, water_n_bins = _periodic_cells(
+                atom_coords,
+                box_array,
+                bin_width=cutoff,
+            )
+            if not np.array_equal(water_n_bins, other_n_bins):
+                raise RuntimeError("Internal periodic water cleanup bin mismatch.")
+
+            removed = False
+            for key, water_atom_indices in water_cells.items():
+                for neighbor_key in _neighbor_periodic_cell_keys(key, other_n_bins):
+                    other_indices = other_cells.get(neighbor_key)
+                    if not other_indices:
+                        continue
+                    for water_atom_i in water_atom_indices:
+                        for other_atom_i in other_indices:
+                            raw_distance, pbc_distance = _minimum_image_distance(
+                                atom_coords[water_atom_i],
+                                other_coords[other_atom_i],
+                                box_array,
+                            )
+                            if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
+                                continue
+                            if atom_hydrogen[water_atom_i] and other_hydrogen[other_atom_i]:
+                                pair_cutoff = hydrogen_hydrogen_cutoff
+                            elif atom_hydrogen[water_atom_i] or other_hydrogen[other_atom_i]:
+                                pair_cutoff = heavy_hydrogen_cutoff
+                            else:
+                                pair_cutoff = heavy_heavy_cutoff
+                            if pbc_distance < pair_cutoff:
+                                remove_blocks.add(block_key)
+                                summary["removed_water_nonwater"] += 1
+                                removed = True
+                                break
+                        if removed:
+                            break
+                    if removed:
+                        break
+                if removed:
+                    break
+
+    if not remove_blocks:
+        summary["kept_water_residues_by_file"] = {
+            path.name: sum(1 for block in water_blocks if Path(block["path"]) == path)
+            for path in water_paths
+        }
+        return summary
+
+    summary["removed_water_residues"] = len(remove_blocks)
+    summary["kept_water_residues_by_file"] = _rewrite_cleaned_water_pdbs(
+        water_paths,
+        water_blocks,
+        remove_blocks,
+    )
+    if report_path is not None:
+        report_path.write_text(json.dumps(summary, indent=2, sort_keys=True))
+    logger.debug(
+        "Removed {} water residue(s) with periodic clashes from {}.",
+        summary["removed_water_residues"],
+        ", ".join(path.name for path in water_paths),
+    )
+    return summary
 
 
 def _pdb_min_z(pdb_path: Path) -> float:
@@ -2250,6 +2622,38 @@ def create_box(ctx: BuildContext) -> None:
         if around_wat_exist:
             _write_res_blocks(
                 final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
+            )
+
+    nonwater_pre_pdbs = [
+        window_dir / "solvate_pre_dum.pdb",
+        window_dir / "solvate_pre_prot.pdb",
+        window_dir / "solvate_pre_ligands.pdb",
+    ]
+    if other_lines_exist:
+        nonwater_pre_pdbs.append(window_dir / "solvate_pre_others.pdb")
+    water_pre_pdbs = (
+        list(water_chunk_paths)
+        if use_membrane_reference_box
+        else [
+            path
+            for path in (
+                window_dir / "solvate_pre_outside_wat.pdb",
+                window_dir / "solvate_pre_around_water.pdb",
+            )
+            if path.exists()
+        ]
+    )
+    water_cleanup = _cleanup_periodic_water_pdbs(
+        water_pre_pdbs,
+        nonwater_pdbs=nonwater_pre_pdbs,
+        box=system_dimensions,
+        report_path=window_dir / "periodic_water_cleanup.json",
+    )
+    if use_membrane_reference_box:
+        water_chunk_paths = [path for path in water_chunk_paths if path.exists()]
+        if not water_chunk_paths:
+            raise ValueError(
+                f"All membrane water chunks were removed during periodic cleanup in {window_dir}."
             )
 
     # --- tleap parts (all with working_dir=window_dir) ---
