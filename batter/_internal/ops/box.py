@@ -57,7 +57,6 @@ _WATER_RESNAMES = {
 }
 _WATER_OXYGEN_NAMES = {"O", "OW", "OH2"}
 _PERIODIC_WATER_CLASH_DISTANCE = 1.8
-_PERIODIC_WATER_RAW_DISTANCE_MIN = 5.0
 
 
 def _repair_lipid_hydrogens_in_amber_files(
@@ -372,9 +371,17 @@ def _renumber_pdb_atom_line(
     line = line.rstrip("\n")
     if len(line) < 54:
         line = line.ljust(54)
+    xyz = _pdb_atom_xyz(line)
+    resid_field = ((int(resid) - 1) % 9999) + 1
+    if xyz is None:
+        return (
+            f"{line[:6]}{serial:5d}"
+            f"{line[11:21]}{chain[:1]}{resid_field:4d} {line[27:]}\n"
+        )
     return (
         f"{line[:6]}{serial:5d}"
-        f"{line[11:21]}{chain[:1]}{resid:4d}{line[26:]}\n"
+        f"{line[11:21]}{chain[:1]}{resid_field:4d}    "
+        f"{xyz[0]:8.3f}{xyz[1]:8.3f}{xyz[2]:8.3f}{line[54:]}\n"
     )
 
 
@@ -401,7 +408,20 @@ def _pdb_atom_xyz(line: str) -> np.ndarray | None:
             dtype=float,
         )
     except Exception:
-        return None
+        normalized = _normalize_decimal_resid_overflow_line(line)
+        if normalized is None:
+            return None
+        try:
+            return np.asarray(
+                [
+                    float(normalized[30:38]),
+                    float(normalized[38:46]),
+                    float(normalized[46:54]),
+                ],
+                dtype=float,
+            )
+        except Exception:
+            return None
 
 
 def _pdb_atom_name_is_hydrogen(name: str) -> bool:
@@ -604,12 +624,12 @@ def _cleanup_periodic_water_pdbs(
     cutoff: float = _PERIODIC_WATER_CLASH_DISTANCE,
     report_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Remove water residues that clash through periodic boundaries.
+    """Remove water residues that clash before LEaP consumes water PDBs.
 
     The cleanup is intentionally water-only. It removes duplicate waters whose
     atoms overlap under the minimum-image convention, and removes waters whose
-    atoms overlap non-water atoms across PBC. Protein, ligand, lipid, ion, and
-    dummy atoms are left untouched.
+    atoms overlap non-water atoms. Protein, ligand, lipid, ion, and dummy atoms
+    are left untouched.
     """
     water_paths = [Path(path) for path in water_pdbs if Path(path).exists()]
     summary: dict[str, Any] = {
@@ -661,13 +681,11 @@ def _cleanup_periodic_water_pdbs(
                     if pair in visited_oxygen_pairs:
                         continue
                     visited_oxygen_pairs.add(pair)
-                    raw_distance, pbc_distance = _minimum_image_distance(
+                    _, pbc_distance = _minimum_image_distance(
                         oxygen_coords[atom_i],
                         oxygen_coords[atom_j],
                         box_array,
                     )
-                    if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
-                        continue
                     if pbc_distance * pbc_distance >= water_oxygen_cutoff2:
                         continue
                     block = water_blocks[atom_j]
@@ -726,13 +744,11 @@ def _cleanup_periodic_water_pdbs(
                         )
                         if block_j_key in remove_blocks:
                             continue
-                        raw_distance, pbc_distance = _minimum_image_distance(
+                        _, pbc_distance = _minimum_image_distance(
                             all_water_coords[atom_i],
                             all_water_coords[atom_j],
                             box_array,
                         )
-                        if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
-                            continue
                         if all_water_hydrogen[atom_i] and all_water_hydrogen[atom_j]:
                             pair_cutoff = hydrogen_hydrogen_cutoff
                         elif all_water_hydrogen[atom_i] or all_water_hydrogen[atom_j]:
@@ -776,13 +792,11 @@ def _cleanup_periodic_water_pdbs(
                         continue
                     for water_atom_i in water_atom_indices:
                         for other_atom_i in other_indices:
-                            raw_distance, pbc_distance = _minimum_image_distance(
+                            _, pbc_distance = _minimum_image_distance(
                                 atom_coords[water_atom_i],
                                 other_coords[other_atom_i],
                                 box_array,
                             )
-                            if raw_distance <= _PERIODIC_WATER_RAW_DISTANCE_MIN:
-                                continue
                             if atom_hydrogen[water_atom_i] and other_hydrogen[other_atom_i]:
                                 pair_cutoff = hydrogen_hydrogen_cutoff
                             elif atom_hydrogen[water_atom_i] or other_hydrogen[other_atom_i]:
@@ -802,10 +816,11 @@ def _cleanup_periodic_water_pdbs(
                     break
 
     if not remove_blocks:
-        summary["kept_water_residues_by_file"] = {
-            path.name: sum(1 for block in water_blocks if Path(block["path"]) == path)
-            for path in water_paths
-        }
+        summary["kept_water_residues_by_file"] = _rewrite_cleaned_water_pdbs(
+            water_paths,
+            water_blocks,
+            remove_blocks,
+        )
         return summary
 
     summary["removed_water_residues"] = len(remove_blocks)
