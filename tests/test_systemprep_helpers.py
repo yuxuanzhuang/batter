@@ -162,6 +162,41 @@ def test_select_receptor_anchor_atoms_uses_ligand_pose_and_geometry(
     ]
 
 
+def test_select_receptor_anchor_atoms_can_pin_p1(tmp_path: Path) -> None:
+    protein = tmp_path / "protein_pin_p1.pdb"
+    _write_pdb(
+        protein,
+        [
+            _atom_line(1, "CA", "ALA", "A", 1, 0.0, 0.0, 0.0, "C"),
+            _atom_line(2, "CA", "ALA", "A", 2, 0.0, 8.0, 0.0, "C"),
+            _atom_line(3, "CA", "ALA", "A", 3, 8.0, 8.0, 0.0, "C"),
+            _atom_line(4, "CA", "ALA", "A", 4, -8.0, 8.0, 0.0, "C"),
+        ],
+    )
+    ligand = tmp_path / "ligand_pin_p1.pdb"
+    _write_pdb(
+        ligand,
+        [
+            _atom_line(1, "C1", "LIG", "L", 1, 6.0, 0.0, 0.0, "C"),
+            _atom_line(2, "C2", "LIG", "L", 1, 6.5, 0.0, 0.0, "C"),
+        ],
+    )
+
+    selections = select_receptor_anchor_atoms(
+        mda.Universe(str(protein)),
+        mda.Universe(str(ligand)),
+        preferred_p1_selection="protein and resid 2 and name CA",
+        host_min_distance=0.0,
+        host_max_distance=20.0,
+        max_candidates=10,
+        max_p1_candidates=4,
+    )
+
+    assert selections[0] == "protein and resid 2 and name CA"
+    assert len(selections) == 3
+    assert all(selection.endswith("name CA") for selection in selections)
+
+
 def test_select_apo_receptor_anchor_atoms_does_not_need_ligand(
     tmp_path: Path,
 ) -> None:

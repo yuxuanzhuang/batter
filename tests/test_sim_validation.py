@@ -176,6 +176,34 @@ def test_stable_boresch_distance_uses_tail_candidate_stability(
     assert np.allclose(validator.results["stable_boresch_distance"], [4.0, 4.1])
 
 
+def test_stable_boresch_distance_can_filter_to_protein_residues(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "stable_residue_filter.pdb"
+    lines = [
+        _atom_line(1, "CA", "ALA", "A", 10, 0.0, 0.0, 0.0, "C"),
+        _atom_line(2, "CA", "SER", "A", 20, 1.0, 0.0, 0.0, "C"),
+        _atom_line(3, "C1", "LIG", "A", 300, 4.0, 0.0, 0.0, "C"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    u = mda.Universe(str(pdb))
+    validator = _make_validator(u, tmp_path)
+
+    record = validator.find_stable_boresch_distance(
+        tail_fraction=1.0,
+        min_distance=3.0,
+        max_distance=7.0,
+        ligand_atom_names=["C1"],
+        protein_residue_ids=[20],
+    )
+
+    assert record["protein"]["mask"] == ":20@CA"
+    assert record["criteria"]["protein_atom_names"] == ["CA"]
+    assert record["criteria"]["protein_residue_ids"] == [20]
+
+
 def test_stable_boresch_distance_rejects_collinear_first_anchor(
     tmp_path: Path,
 ) -> None:

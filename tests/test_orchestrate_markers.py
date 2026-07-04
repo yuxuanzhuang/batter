@@ -119,13 +119,15 @@ def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_pat
     equil.mkdir(parents=True)
     (equil / "representative.pdb").write_text("MODEL\nENDMDL\n")
     stable_path = equil / "stable_boresch_distance.json"
+    prolif_path = equil / "prolif_interactions.json"
     stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
 
     auto_anchor_system = _make_system(root)
     assert markers.is_done(auto_anchor_system, "equil_analysis") is False
+    prolif_path.write_text(json.dumps({"schema_version": 3, "usable": True}) + "\n")
 
     stable_path.write_text(
-        json.dumps({"schema_version": 3, "usable": False, "reason": "no pair"})
+        json.dumps({"schema_version": 4, "usable": False, "reason": "no pair"})
         + "\n"
     )
     assert markers.is_done(auto_anchor_system, "equil_analysis") is True

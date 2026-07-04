@@ -165,10 +165,12 @@ class CreateArgs(BaseModel):
     anchor_atoms: list[str] = Field(
         default_factory=list,
         description=(
-            "Optional list of three receptor anchor atom selections used for "
-            "restraint placement and binding-site geometry. If omitted, BATTER "
-            "auto-selects anchors heuristically: from the first real ligand pose "
-            "when one is available, or from protein-only geometry for apo MD."
+            "Optional list of receptor anchor atom selections used for restraint "
+            "placement and binding-site geometry. Provide three selections for "
+            "explicit P1/P2/P3, one selection to pin P1 and let BATTER "
+            "auto-select P2/P3, or omit the field for full auto-selection from "
+            "the first real ligand pose when available, or from protein-only "
+            "geometry for apo MD."
         ),
     )
     lipid_mol: list[str] = Field(

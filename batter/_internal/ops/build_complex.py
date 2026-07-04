@@ -868,7 +868,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 3
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 4
 
 
 def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:

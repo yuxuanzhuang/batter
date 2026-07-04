@@ -7,6 +7,7 @@ import types
 from pathlib import Path
 from typing import Any
 
+import click
 import pandas as pd
 import pytest
 from click.testing import CliRunner
@@ -297,6 +298,10 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
         "batter.cli.run_cmds.RunConfig.load",
         staticmethod(lambda path: DummyRunConfig()),
     )
+    monkeypatch.setattr(
+        "batter.cli.run_cmds._preflight_required_packages_for_cli",
+        lambda: None,
+    )
 
     rendered = {}
 
@@ -343,6 +348,66 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     )
     # sbatch invoked on the generated script
     assert scripts[0].name in calls["cmd"]
+
+
+def test_cli_run_slurm_submit_checks_dependencies_before_sbatch(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text("dummy: true\n")
+
+    class DummySection:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        def model_copy(self, update: dict | None = None):
+            data = dict(self.__dict__)
+            if update:
+                data.update(update)
+            return DummySection(**data)
+
+    class DummyRunConfig:
+        def __init__(self):
+            self.run = DummySection(
+                output_folder=tmp_path / "out",
+                run_id="auto",
+                dry_run=False,
+                slurm_header_dir=None,
+                allow_run_id_mismatch=False,
+            )
+            self.create = DummySection(system_name="sys")
+            self.protocol = "abfe"
+
+        def model_copy(self, update: dict | None = None):
+            return self
+
+        def resolved_sim_config(self):
+            return object()
+
+    monkeypatch.setattr(
+        "batter.cli.run_cmds.RunConfig.load",
+        staticmethod(lambda path: DummyRunConfig()),
+    )
+
+    def fail_preflight() -> None:
+        raise click.ClickException("Missing required BATTER Python package(s): prolif")
+
+    monkeypatch.setattr(
+        "batter.cli.run_cmds._preflight_required_packages_for_cli",
+        fail_preflight,
+    )
+
+    def fail_sbatch(*args, **kwargs):
+        raise AssertionError("sbatch should not be called when preflight fails")
+
+    monkeypatch.setattr("subprocess.run", fail_sbatch)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["run", str(yaml_path), "--slurm-submit"])
+
+    assert result.exit_code == 1
+    assert "Missing required BATTER Python package(s): prolif" in result.output
+    assert not list(tmp_path.glob("*_job_manager.sbatch"))
 
 
 def test_cli_fe_analyze_invokes_api(

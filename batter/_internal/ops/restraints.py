@@ -340,7 +340,11 @@ def _write_distance_restraint_block(
 
 
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
-    """Load 0-based (ref_indices, alt_indices) from RBFE mapping JSON."""
+    """Load 0-based ``(ref_indices, alt_indices)`` from RBFE mapping JSON.
+
+    Prepared RBFE ``mapping.json`` files store ``componentB_to_componentA``,
+    i.e. alternate-ligand atom index -> reference-ligand atom index.
+    """
     if not mapping_path.exists():
         return [], []
     try:
@@ -353,11 +357,40 @@ def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]
         logger.warning(f"[restraints:x] Unexpected mapping format in {mapping_path}: {type(data)}")
         return [], []
 
-    # scmk1_cc_indices as ref_indices
-    ref_indices = sorted(data.get("scmk1_cc_solvent_indices", []))
-    # scmk2_cc_indices as alt_indices
-    alt_indices = sorted(data.get("scmk2_cc_solvent_indices", []))
+    if "scmk1_cc_solvent_indices" in data or "scmk2_cc_solvent_indices" in data:
+        ref_indices = sorted(int(i) for i in data.get("scmk1_cc_solvent_indices", []))
+        alt_indices = sorted(int(i) for i in data.get("scmk2_cc_solvent_indices", []))
+        return ref_indices, alt_indices
+
+    ref_indices: list[int] = []
+    alt_indices: list[int] = []
+    for raw_alt, raw_ref in data.items():
+        try:
+            ref_indices.append(int(raw_ref))
+            alt_indices.append(int(raw_alt))
+        except (TypeError, ValueError):
+            continue
+    ref_indices = sorted(set(ref_indices))
+    alt_indices = sorted(set(alt_indices))
     return ref_indices, alt_indices
+
+
+def _mapped_heavy_atom_names_from_residue(
+    residue,
+    mapped_indices: Iterable[int],
+) -> list[str]:
+    names: list[str] = []
+    atoms = list(residue.atoms)
+    for raw_idx in mapped_indices:
+        idx = int(raw_idx)
+        if idx < 0 or idx >= len(atoms):
+            continue
+        atom = atoms[idx]
+        name = str(atom.name).strip()
+        if not name or name in names or _is_hydrogen_atom(atom):
+            continue
+        names.append(name)
+    return names
 
 
 def _collect_common_core_heavy_ligand(
@@ -1944,6 +1977,7 @@ def _frame_safe_boresch_atom_names_from_residue(
     *,
     receptor_atoms: Sequence,
     label: str,
+    preferred_atom_names: Sequence[str] = (),
     preferred_first_names: Sequence[str] = (),
     require_preferred_first: bool = False,
     min_angle_margin: float = BORESCH_MIN_ANGLE_MARGIN_DEG,
@@ -1967,6 +2001,12 @@ def _frame_safe_boresch_atom_names_from_residue(
     min_sine = 0.25
     best_valid: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
     best_fallback: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
+    preferred_triplet_valid: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
+    preferred_atom_set = {
+        str(name).strip()
+        for name in preferred_atom_names
+        if str(name).strip()
+    }
     preferred_valid: dict[
         str,
         tuple[float, tuple[int, int, int], tuple[float, ...], float, float],
@@ -2021,11 +2061,35 @@ def _frame_safe_boresch_atom_names_from_residue(
                     continue
                 if best_valid is None or score > best_valid[0]:
                     best_valid = candidate
+                if preferred_atom_set:
+                    candidate_names = {
+                        str(atoms[idx].name).strip()
+                        for idx in (i, j, k)
+                    }
+                    if candidate_names <= preferred_atom_set and (
+                        preferred_triplet_valid is None
+                        or score > preferred_triplet_valid[0]
+                    ):
+                        preferred_triplet_valid = candidate
                 if first_name in preferred_set and (
                     first_name not in preferred_valid
                     or score > preferred_valid[first_name][0]
                 ):
                     preferred_valid[first_name] = candidate
+
+    if preferred_triplet_valid is not None:
+        _, indices, values, angle_margin, torsion_margin = preferred_triplet_valid
+        names = [str(atoms[idx].name).strip() for idx in indices]
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} from mapped common "
+            "region with values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+        return names
 
     for first_name in preferred_names:
         selected = preferred_valid.get(first_name)
@@ -2093,18 +2157,20 @@ def _resolve_ref_boresch_atom_names(
     ref_residue,
     anchor_names: Sequence[str],
     receptor_atoms: Sequence | None = None,
+    preferred_atom_names: Sequence[str] = (),
     preferred_first_names: Sequence[str] = (),
 ) -> list[str]:
     if any(anchor_names):
         logger.debug(
-            "[restraints:x] selecting SEPTOP REF Boresch anchors independently "
-            "of ABFE ligand anchors"
+            "[restraints:x] selecting SEPTOP REF Boresch anchors with mapped "
+            "common-region preference"
         )
     if receptor_atoms is not None:
         return _frame_safe_boresch_atom_names_from_residue(
             ref_residue,
             receptor_atoms=receptor_atoms,
             label="reference",
+            preferred_atom_names=preferred_atom_names,
             preferred_first_names=preferred_first_names,
         )
     return _independent_boresch_atom_names_from_residue(
@@ -2120,18 +2186,20 @@ def _resolve_alt_boresch_atom_names(
     ref_names: Sequence[str],
     mapping_path: Path,
     receptor_atoms: Sequence | None = None,
+    preferred_atom_names: Sequence[str] = (),
     preferred_first_names: Sequence[str] = (),
 ) -> list[str]:
     if mapping_path.exists():
         logger.debug(
-            "[restraints:x] selecting SEPTOP ALT Boresch anchors independently "
-            "of atom mapping"
+            "[restraints:x] selecting SEPTOP ALT Boresch anchors with mapped "
+            "common-region preference"
         )
     if receptor_atoms is not None:
         return _frame_safe_boresch_atom_names_from_residue(
             alt_residue,
             receptor_atoms=receptor_atoms,
             label="alternate",
+            preferred_atom_names=preferred_atom_names,
             preferred_first_names=preferred_first_names,
         )
     return _independent_boresch_atom_names_from_residue(
@@ -2224,26 +2292,59 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         _atom_name_from_anchor_mask(anchors.L2),
         _atom_name_from_anchor_mask(anchors.L3),
     ]
-    ref_preferred = _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_ref))
-    if anchor_names[0] not in ref_preferred:
+
+    def _unique_names(names: Iterable[str]) -> list[str]:
+        out: list[str] = []
+        for name in names:
+            clean = str(name).strip()
+            if clean and clean not in out:
+                out.append(clean)
+        return out
+
+    mapping_path = windows_dir / "mapping.json"
+    ref_common_indices, alt_common_indices = _load_common_core_indices(mapping_path)
+    ref_common_names = _mapped_heavy_atom_names_from_residue(
+        ref_residue,
+        ref_common_indices,
+    )
+    alt_common_names = _mapped_heavy_atom_names_from_residue(
+        alt_residue,
+        alt_common_indices,
+    )
+    if ref_common_names or alt_common_names:
+        logger.debug(
+            "[restraints:x] mapped common-region ligand atoms for Boresch "
+            "preference: ref={} alt={}",
+            ref_common_names,
+            alt_common_names,
+        )
+
+    ref_preferred = _unique_names(
+        ref_common_names
+        + _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_ref))
+    )
+    if anchor_names[0] and anchor_names[0] not in ref_preferred:
         ref_preferred.insert(0, anchor_names[0])
     alt_preferred = (
         _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_alt))
         if lig_alt
         else []
     )
+    alt_preferred = _unique_names(alt_common_names + alt_preferred)
     ref_names = _resolve_ref_boresch_atom_names(
         ref_residue,
         anchor_names,
         receptor_atoms=receptor_atoms,
+        preferred_atom_names=ref_common_names,
         preferred_first_names=ref_preferred,
     )
     alt_names = _resolve_alt_boresch_atom_names(
         ref_residue=ref_residue,
         alt_residue=alt_residue,
         ref_names=ref_names,
-        mapping_path=windows_dir / "mapping.json",
+        mapping_path=mapping_path,
         receptor_atoms=receptor_atoms,
+        preferred_atom_names=alt_common_names,
         preferred_first_names=alt_preferred,
     )
 

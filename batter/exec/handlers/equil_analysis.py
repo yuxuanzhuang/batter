@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
+import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 import MDAnalysis as mda
 import numpy as np
@@ -25,6 +27,19 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import cpptraj, run_with_log
 
+PROLIF_INTERACTIONS_SCHEMA_VERSION = 3
+PROLIF_OCCUPANCY_THRESHOLD = 0.30
+PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS = frozenset(
+    {"hydrophobic", "vdwcontact", "vdwinteraction", "vdwinteractions"}
+)
+PROLIF_ARTIFACT_FILENAMES = {
+    "timeseries_csv_gz": "prolif_interactions_timeseries.csv.gz",
+    "barcode_png": "prolif_interactions_barcode.png",
+    "occupancy_png": "prolif_interactions_occupancy.png",
+    "lignetwork_html": "prolif_lignetwork.html",
+    "interaction_diagram_png": "prolif_interaction_diagram.png",
+}
+
 
 def _paths(root: Path) -> dict[str, Path]:
     """Return commonly accessed equilibration paths under ``root``."""
@@ -37,6 +52,13 @@ def _paths(root: Path) -> dict[str, Path]:
         "rep_pdb": eq / "representative.pdb",
         "rep_rst": eq / "representative.rst7",
         "stable_boresch_distance": eq / "stable_boresch_distance.json",
+        "prolif_interactions": eq / "prolif_interactions.json",
+        "prolif_timeseries": eq / PROLIF_ARTIFACT_FILENAMES["timeseries_csv_gz"],
+        "prolif_barcode": eq / PROLIF_ARTIFACT_FILENAMES["barcode_png"],
+        "prolif_occupancy": eq / PROLIF_ARTIFACT_FILENAMES["occupancy_png"],
+        "prolif_lignetwork": eq / PROLIF_ARTIFACT_FILENAMES["lignetwork_html"],
+        "prolif_interaction_diagram": eq
+        / PROLIF_ARTIFACT_FILENAMES["interaction_diagram_png"],
         "build_files": eq / "q_build_files",
         "prot_renum": eq / "q_build_files" / "protein_renum.txt",
         "full_pdb": eq / "full.pdb",
@@ -57,6 +79,719 @@ def _stable_boresch_distance_current(path: Path) -> bool:
     except Exception:
         return False
     return schema_version >= STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
+
+
+def _prolif_interactions_current(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    try:
+        schema_version = int(data.get("schema_version", 0))
+    except Exception:
+        return False
+    return schema_version >= PROLIF_INTERACTIONS_SCHEMA_VERSION
+
+
+def _trailing_analysis_start_frame(n_frames: int, tail_fraction: float) -> int:
+    if not 0 < tail_fraction <= 1:
+        raise ValueError("tail_fraction must be in the interval (0, 1].")
+    if n_frames <= 1:
+        return 0
+    start_frame = int(np.floor(n_frames * (1.0 - tail_fraction)))
+    return min(max(start_frame, 0), n_frames - 1)
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _prolif_residue_metadata(value: Any) -> dict[str, Any]:
+    label = str(value)
+    resname = (
+        str(getattr(value, "name", "") or getattr(value, "resname", "") or "").strip()
+    )
+    resid = _int_or_none(
+        getattr(value, "number", None) or getattr(value, "resid", None)
+    )
+    chain = str(
+        getattr(value, "chain", "") or getattr(value, "chainID", "") or ""
+    ).strip()
+
+    match = re.search(r"([A-Za-z]{1,4})(-?\d+)(?:[.:_-]?([A-Za-z0-9]+))?", label)
+    if match:
+        if not resname:
+            resname = match.group(1)
+        if resid is None:
+            resid = _int_or_none(match.group(2))
+        if not chain and match.group(3):
+            chain = match.group(3)
+
+    return {
+        "label": label,
+        "resname": resname,
+        "resid": resid,
+        "chainID": chain,
+    }
+
+
+def _prolif_column_parts(column: Any) -> tuple[Any, Any, Any] | None:
+    parts = list(column) if isinstance(column, tuple) else [column]
+    if len(parts) < 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _prolif_artifact_paths(prolif_path: Path) -> dict[str, Path]:
+    return {
+        key: prolif_path.parent / filename
+        for key, filename in PROLIF_ARTIFACT_FILENAMES.items()
+    }
+
+
+def _shorten_label(value: Any, max_len: int = 64) -> str:
+    text = " ".join(str(value).split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
+
+
+def _prolif_interaction_id(column: Any) -> str:
+    parsed = _prolif_column_parts(column)
+    if parsed is None:
+        return _shorten_label(column, 120)
+    ligand_id, protein_id, interaction = parsed
+    return "|".join(
+        str(item).replace("|", "/")
+        for item in (ligand_id, protein_id, interaction)
+    )
+
+
+def _prolif_interaction_display_label(column: Any) -> str:
+    parsed = _prolif_column_parts(column)
+    if parsed is None:
+        return _shorten_label(column)
+    _ligand_id, protein_id, interaction = parsed
+    protein_meta = _prolif_residue_metadata(protein_id)
+    protein_label = protein_meta.get("label") or str(protein_id)
+    return _shorten_label(f"{protein_label} {interaction}")
+
+
+def _bool_prolif_dataframe(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+    if df.empty:
+        return df.copy()
+    return df.fillna(False).astype(bool)
+
+
+def _import_pyplot():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib import pyplot as plt
+
+    return plt
+
+
+def _write_empty_prolif_plot(path: Path, *, title: str, message: str) -> None:
+    plt = _import_pyplot()
+    fig, ax = plt.subplots(figsize=(6.8, 2.8), dpi=150)
+    ax.axis("off")
+    ax.set_title(title)
+    ax.text(0.5, 0.5, message, ha="center", va="center", wrap=True)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _write_prolif_timeseries_csv(df: pd.DataFrame, path: Path) -> None:
+    bool_df = _bool_prolif_dataframe(df)
+    out = pd.DataFrame({"frame": list(bool_df.index)})
+    seen: dict[str, int] = {}
+    for column in bool_df.columns:
+        label = _prolif_interaction_id(column)
+        count = seen.get(label, 0)
+        seen[label] = count + 1
+        if count:
+            label = f"{label}#{count + 1}"
+        out[label] = bool_df[column].astype(np.uint8).to_numpy()
+    out.to_csv(path, index=False, compression="gzip")
+
+
+def _prolif_columns_by_occupancy(
+    bool_df: pd.DataFrame,
+    *,
+    max_interactions: int,
+) -> list[Any]:
+    if bool_df.empty or len(bool_df.columns) == 0:
+        return []
+    occupancy = bool_df.mean(axis=0).sort_values(ascending=False)
+    active_columns = [column for column, value in occupancy.items() if float(value) > 0]
+    if not active_columns:
+        return []
+    return active_columns[:max_interactions]
+
+
+def _write_prolif_barcode_plot(
+    df: pd.DataFrame,
+    path: Path,
+    *,
+    max_interactions: int = 50,
+) -> None:
+    bool_df = _bool_prolif_dataframe(df)
+    columns = _prolif_columns_by_occupancy(
+        bool_df, max_interactions=max_interactions
+    )
+    if not columns:
+        _write_empty_prolif_plot(
+            path,
+            title="ProLIF interaction barcode",
+            message="No ligand-protein interactions were observed.",
+        )
+        return
+
+    data = bool_df.loc[:, columns].T.astype(float).to_numpy()
+    n_frames = int(data.shape[1])
+    fig_h = min(max(3.2, 0.26 * len(columns) + 1.7), 14.0)
+    fig_w = min(max(7.2, 0.015 * max(n_frames, 1) + 6.0), 14.0)
+    plt = _import_pyplot()
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=150)
+    im = ax.imshow(
+        data,
+        aspect="auto",
+        interpolation="nearest",
+        cmap="Greens",
+        vmin=0,
+        vmax=1,
+    )
+    ax.set_title("ProLIF interaction barcode")
+    ax.set_xlabel("Analyzed frame")
+    ax.set_ylabel("Interaction")
+    ax.set_yticks(np.arange(len(columns)))
+    ax.set_yticklabels(
+        [_prolif_interaction_display_label(column) for column in columns],
+        fontsize=7,
+    )
+    tick_count = min(6, n_frames)
+    if tick_count > 0:
+        ticks = np.unique(np.linspace(0, n_frames - 1, tick_count, dtype=int))
+        frame_labels = [str(bool_df.index[int(i)]) for i in ticks]
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(frame_labels, rotation=0)
+    cbar = fig.colorbar(im, ax=ax, shrink=0.85, pad=0.015)
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels(["absent", "present"])
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _write_prolif_occupancy_plot(
+    interactions: Sequence[dict[str, Any]],
+    path: Path,
+    *,
+    max_interactions: int = 30,
+) -> None:
+    active = [
+        item
+        for item in interactions
+        if float(item.get("occupancy") or 0.0) > 0.0
+    ][:max_interactions]
+    if not active:
+        _write_empty_prolif_plot(
+            path,
+            title="ProLIF interaction occupancy",
+            message="No ligand-protein interactions were observed.",
+        )
+        return
+
+    labels = []
+    values = []
+    for item in reversed(active):
+        protein = item.get("protein") or {}
+        protein_label = protein.get("label") or protein.get("resname") or "protein"
+        labels.append(_shorten_label(f"{protein_label} {item.get('interaction', '')}"))
+        values.append(float(item.get("occupancy") or 0.0))
+
+    plt = _import_pyplot()
+    fig_h = min(max(3.2, 0.27 * len(active) + 1.4), 12.0)
+    fig, ax = plt.subplots(figsize=(8.0, fig_h), dpi=150)
+    ax.barh(np.arange(len(values)), values, color="#4C78A8")
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_yticklabels(labels, fontsize=7)
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel("Occupancy")
+    ax.set_title("ProLIF interaction occupancy")
+    ax.grid(axis="x", color="#D0D0D0", linewidth=0.5, alpha=0.7)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _write_prolif_interaction_diagram(
+    interactions: Sequence[dict[str, Any]],
+    path: Path,
+    *,
+    ligand_label: str | None,
+    max_residues: int = 24,
+) -> None:
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in interactions:
+        occupancy = float(item.get("occupancy") or 0.0)
+        if occupancy <= 0.0:
+            continue
+        protein = item.get("protein") or {}
+        protein_key = str(protein.get("label") or protein.get("resid") or "protein")
+        entry = grouped.setdefault(
+            protein_key,
+            {
+                "label": protein_key,
+                "max_occupancy": 0.0,
+                "interactions": [],
+            },
+        )
+        entry["max_occupancy"] = max(float(entry["max_occupancy"]), occupancy)
+        entry["interactions"].append(
+            {
+                "name": str(item.get("interaction") or "interaction"),
+                "occupancy": occupancy,
+            }
+        )
+
+    residues = sorted(
+        grouped.values(),
+        key=lambda item: (-float(item["max_occupancy"]), str(item["label"])),
+    )[:max_residues]
+    if not residues:
+        _write_empty_prolif_plot(
+            path,
+            title="ProLIF interaction diagram",
+            message="No ligand-protein interactions were observed.",
+        )
+        return
+
+    plt = _import_pyplot()
+    fig_h = min(max(4.0, 0.32 * len(residues) + 2.0), 12.0)
+    fig, ax = plt.subplots(figsize=(8.8, fig_h), dpi=150)
+    ax.axis("off")
+    ax.set_title("ProLIF interaction diagram")
+
+    ligand_name = _shorten_label(ligand_label or "ligand", 28)
+    ligand_x, ligand_y = 0.12, 0.5
+    ys = np.linspace(0.9, 0.1, len(residues))
+    palette = {
+        "Hydrophobic": "#4C78A8",
+        "HBAcceptor": "#F58518",
+        "HBDonor": "#54A24B",
+        "PiStacking": "#B279A2",
+        "Anionic": "#E45756",
+        "Cationic": "#72B7B2",
+        "CationPi": "#EECA3B",
+        "VdWContact": "#9D755D",
+    }
+
+    ax.scatter([ligand_x], [ligand_y], s=1200, color="#343A40", zorder=3)
+    ax.text(
+        ligand_x,
+        ligand_y,
+        ligand_name,
+        color="white",
+        ha="center",
+        va="center",
+        fontsize=8,
+        weight="bold",
+    )
+
+    for residue, y in zip(residues, ys):
+        interactions_for_residue = sorted(
+            residue["interactions"],
+            key=lambda item: (-float(item["occupancy"]), str(item["name"])),
+        )
+        primary = interactions_for_residue[0]
+        occupancy = float(residue["max_occupancy"])
+        color = palette.get(str(primary["name"]), "#6B6B6B")
+        protein_x = 0.78
+        ax.plot(
+            [ligand_x + 0.06, protein_x - 0.06],
+            [ligand_y, y],
+            color=color,
+            linewidth=0.8 + 4.0 * occupancy,
+            alpha=0.25 + 0.65 * occupancy,
+            solid_capstyle="round",
+            zorder=1,
+        )
+        ax.scatter(
+            [protein_x],
+            [y],
+            s=620,
+            color="#F4F4F4",
+            edgecolor=color,
+            linewidth=1.8,
+            zorder=3,
+        )
+        ax.text(
+            protein_x,
+            y,
+            _shorten_label(residue["label"], 20),
+            ha="center",
+            va="center",
+            fontsize=7,
+            color="#202020",
+        )
+        interaction_names = []
+        for interaction in interactions_for_residue[:3]:
+            interaction_names.append(
+                f"{interaction['name']} {float(interaction['occupancy']):.2f}"
+            )
+        if len(interactions_for_residue) > 3:
+            interaction_names.append(f"+{len(interactions_for_residue) - 3} more")
+        ax.text(
+            0.88,
+            y,
+            _shorten_label(", ".join(interaction_names), 44),
+            ha="left",
+            va="center",
+            fontsize=7,
+            color="#303030",
+        )
+
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.02, 0.98)
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _write_prolif_lignetwork_html(
+    *,
+    fingerprint: Any | None,
+    ligand_selection: Any | None,
+    prolif_module: Any | None,
+    path: Path,
+    threshold: float,
+) -> None:
+    if fingerprint is None or ligand_selection is None or prolif_module is None:
+        path.write_text(
+            "<!doctype html><html><body><p>"
+            "ProLIF LigNetwork unavailable: fingerprint object was not provided."
+            "</p></body></html>\n"
+        )
+        return
+
+    ligand_mol = prolif_module.Molecule.from_mda(ligand_selection)
+    view = fingerprint.plot_lignetwork(
+        ligand_mol,
+        kind="aggregate",
+        threshold=float(threshold),
+        height="650px",
+        show_interaction_data=True,
+    )
+    view.save(path)
+
+
+def _write_prolif_artifacts(
+    *,
+    prolif_path: Path,
+    df: pd.DataFrame,
+    interactions: Sequence[dict[str, Any]],
+    ligand_label: str | None,
+    fingerprint: Any | None = None,
+    ligand_selection: Any | None = None,
+    prolif_module: Any | None = None,
+    occupancy_threshold: float = PROLIF_OCCUPANCY_THRESHOLD,
+) -> tuple[dict[str, str], dict[str, str]]:
+    paths = _prolif_artifact_paths(prolif_path)
+    artifacts: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    writers = {
+        "timeseries_csv_gz": lambda p: _write_prolif_timeseries_csv(df, p),
+        "barcode_png": lambda p: _write_prolif_barcode_plot(df, p),
+        "occupancy_png": lambda p: _write_prolif_occupancy_plot(interactions, p),
+        "lignetwork_html": lambda p: _write_prolif_lignetwork_html(
+            fingerprint=fingerprint,
+            ligand_selection=ligand_selection,
+            prolif_module=prolif_module,
+            path=p,
+            threshold=occupancy_threshold,
+        ),
+        "interaction_diagram_png": lambda p: _write_prolif_interaction_diagram(
+            interactions,
+            p,
+            ligand_label=ligand_label,
+        ),
+    }
+    for key, writer in writers.items():
+        path = paths[key]
+        try:
+            writer(path)
+        except Exception as exc:
+            errors[key] = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "[equil_check:{}] Could not write ProLIF artifact {}: {}",
+                ligand_label,
+                path.name,
+                exc,
+            )
+            continue
+        if path.exists():
+            artifacts[key] = path.name
+    return artifacts, errors
+
+
+def _run_prolif_fingerprint(
+    fingerprint: Any,
+    trajectory: Any,
+    ligand: Any,
+    protein: Any,
+) -> None:
+    kwargs = {}
+    try:
+        parameters = inspect.signature(fingerprint.run).parameters
+    except Exception:
+        parameters = {}
+    if "progress" in parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in parameters.values()
+    ):
+        kwargs["progress"] = False
+    try:
+        fingerprint.run(trajectory, ligand, protein, **kwargs)
+    except TypeError:
+        if kwargs:
+            fingerprint.run(trajectory, ligand, protein)
+            return
+        raise
+
+
+def _prolif_interaction_allowed_for_candidates(interaction: Any) -> bool:
+    return str(interaction).strip().lower() not in PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS
+
+
+def _records_from_prolif_dataframe(
+    df: pd.DataFrame,
+    *,
+    occupancy_threshold: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if df is None or df.empty:
+        return [], []
+
+    bool_df = _bool_prolif_dataframe(df)
+    occupancy = bool_df.mean(axis=0)
+    records: list[dict[str, Any]] = []
+    persistent_by_key: dict[tuple[int, str, str], dict[str, Any]] = {}
+    n_frames = int(len(bool_df.index))
+
+    for column, value in occupancy.items():
+        parsed = _prolif_column_parts(column)
+        if parsed is None:
+            continue
+        ligand_id, protein_id, interaction = parsed
+        ligand_meta = _prolif_residue_metadata(ligand_id)
+        protein_meta = _prolif_residue_metadata(protein_id)
+        occ = float(value)
+        active_frames = int(bool_df[column].sum())
+        record = {
+            "ligand": ligand_meta,
+            "protein": protein_meta,
+            "interaction": str(interaction),
+            "occupancy": occ,
+            "active_frames": active_frames,
+            "n_frames": n_frames,
+        }
+        records.append(record)
+        resid = protein_meta.get("resid")
+        if (
+            occ < float(occupancy_threshold)
+            or resid is None
+            or not _prolif_interaction_allowed_for_candidates(interaction)
+        ):
+            continue
+        key = (
+            int(resid),
+            str(protein_meta.get("resname") or ""),
+            str(protein_meta.get("chainID") or ""),
+        )
+        entry = persistent_by_key.setdefault(
+            key,
+            {
+                "resid": int(resid),
+                "resname": protein_meta.get("resname") or "",
+                "chainID": protein_meta.get("chainID") or "",
+                "max_occupancy": 0.0,
+                "interactions": [],
+            },
+        )
+        entry["max_occupancy"] = max(float(entry["max_occupancy"]), occ)
+        entry["interactions"].append(
+            {
+                "interaction": str(interaction),
+                "occupancy": occ,
+                "active_frames": active_frames,
+                "ligand": ligand_meta,
+            }
+        )
+
+    records.sort(
+        key=lambda item: (
+            -float(item["occupancy"]),
+            str(item["protein"].get("label") or ""),
+            str(item["interaction"]),
+        )
+    )
+    persistent = sorted(
+        persistent_by_key.values(),
+        key=lambda item: (
+            -float(item["max_occupancy"]),
+            int(item["resid"]),
+            str(item.get("resname") or ""),
+        ),
+    )
+    return records, persistent
+
+
+def _persistent_prolif_residue_ids(prolif_record: dict[str, Any] | None) -> list[int]:
+    if not isinstance(prolif_record, dict) or not prolif_record.get("usable", False):
+        return []
+    out: list[int] = []
+    for item in prolif_record.get("persistent_protein_residues") or []:
+        if not isinstance(item, dict):
+            continue
+        resid = _int_or_none(item.get("resid"))
+        if resid is not None and resid not in out:
+            out.append(resid)
+    return out
+
+
+def _write_prolif_interactions(
+    *,
+    prolif_path: Path,
+    universe: mda.Universe,
+    ligand_label: str | None,
+    residue_name: str | None,
+    tail_fraction: float,
+    mode: str,
+    occupancy_threshold: float = PROLIF_OCCUPANCY_THRESHOLD,
+) -> dict[str, Any]:
+    try:
+        import prolif as plf
+
+        if not residue_name:
+            raise ValueError("No ligand residue name is available for ProLIF.")
+        ligand = universe.select_atoms(f"resname {residue_name}")
+        protein = universe.select_atoms("protein")
+        if ligand.n_atoms == 0:
+            raise ValueError(f"No ligand atoms found for resname {residue_name!r}.")
+        if protein.n_atoms == 0:
+            raise ValueError("No protein atoms found for ProLIF analysis.")
+
+        n_frames_total = len(universe.trajectory)
+        if n_frames_total == 0:
+            raise ValueError("No trajectory frames available for ProLIF analysis.")
+        start_frame = _trailing_analysis_start_frame(n_frames_total, tail_fraction)
+        fp = plf.Fingerprint()
+        _run_prolif_fingerprint(
+            fp,
+            universe.trajectory[start_frame:n_frames_total],
+            ligand,
+            protein,
+        )
+        df = fp.to_dataframe()
+        interactions, persistent = _records_from_prolif_dataframe(
+            df,
+            occupancy_threshold=occupancy_threshold,
+        )
+        artifacts, artifact_errors = _write_prolif_artifacts(
+            prolif_path=prolif_path,
+            df=df,
+            interactions=interactions,
+            ligand_label=ligand_label or residue_name,
+            fingerprint=fp,
+            ligand_selection=ligand,
+            prolif_module=plf,
+            occupancy_threshold=occupancy_threshold,
+        )
+        record = {
+            "schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION,
+            "source": "equil_analysis",
+            "mode": mode,
+            "usable": True,
+            "prolif_version": str(getattr(plf, "__version__", "")),
+            "ligand": ligand_label or residue_name,
+            "residue_name": residue_name,
+            "tail_fraction": float(tail_fraction),
+            "analysis_start_frame": int(start_frame),
+            "n_frames": int(max(0, n_frames_total - start_frame)),
+            "occupancy_threshold": float(occupancy_threshold),
+            "candidate_interaction_filter": {
+                "excluded_interactions": sorted(PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS),
+            },
+            "persistent_protein_residues": persistent,
+            "interactions": interactions,
+            "artifacts": artifacts,
+            "artifact_errors": artifact_errors,
+        }
+    except Exception as exc:
+        record = {
+            "schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION,
+            "source": "equil_analysis",
+            "mode": mode,
+            "usable": False,
+            "ligand": ligand_label,
+            "residue_name": residue_name,
+            "tail_fraction": float(tail_fraction),
+            "occupancy_threshold": float(occupancy_threshold),
+            "reason": f"{type(exc).__name__}: {exc}",
+            "candidate_interaction_filter": {
+                "excluded_interactions": sorted(PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS),
+            },
+            "persistent_protein_residues": [],
+            "interactions": [],
+            "artifacts": {},
+            "artifact_errors": {},
+        }
+        logger.warning("[equil_check:{}] ProLIF analysis unavailable: {}", ligand_label, exc)
+
+    prolif_path.write_text(json.dumps(record, indent=2) + "\n")
+    return record
+
+
+def _write_unusable_prolif_interactions(
+    *,
+    prolif_path: Path,
+    ligand_label: str | None,
+    residue_name: str | None,
+    tail_fraction: float,
+    mode: str,
+    reason: Exception,
+) -> dict[str, Any]:
+    record = {
+        "schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION,
+        "source": "equil_analysis",
+        "mode": mode,
+        "usable": False,
+        "ligand": ligand_label,
+        "residue_name": residue_name,
+        "tail_fraction": float(tail_fraction),
+        "occupancy_threshold": float(PROLIF_OCCUPANCY_THRESHOLD),
+        "reason": f"{type(reason).__name__}: {reason}",
+        "candidate_interaction_filter": {
+            "excluded_interactions": sorted(PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS),
+        },
+        "persistent_protein_residues": [],
+        "interactions": [],
+        "artifacts": {},
+        "artifact_errors": {},
+    }
+    prolif_path.write_text(json.dumps(record, indent=2) + "\n")
+    return record
 
 
 def _sort_md_paths(paths: List[Path]) -> List[Path]:
@@ -164,6 +899,7 @@ def _write_stable_boresch_distance(
     universe: mda.Universe,
     tail_fraction: float,
     mode: str,
+    prolif_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ligand_candidate_names = _ligand_candidate_atom_names(
         system_root=system_root,
@@ -171,14 +907,57 @@ def _write_stable_boresch_distance(
         ligand_label=ligand_label,
         universe=universe,
     )
-    stable_record = sim_val.find_stable_boresch_distance(
-        tail_fraction=tail_fraction,
-        min_distance=float(getattr(sim, "min_adis", None) or 3.0),
-        max_distance=float(getattr(sim, "max_adis", None) or 7.0),
-        ligand_atom_names=ligand_candidate_names,
-    )
+    persistent_residue_ids = _persistent_prolif_residue_ids(prolif_record)
+    min_distance = float(getattr(sim, "min_adis", None) or 3.0)
+    max_distance = float(getattr(sim, "max_adis", None) or 7.0)
+    used_prolif_filter = False
+    fallback_reason = None
+    if persistent_residue_ids:
+        try:
+            stable_record = sim_val.find_stable_boresch_distance(
+                tail_fraction=tail_fraction,
+                min_distance=min_distance,
+                max_distance=max_distance,
+                ligand_atom_names=ligand_candidate_names,
+                protein_residue_ids=persistent_residue_ids,
+            )
+            used_prolif_filter = True
+        except Exception as exc:
+            fallback_reason = str(exc)
+            logger.debug(
+                "[equil_check:{}] Persistent ProLIF residues did not yield a "
+                "stable CA-ligand Boresch distance; falling back to all CA "
+                "candidates: {}",
+                ligand_label,
+                exc,
+            )
+            stable_record = sim_val.find_stable_boresch_distance(
+                tail_fraction=tail_fraction,
+                min_distance=min_distance,
+                max_distance=max_distance,
+                ligand_atom_names=ligand_candidate_names,
+            )
+    else:
+        stable_record = sim_val.find_stable_boresch_distance(
+            tail_fraction=tail_fraction,
+            min_distance=min_distance,
+            max_distance=max_distance,
+            ligand_atom_names=ligand_candidate_names,
+        )
     stable_record["mode"] = mode
     stable_record["usable"] = True
+    stable_record["prolif_preference"] = {
+        "usable": bool(isinstance(prolif_record, dict) and prolif_record.get("usable")),
+        "occupancy_threshold": (
+            float(prolif_record.get("occupancy_threshold"))
+            if isinstance(prolif_record, dict)
+            and prolif_record.get("occupancy_threshold") is not None
+            else None
+        ),
+        "persistent_residue_ids": [int(x) for x in persistent_residue_ids],
+        "used_residue_filter": used_prolif_filter,
+        "fallback_reason": fallback_reason,
+    }
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
     logger.debug(
         "[equil_check:{}] stable Boresch pair: {} to {} "
@@ -221,6 +1000,12 @@ _EQUIL_ANALYSIS_ARTIFACT_FILES = (
     "initial_pose.pdb",
     "equilibration_analysis_results.npz",
     "stable_boresch_distance.json",
+    "prolif_interactions.json",
+    "prolif_interactions_timeseries.csv.gz",
+    "prolif_interactions_barcode.png",
+    "prolif_interactions_occupancy.png",
+    "prolif_lignetwork.html",
+    "prolif_interaction_diagram.png",
     "simulation_analysis.png",
     "dihed_hist.png",
 )
@@ -233,6 +1018,24 @@ def _copy_equil_analysis_artifacts(equil_dir: Path) -> None:
         src = equil_dir / name
         if src.exists():
             shutil.copy2(src, artifacts_dir / name)
+
+
+def _add_existing_prolif_artifacts(
+    artifacts: dict[str, Path],
+    paths: dict[str, Path],
+) -> None:
+    keys = (
+        "prolif_interactions",
+        "prolif_timeseries",
+        "prolif_barcode",
+        "prolif_occupancy",
+        "prolif_lignetwork",
+        "prolif_interaction_diagram",
+    )
+    for key in keys:
+        path = paths[key]
+        if path.exists():
+            artifacts[key] = path
 
 
 def equil_analysis_handler(
@@ -306,7 +1109,9 @@ def equil_analysis_handler(
 
     # if representative already exists, we're done (idempotent). For auto-anchor
     # runs, still allow a later invocation to backfill the stable-distance JSON.
+    # Always allow a later invocation to backfill ProLIF interaction analysis.
     stable_distance_needed = not user_anchor_atoms
+    prolif_needed = not _prolif_interactions_current(p["prolif_interactions"])
     if (
         stable_distance_needed
         and p["stable_boresch_distance"].exists()
@@ -327,9 +1132,27 @@ def equil_analysis_handler(
                 p["stable_boresch_distance"],
                 exc,
             )
+    if p["prolif_interactions"].exists() and not _prolif_interactions_current(
+        p["prolif_interactions"]
+    ):
+        logger.debug(
+            "[equil_check:{}] ProLIF interaction JSON is stale; removing it.",
+            lig,
+        )
+        try:
+            p["prolif_interactions"].unlink()
+        except OSError as exc:
+            logger.warning(
+                "[equil_check:{}] Could not remove stale ProLIF interaction "
+                "JSON {}: {}",
+                lig,
+                p["prolif_interactions"],
+                exc,
+            )
     if (
         p["rep_pdb"].exists()
         and p["rep_rst"].exists()
+        and not prolif_needed
         and (
             not stable_distance_needed
             or _stable_boresch_distance_current(p["stable_boresch_distance"])
@@ -344,6 +1167,7 @@ def equil_analysis_handler(
         }
         if p["stable_boresch_distance"].exists():
             artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
+        _add_existing_prolif_artifacts(artifacts, p)
         return ExecResult(job_ids=[], artifacts=artifacts)
 
     if not p["full_pdb"].exists():
@@ -352,12 +1176,33 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] missing {p['full_pdb']}; cannot backfill "
                 "stable Boresch distance, keeping existing representative.*"
             )
+            if not _prolif_interactions_current(p["prolif_interactions"]):
+                try:
+                    u_prolif = mda.Universe(str(p["rep_pdb"]))
+                    _write_prolif_interactions(
+                        prolif_path=p["prolif_interactions"],
+                        universe=u_prolif,
+                        ligand_label=lig,
+                        residue_name=residue_name,
+                        tail_fraction=1.0,
+                        mode="representative_only",
+                    )
+                except Exception as exc:
+                    _write_unusable_prolif_interactions(
+                        prolif_path=p["prolif_interactions"],
+                        ligand_label=lig,
+                        residue_name=residue_name,
+                        tail_fraction=1.0,
+                        mode="representative_only",
+                        reason=exc,
+                    )
             artifacts = {
                 "representative_pdb": p["rep_pdb"],
                 "representative_rst7": p["rep_rst"],
             }
             if p["stable_boresch_distance"].exists():
                 artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
+            _add_existing_prolif_artifacts(artifacts, p)
             return ExecResult(job_ids=[], artifacts=artifacts)
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
 
@@ -376,6 +1221,29 @@ def equil_analysis_handler(
         logger.debug(
             f"[equil_check:{lig}] eq_steps=0; copied {eqnpt_appear.name} as representative"
         )
+        try:
+            topology = p["equil_dir"] / prmtop
+            if topology.exists() and p["rep_rst"].exists():
+                u_prolif = mda.Universe(str(topology), str(p["rep_rst"]))
+            else:
+                u_prolif = mda.Universe(str(p["rep_pdb"]))
+            prolif_record = _write_prolif_interactions(
+                prolif_path=p["prolif_interactions"],
+                universe=u_prolif,
+                ligand_label=lig,
+                residue_name=residue_name,
+                tail_fraction=1.0,
+                mode="single_frame_no_equil",
+            )
+        except Exception as exc:
+            prolif_record = _write_unusable_prolif_interactions(
+                prolif_path=p["prolif_interactions"],
+                ligand_label=lig,
+                residue_name=residue_name,
+                tail_fraction=1.0,
+                mode="single_frame_no_equil",
+                reason=exc,
+            )
         if user_anchor_atoms:
             logger.debug(
                 "[equil_check:{}] explicit create.anchor_atoms were provided; "
@@ -406,6 +1274,7 @@ def equil_analysis_handler(
                     universe=u_static,
                     tail_fraction=1.0,
                     mode="single_frame_no_equil",
+                    prolif_record=prolif_record,
                 )
             except Exception as exc:
                 _write_unusable_stable_boresch_distance(
@@ -428,6 +1297,7 @@ def equil_analysis_handler(
         }
         if p["stable_boresch_distance"].exists():
             artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
+        _add_existing_prolif_artifacts(artifacts, p)
         return ExecResult(job_ids=[], artifacts=artifacts)
 
     # Run validation
@@ -465,6 +1335,31 @@ def equil_analysis_handler(
             p["unbound"].write_text(f"UNBOUND with ligand_bs = {ligand_bs_last:.3f}\n")
             return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
+        try:
+            topology = p["equil_dir"] / prmtop
+            u_prolif = (
+                mda.Universe(str(topology), [str(t) for t in trajs])
+                if topology.exists()
+                else u
+            )
+            prolif_record = _write_prolif_interactions(
+                prolif_path=p["prolif_interactions"],
+                universe=u_prolif,
+                ligand_label=lig,
+                residue_name=residue_name,
+                tail_fraction=0.25,
+                mode="trajectory_tail",
+            )
+        except Exception as exc:
+            prolif_record = _write_unusable_prolif_interactions(
+                prolif_path=p["prolif_interactions"],
+                ligand_label=lig,
+                residue_name=residue_name,
+                tail_fraction=0.25,
+                mode="trajectory_tail",
+                reason=exc,
+            )
+
         if user_anchor_atoms:
             logger.debug(
                 "[equil_check:{}] explicit create.anchor_atoms were provided; "
@@ -483,6 +1378,7 @@ def equil_analysis_handler(
                     universe=u,
                     tail_fraction=0.25,
                     mode="trajectory_tail",
+                    prolif_record=prolif_record,
                 )
             except Exception as exc:
                 _write_unusable_stable_boresch_distance(
@@ -578,4 +1474,5 @@ def equil_analysis_handler(
     }
     if p["stable_boresch_distance"].exists():
         artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
+    _add_existing_prolif_artifacts(artifacts, p)
     return ExecResult(job_ids=[], artifacts=artifacts)

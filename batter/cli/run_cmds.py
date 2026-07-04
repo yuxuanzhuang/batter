@@ -20,6 +20,7 @@ from batter.cli.shared import (
 )
 from batter.config.run import RunConfig, SlurmConfig
 from batter.data import job_manager
+from batter.orchestrate.run import _preflight_required_python_packages
 from batter.orchestrate.run_support import (
     compute_run_signature,
     generate_run_id,
@@ -95,6 +96,13 @@ def _resolve_run_dir_for_submission(
         run_id = generate_run_id(cfg.protocol, cfg.create.system_name)
         run_dir = Path(cfg.run.output_folder) / "executions" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _preflight_required_packages_for_cli() -> None:
+    try:
+        _preflight_required_python_packages()
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command("run")
@@ -212,6 +220,7 @@ def cmd_run(
         raise click.ClickException(f"Invalid SimulationConfig YAML: {e}")
 
     if slurm_submit:
+        _preflight_required_packages_for_cli()
         _, run_dir = _resolve_run_dir_for_submission(
             cfg_for_validation, yaml_path, run_over
         )
@@ -416,6 +425,7 @@ def cmd_run_exec(
                 "run.only_rbfe_network is only valid for RBFE protocols."
             )
     if slurm_submit:
+        _preflight_required_packages_for_cli()
         manager_job_name = (
             "fep_" + (PurePosixPath(exec_dir) / "simulations" / "manager").as_posix()
         )

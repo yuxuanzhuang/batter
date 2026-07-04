@@ -182,7 +182,7 @@ class LocalBackend(ExecBackend):
         max_workers: Optional[int] = None,
         description: str = "",
         batch_size: str | int = "auto",
-        verbose: int = 10,
+        verbose: int = 0,
         prefer: str = "processes",
         backend: Optional[str] = None,
     ) -> Dict[str, Mapping[str, ExecResult]]:

@@ -28,7 +28,7 @@ import itertools
 
 from MDAnalysis.analysis.results import Results
 
-STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 3
+STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 4
 STABLE_BORESCH_DISTANCE_RANKED_PAIR_LIMIT = 50
 _VMD_FIRST_ANCHOR_ANGLE_TARGET = 90.0
 _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE = 70.0
@@ -313,14 +313,23 @@ class SimValidator:
     def _stable_distance_protein_candidates(
         self,
         anchor_context: dict[str, Any] | None = None,
+        residue_ids: Sequence[int] | None = None,
     ) -> AtomGroup:
         candidates = self.universe.select_atoms(
-            'protein and not resname NMA ACE and name CA C N'
+            'protein and not resname NMA ACE and name CA'
         )
         if candidates.n_atoms == 0:
-            candidates = self.universe.select_atoms('protein and name CA C N')
-        if candidates.n_atoms == 0:
-            candidates = self._heavy_atoms_or_all(self.universe.select_atoms('protein'))
+            candidates = self.universe.select_atoms('protein and name CA')
+        requested_resids = {
+            int(resid)
+            for resid in residue_ids or []
+            if str(resid).strip()
+        }
+        if requested_resids and candidates.n_atoms:
+            candidates = self._atom_group_from_atoms(
+                [atom for atom in candidates if int(atom.resid) in requested_resids],
+                candidates,
+            )
         candidates = self._filter_stable_candidates_to_anchor_context(
             candidates, anchor_context
         )
@@ -409,23 +418,28 @@ class SimValidator:
         min_distance: float = 3.0,
         max_distance: float = 7.0,
         ligand_atom_names: Sequence[str] | None = None,
+        protein_residue_ids: Sequence[int] | None = None,
     ) -> dict[str, Any]:
         """
         Pick a stable protein-ligand atom pair from the equilibration tail.
 
-        Protein candidates follow BATTER's receptor-anchor atom class (backbone
-        CA/C/N, with heavy-atom fallback). Ligand candidates can be restricted
-        to names produced by the ligand-anchor candidate heuristic. The selected
-        pair must have a mean distance in ``[min_distance, max_distance]`` over
-        the trailing analysis window. When the original receptor anchors are
-        available, the P2-P1-L1 angle must also satisfy the relaxed VMD first
-        anchor tolerance.
+        Protein candidates follow BATTER's receptor-anchor atom class (CA). When
+        ``protein_residue_ids`` is provided, candidates are restricted to those
+        residues; this is used to prefer persistent ProLIF interaction residues.
+        Ligand candidates can be restricted to names produced by the ligand-anchor
+        candidate heuristic. The selected pair must have a mean distance in
+        ``[min_distance, max_distance]`` over the trailing analysis window. When
+        the original receptor anchors are available, the P2-P1-L1 angle must also
+        satisfy the relaxed VMD first anchor tolerance.
         """
         if min_distance < 0 or max_distance <= min_distance:
             raise ValueError("min_distance must be >= 0 and below max_distance.")
 
         anchor_context = self._stable_distance_anchor_context()
-        protein_candidates = self._stable_distance_protein_candidates(anchor_context)
+        protein_candidates = self._stable_distance_protein_candidates(
+            anchor_context,
+            residue_ids=protein_residue_ids,
+        )
         ligand_candidates = self._stable_distance_ligand_candidates(ligand_atom_names)
         if protein_candidates.n_atoms == 0:
             raise ValueError("No protein atoms available for stable-distance search.")
@@ -671,7 +685,10 @@ class SimValidator:
             "analysis_start_frame": int(start_frame),
             "n_frames": int(len(frame_indices)),
             "criteria": {
-                "protein_atom_names": ["CA", "C", "N"],
+                "protein_atom_names": ["CA"],
+                "protein_residue_ids": [
+                    int(resid) for resid in protein_residue_ids or []
+                ],
                 "ligand_atom_names": [
                     str(name).strip()
                     for name in ligand_atom_names or []

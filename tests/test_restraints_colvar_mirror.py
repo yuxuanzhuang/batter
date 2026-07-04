@@ -59,6 +59,35 @@ def _write_four_atom_pdb(path: Path, coords: list[tuple[float, float, float]]) -
     path.write_text("".join(lines))
 
 
+def test_load_common_core_indices_uses_alt_to_ref_mapping_direction(
+    tmp_path: Path,
+) -> None:
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"1": 10, "4": 12, "7": 13}))
+
+    ref_indices, alt_indices = restraints._load_common_core_indices(mapping)
+
+    assert ref_indices == [10, 12, 13]
+    assert alt_indices == [1, 4, 7]
+
+
+def test_load_common_core_indices_supports_scmask_format(tmp_path: Path) -> None:
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(
+        json.dumps(
+            {
+                "scmk1_cc_solvent_indices": [9, "3", 5],
+                "scmk2_cc_solvent_indices": ["8", 2],
+            }
+        )
+    )
+
+    ref_indices, alt_indices = restraints._load_common_core_indices(mapping)
+
+    assert ref_indices == [3, 5, 9]
+    assert alt_indices == [2, 8]
+
+
 def test_septop_ref_boresch_ignores_abfe_ligand_anchors() -> None:
     ref = _FakeResidue(
         [

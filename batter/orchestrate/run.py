@@ -12,6 +12,7 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib import util as importlib_util
 import json
 import smtplib
 import shutil
@@ -82,6 +83,42 @@ _PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
     "fe": frozenset({"fe"}),
     "analyze": frozenset({"analyze"}),
 }
+
+_REQUIRED_PYTHON_MODULES: tuple[tuple[str, str], ...] = (
+    ("MDAnalysis", "MDAnalysis"),
+    ("pandas", "pandas"),
+    ("pydantic", "pydantic"),
+    ("click", "click"),
+    ("loguru", "loguru"),
+    ("yaml", "pyyaml"),
+    ("numpy", "numpy"),
+    ("scipy", "scipy"),
+    ("matplotlib", "matplotlib"),
+    ("networkx", "networkx"),
+    ("prolif", "prolif"),
+)
+
+
+def _preflight_required_python_packages() -> None:
+    """Fail early when required BATTER runtime packages are unavailable."""
+    missing = [
+        (module_name, package_name)
+        for module_name, package_name in _REQUIRED_PYTHON_MODULES
+        if importlib_util.find_spec(module_name) is None
+    ]
+    if not missing:
+        return
+
+    detail = ", ".join(
+        f"{module_name} (install package: {package_name})"
+        for module_name, package_name in missing
+    )
+    install_hint = " ".join(sorted({package for _, package in missing}))
+    raise RuntimeError(
+        "Missing required BATTER Python package(s): "
+        f"{detail}. Install them in the active environment, e.g. "
+        f"`pip install {install_hint}` or reinstall BATTER with its dependencies."
+    )
 
 
 def _options_dict(value: Any) -> Dict[str, Any]:
@@ -934,6 +971,7 @@ def _run_from_yaml_impl(
     if on_failure:
         rc.run.on_failure = on_failure
     _validate_only_rbfe_network(rc)
+    _preflight_required_python_packages()
 
     logger.info(
     "Run configuration:\n{}",

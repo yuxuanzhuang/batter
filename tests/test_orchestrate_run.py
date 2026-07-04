@@ -53,6 +53,28 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "--full-rbfe" in note
 
 
+def test_preflight_required_python_packages_reports_missing_prolif(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_find_spec(module_name: str):
+        if module_name == "prolif":
+            return None
+        return object()
+
+    monkeypatch.setattr(run_mod.importlib_util, "find_spec", fake_find_spec)
+
+    with pytest.raises(RuntimeError, match="prolif"):
+        run_mod._preflight_required_python_packages()
+
+
+def test_preflight_required_python_packages_passes_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_mod.importlib_util, "find_spec", lambda _name: object())
+
+    run_mod._preflight_required_python_packages()
+
+
 @pytest.mark.parametrize("has_results", [False])
 def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     run_dir = tmp_path / "run1"

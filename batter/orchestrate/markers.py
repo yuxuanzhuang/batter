@@ -14,7 +14,8 @@ from batter.pipeline.step import Step
 from batter.utils import components_under
 from batter.orchestrate.state_registry import get_phase_state, PhaseState
 
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 3
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 4
+_PROLIF_INTERACTIONS_SCHEMA_VERSION = 3
 
 
 def _components_under_pattern(root: Path, pattern: str) -> list[str]:
@@ -431,11 +432,15 @@ def is_done(
     bool
         ``True`` if the system meets the success specification, ``False`` otherwise.
     """
-    if phase_name == "equil_analysis" and not system.anchors:
+    if phase_name == "equil_analysis":
         unbound = system.root / "equil" / "UNBOUND"
-        stable_path = system.root / "equil" / "stable_boresch_distance.json"
-        if not unbound.exists() and not _stable_boresch_distance_current(stable_path):
+        prolif_path = system.root / "equil" / "prolif_interactions.json"
+        if not unbound.exists() and not _prolif_interactions_current(prolif_path):
             return False
+        if not system.anchors:
+            stable_path = system.root / "equil" / "stable_boresch_distance.json"
+            if not unbound.exists() and not _stable_boresch_distance_current(stable_path):
+                return False
 
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success
@@ -458,6 +463,22 @@ def _stable_boresch_distance_current(path: Path) -> bool:
     except Exception:
         return False
     return schema_version >= _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
+
+
+def _prolif_interactions_current(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    try:
+        schema_version = int(data.get("schema_version", 0))
+    except Exception:
+        return False
+    return schema_version >= _PROLIF_INTERACTIONS_SCHEMA_VERSION
 
 
 def _phase_spec(root: Path, phase: str) -> PhaseState:

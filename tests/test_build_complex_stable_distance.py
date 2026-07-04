@@ -151,13 +151,13 @@ def test_stable_boresch_loader_ignores_stale_and_unusable_records(
     assert _load_stable_boresch_distance(equil_dir) is None
 
     stable_path.write_text(
-        json.dumps({"schema_version": 3, "usable": False, "reason": "no pair"})
+        json.dumps({"schema_version": 4, "usable": False, "reason": "no pair"})
         + "\n"
     )
     assert _load_stable_boresch_distance(equil_dir) is None
 
     current = {
-        "schema_version": 3,
+        "schema_version": 4,
         "usable": True,
         "protein": {"resid": 10, "name": "CA"},
         "ligand": {"name": "C1"},

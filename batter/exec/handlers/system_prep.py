@@ -1245,6 +1245,21 @@ class _SystemPrepRunner:
                     lig_sdf,
                     protein_dssp=dssp_result.get("results"),
                 )
+        elif len(resolved_anchor_atoms) == 1:
+            if anchor_ligand_is_apo:
+                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
+                    u_prot,
+                    protein_dssp=dssp_result.get("results"),
+                    preferred_p1_selection=resolved_anchor_atoms[0],
+                )
+            else:
+                resolved_anchor_atoms = select_receptor_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    lig_sdf,
+                    protein_dssp=dssp_result.get("results"),
+                    preferred_p1_selection=resolved_anchor_atoms[0],
+                )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot,

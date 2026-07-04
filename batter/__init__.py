@@ -40,6 +40,18 @@ def _configure_warning_filters() -> None:
         category=UserWarning,
         module="MDAnalysis.topology.MOL2Parser",
     )
+    warnings.filterwarnings(
+        "ignore",
+        message="Unknown ATOMIC_NUMBER value.*",
+        category=UserWarning,
+        module="MDAnalysis.topology.TOPParser",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="Deprecated in version 2\\.8\\.0.*",
+        category=DeprecationWarning,
+        module="MDAnalysis.topology.tables",
+    )
 
     try:
         from Bio.Application import BiopythonDeprecationWarning
@@ -63,6 +75,9 @@ def _configure_logging() -> None:
     def _mute_jax_3(record):
         return "PyMBAR can run faster with JAX" not in record.msg
 
+    def _mute_mdanalysis_atomic_number(record):
+        return "Unknown ATOMIC_NUMBER value" not in record.getMessage()
+
     logging.basicConfig(level=logging.WARNING, force=True)
     logging.getLogger("pymbar.timeseries").addFilter(_mute_timeseries)
     mbar_solvers_log = logging.getLogger("pymbar.mbar_solvers")
@@ -70,6 +85,9 @@ def _configure_logging() -> None:
     mbar_solvers_log.addFilter(_mute_jax_2)
     mbar_solvers_log.addFilter(_mute_jax_3)
     logging.getLogger("kartograf").setLevel(logging.WARNING)
+    logging.getLogger("MDAnalysis.topology.TOPParser").addFilter(
+        _mute_mdanalysis_atomic_number
+    )
     logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
     logging.getLogger("pymbar").setLevel(logging.WARNING)
     logging.getLogger("alchemlyb").setLevel(logging.WARNING)
@@ -95,7 +113,7 @@ def _configure_logger() -> None:
     )
 
 
-_seed_default_slurm_headers()
 _configure_warning_filters()
 _configure_logging()
 _configure_logger()
+_seed_default_slurm_headers()
