@@ -50,3 +50,19 @@ def test_get_phase_state_legacy_default(tmp_path):
     assert unknown.required == []
     assert unknown.success == []
     assert unknown.failure == []
+
+
+def test_prepare_fe_state_normalizes_legacy_marker_paths(tmp_path):
+    root = tmp_path / "legacy_prepare_fe"
+    root.mkdir()
+    register_phase_state(
+        root,
+        "prepare_fe",
+        required=[["fe/artifacts/prepare_fe.ok"]],
+        success=[["fe/artifacts/prepare_fe.ok"]],
+    )
+
+    state = get_phase_state(root, "prepare_fe")
+
+    assert state.required == [["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]]
+    assert state.success == [["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]]

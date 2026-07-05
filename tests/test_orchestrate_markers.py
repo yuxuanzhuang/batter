@@ -259,6 +259,26 @@ def test_prepare_fe_progress_path(tmp_path):
     assert "foo/FINISHED" in progress.read_text()
 
 
+def test_prepare_fe_weak_saved_state_requires_windows_marker(tmp_path):
+    root = tmp_path / "LIG1"
+    root.mkdir()
+    register_phase_state(
+        root,
+        "prepare_fe",
+        required=[["fe/prepare_fe.ok"]],
+        success=[["fe/prepare_fe.ok"]],
+    )
+    fe_root = root / "fe"
+    fe_root.mkdir()
+    (fe_root / "prepare_fe.ok").write_text("ok\n")
+
+    system = _make_system(root)
+    assert markers.is_done(system, "prepare_fe") is False
+
+    (fe_root / "prepare_fe_windows.ok").write_text("ok\n")
+    assert markers.is_done(system, "prepare_fe") is True
+
+
 def test_equil_progress_invalidated_when_finished_marker_missing(tmp_path):
     run_root = tmp_path / "run"
     root = run_root / "simulations" / "LIG1"

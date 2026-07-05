@@ -10,6 +10,8 @@ from typing import Dict, Iterable, List, Sequence
 
 REGISTRY_FILENAME = "phase_state.json"
 SCHEMA_VERSION = 1
+_PREPARE_FE_MINIMUM_SUCCESS = ["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]
+_PREPARE_FE_MARKER_NAMES = {"prepare_fe.ok", "prepare_fe_windows.ok"}
 
 LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
     "system_prep": {
@@ -210,6 +212,44 @@ def register_phase_state(
     )
 
 
+def _groups_with_required_paths(
+    groups: List[List[str]],
+    required_paths: Sequence[str],
+) -> List[List[str]]:
+    if not groups:
+        return [list(required_paths)]
+    out: List[List[str]] = []
+    for group in groups:
+        merged = [
+            path
+            for path in group
+            if Path(path).name not in _PREPARE_FE_MARKER_NAMES
+        ]
+        for path in required_paths:
+            if path not in merged:
+                merged.append(path)
+        out.append(merged)
+    return out
+
+
+def _normalize_phase_state(state: PhaseState) -> PhaseState:
+    if state.phase != "prepare_fe":
+        return state
+    return PhaseState(
+        phase=state.phase,
+        required=_groups_with_required_paths(
+            state.required,
+            _PREPARE_FE_MINIMUM_SUCCESS,
+        ),
+        success=(
+            _groups_with_required_paths(state.success, _PREPARE_FE_MINIMUM_SUCCESS)
+            if state.success
+            else []
+        ),
+        failure=state.failure,
+    )
+
+
 def read_phase_states(root: Path | str) -> Dict[str, PhaseState]:
     """Return all recorded phase-state specifications under a system root.
 
@@ -253,13 +293,13 @@ def get_phase_state(root: Path | str, phase: str) -> PhaseState:
     """
     states = read_phase_states(root)
     if phase in states:
-        return states[phase]
+        return _normalize_phase_state(states[phase])
     legacy = LEGACY_DEFAULTS.get(phase)
     if legacy:
-        return PhaseState(
+        return _normalize_phase_state(PhaseState(
             phase=phase,
             required=legacy.get("required", []),
             success=legacy.get("success", []),
             failure=legacy.get("failure", []),
-        )
+        ))
     return PhaseState(phase=phase)
