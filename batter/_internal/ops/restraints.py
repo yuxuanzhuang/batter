@@ -32,6 +32,8 @@ ABFE_DIFF_POSE_LIGAND_ATOMS = 6
 _ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
 BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
 BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
+SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
+BoreschCandidate = tuple[float, tuple[int, int, int], tuple[float, ...], float, float]
 
 def _stride_atom_serials(
     atoms: Sequence[str | int],
@@ -391,6 +393,32 @@ def _mapped_heavy_atom_names_from_residue(
             continue
         names.append(name)
     return names
+
+
+def _common_core_boresch_preference_names(
+    names: Iterable[str],
+    *,
+    label: str,
+) -> list[str]:
+    """Return mapped common-core names only when there are enough to prefer."""
+    unique: list[str] = []
+    for name in names:
+        clean = str(name).strip()
+        if clean and clean not in unique:
+            unique.append(clean)
+
+    if len(unique) < SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS:
+        if unique:
+            logger.debug(
+                "[restraints:x] ignoring {} mapped common-region Boresch "
+                "preference: {} mapped heavy atom(s) < {} required: {}",
+                label,
+                len(unique),
+                SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS,
+                unique,
+            )
+        return []
+    return unique
 
 
 def _collect_common_core_heavy_ligand(
@@ -1997,20 +2025,11 @@ def _frame_safe_boresch_atom_names_from_residue(
     span = float(np.max(np.linalg.norm(coords - centroid, axis=1)))
     span = max(span, 1.0)
 
-    min_anchor_distance = 0.5
-    min_sine = 0.25
-    best_valid: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
-    best_fallback: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
-    preferred_triplet_valid: tuple[float, tuple[int, int, int], tuple[float, ...], float, float] | None = None
     preferred_atom_set = {
         str(name).strip()
         for name in preferred_atom_names
         if str(name).strip()
     }
-    preferred_valid: dict[
-        str,
-        tuple[float, tuple[int, int, int], tuple[float, ...], float, float],
-    ] = {}
     preferred_names = [
         str(name).strip()
         for name in preferred_first_names
@@ -2018,68 +2037,108 @@ def _frame_safe_boresch_atom_names_from_residue(
     ]
     preferred_set = set(preferred_names)
 
-    for i in range(len(atoms)):
-        first_name = str(atoms[i].name).strip()
-        l1_centrality = np.linalg.norm(coords[i] - centroid) / span
-        for j in range(len(atoms)):
-            if j == i:
-                continue
-            d12 = float(np.linalg.norm(coords[j] - coords[i]))
-            if d12 < min_anchor_distance:
-                continue
-            for k in range(len(atoms)):
-                if k == i or k == j:
-                    continue
-                d13 = float(np.linalg.norm(coords[k] - coords[i]))
-                d23 = float(np.linalg.norm(coords[k] - coords[j]))
-                if min(d13, d23) < min_anchor_distance:
-                    continue
-                area2 = float(
-                    np.linalg.norm(
-                        np.cross(coords[j] - coords[i], coords[k] - coords[i])
-                    )
-                )
-                sine = area2 / max(d12 * d13, 1.0e-12)
-                if sine < min_sine:
-                    continue
+    def _scan_candidates(
+        *,
+        min_anchor_distance: float,
+        min_sine: float,
+        angle_margin_cutoff: float,
+        torsion_margin_cutoff: float,
+    ) -> tuple[
+        BoreschCandidate | None,
+        BoreschCandidate | None,
+        BoreschCandidate | None,
+        dict[str, BoreschCandidate],
+    ]:
+        best_valid: BoreschCandidate | None = None
+        best_fallback: BoreschCandidate | None = None
+        preferred_triplet_valid: BoreschCandidate | None = None
+        preferred_valid: dict[str, BoreschCandidate] = {}
 
-                values = _boresch_frame_values(
-                    receptor_atoms,
-                    (atoms[i], atoms[j], atoms[k]),
-                )
-                if values is None:
+        for i in range(len(atoms)):
+            first_name = str(atoms[i].name).strip()
+            l1_centrality = np.linalg.norm(coords[i] - centroid) / span
+            for j in range(len(atoms)):
+                if j == i:
                     continue
-                angle_margin, torsion_margin = _boresch_frame_margins(values)
-                spread = (min(d12, d13) + 0.5 * d23) / span
-                local_score = 4.0 * sine + 0.25 * spread - l1_centrality
-                endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
-                score = local_score + endpoint_score
-                candidate = (score, (i, j, k), values, angle_margin, torsion_margin)
-                if best_fallback is None or score > best_fallback[0]:
-                    best_fallback = candidate
-                if angle_margin < min_angle_margin or torsion_margin < min_torsion_margin:
+                d12 = float(np.linalg.norm(coords[j] - coords[i]))
+                if d12 < min_anchor_distance:
                     continue
-                if best_valid is None or score > best_valid[0]:
-                    best_valid = candidate
-                if preferred_atom_set:
-                    candidate_names = {
-                        str(atoms[idx].name).strip()
-                        for idx in (i, j, k)
-                    }
-                    if candidate_names <= preferred_atom_set and (
-                        preferred_triplet_valid is None
-                        or score > preferred_triplet_valid[0]
+                for k in range(len(atoms)):
+                    if k == i or k == j:
+                        continue
+                    d13 = float(np.linalg.norm(coords[k] - coords[i]))
+                    d23 = float(np.linalg.norm(coords[k] - coords[j]))
+                    if min(d13, d23) < min_anchor_distance:
+                        continue
+                    area2 = float(
+                        np.linalg.norm(
+                            np.cross(coords[j] - coords[i], coords[k] - coords[i])
+                        )
+                    )
+                    sine = area2 / max(d12 * d13, 1.0e-12)
+                    if sine < min_sine:
+                        continue
+
+                    values = _boresch_frame_values(
+                        receptor_atoms,
+                        (atoms[i], atoms[j], atoms[k]),
+                    )
+                    if values is None:
+                        continue
+                    angle_margin, torsion_margin = _boresch_frame_margins(values)
+                    spread = (min(d12, d13) + 0.5 * d23) / span
+                    local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                    endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
+                    score = local_score + endpoint_score
+                    candidate = (
+                        score,
+                        (i, j, k),
+                        values,
+                        angle_margin,
+                        torsion_margin,
+                    )
+                    if best_fallback is None or score > best_fallback[0]:
+                        best_fallback = candidate
+                    if (
+                        angle_margin < angle_margin_cutoff
+                        or torsion_margin < torsion_margin_cutoff
                     ):
-                        preferred_triplet_valid = candidate
-                if first_name in preferred_set and (
-                    first_name not in preferred_valid
-                    or score > preferred_valid[first_name][0]
-                ):
-                    preferred_valid[first_name] = candidate
+                        continue
+                    if best_valid is None or score > best_valid[0]:
+                        best_valid = candidate
+                    if preferred_atom_set:
+                        candidate_names = {
+                            str(atoms[idx].name).strip()
+                            for idx in (i, j, k)
+                        }
+                        if candidate_names <= preferred_atom_set and (
+                            preferred_triplet_valid is None
+                            or score > preferred_triplet_valid[0]
+                        ):
+                            preferred_triplet_valid = candidate
+                    if first_name in preferred_set and (
+                        first_name not in preferred_valid
+                        or score > preferred_valid[first_name][0]
+                    ):
+                        preferred_valid[first_name] = candidate
+
+        return best_valid, best_fallback, preferred_triplet_valid, preferred_valid
+
+    def _names_from_candidate(candidate: BoreschCandidate) -> list[str]:
+        return [str(atoms[idx].name).strip() for idx in candidate[1]]
+
+    best_valid, best_fallback, preferred_triplet_valid, preferred_valid = (
+        _scan_candidates(
+            min_anchor_distance=0.5,
+            min_sine=0.25,
+            angle_margin_cutoff=min_angle_margin,
+            torsion_margin_cutoff=min_torsion_margin,
+        )
+    )
 
     if preferred_triplet_valid is not None:
-        _, indices, values, angle_margin, torsion_margin = preferred_triplet_valid
-        names = [str(atoms[idx].name).strip() for idx in indices]
+        _, _, values, angle_margin, torsion_margin = preferred_triplet_valid
+        names = _names_from_candidate(preferred_triplet_valid)
         logger.debug(
             "[restraints:x] Selected {} Boresch anchors {} from mapped common "
             "region with values {} (angle margin {:.1f}, torsion margin {:.1f}).",
@@ -2095,8 +2154,8 @@ def _frame_safe_boresch_atom_names_from_residue(
         selected = preferred_valid.get(first_name)
         if selected is None:
             continue
-        _, indices, values, angle_margin, torsion_margin = selected
-        names = [str(atoms[idx].name).strip() for idx in indices]
+        _, _, values, angle_margin, torsion_margin = selected
+        names = _names_from_candidate(selected)
         logger.debug(
             "[restraints:x] Selected {} Boresch anchors {} with preferred L1 {} "
             "and values {} (angle margin {:.1f}, torsion margin {:.1f}).",
@@ -2117,17 +2176,56 @@ def _frame_safe_boresch_atom_names_from_residue(
         )
 
     selected = best_valid or best_fallback
+    selected_source = (
+        "strict_valid"
+        if best_valid is not None
+        else ("strict_fallback" if best_fallback is not None else None)
+    )
+    if best_valid is None:
+        for min_anchor_distance, min_sine, angle_cutoff, torsion_cutoff in (
+            (0.25, 0.10, min(15.0, min_angle_margin), min(5.0, min_torsion_margin)),
+            (0.05, 0.01, 0.0, 0.0),
+        ):
+            (
+                relaxed_valid,
+                relaxed_fallback,
+                _relaxed_preferred_triplet,
+                _relaxed_preferred,
+            ) = _scan_candidates(
+                min_anchor_distance=min_anchor_distance,
+                min_sine=min_sine,
+                angle_margin_cutoff=angle_cutoff,
+                torsion_margin_cutoff=torsion_cutoff,
+            )
+            relaxed_selected = relaxed_valid or relaxed_fallback
+            if relaxed_selected is None:
+                continue
+            selected = relaxed_selected
+            selected_source = "relaxed"
+            logger.debug(
+                "[restraints:x] Falling back to relaxed {} Boresch anchor "
+                "search (min distance {:.2f} A, min sine {:.2f}, angle margin "
+                ">= {:.1f} deg, torsion margin >= {:.1f} deg).",
+                label,
+                min_anchor_distance,
+                min_sine,
+                angle_cutoff,
+                torsion_cutoff,
+            )
+            break
+
     if selected is None:
         logger.warning(
             "[restraints:x] Could not find a non-collinear {} Boresch anchor "
-            "triplet; falling back to the first three heavy atoms.",
+            "triplet with receptor-frame checks; falling back to ligand-only "
+            "geometry.",
             label,
         )
-        return [str(atom.name).strip() for atom in atoms[:3]]
+        return _independent_boresch_atom_names_from_residue(residue, label=label)
 
-    _, indices, values, angle_margin, torsion_margin = selected
-    names = [str(atoms[idx].name).strip() for idx in indices]
-    if best_valid is None:
+    _, _, values, angle_margin, torsion_margin = selected
+    names = _names_from_candidate(selected)
+    if selected_source == "strict_fallback":
         logger.warning(
             "[restraints:x] Could not find a {} Boresch triplet satisfying "
             "angle margin >= {:.1f} deg and torsion margin >= {:.1f} deg; using "
@@ -2135,6 +2233,16 @@ def _frame_safe_boresch_atom_names_from_residue(
             label,
             min_angle_margin,
             min_torsion_margin,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    elif selected_source == "relaxed":
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with relaxed search "
+            "and values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
             names,
             [round(value, 3) for value in values],
             angle_margin,
@@ -2311,16 +2419,26 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         alt_residue,
         alt_common_indices,
     )
+    ref_common_preference_names = _common_core_boresch_preference_names(
+        ref_common_names,
+        label="reference",
+    )
+    alt_common_preference_names = _common_core_boresch_preference_names(
+        alt_common_names,
+        label="alternate",
+    )
     if ref_common_names or alt_common_names:
         logger.debug(
             "[restraints:x] mapped common-region ligand atoms for Boresch "
-            "preference: ref={} alt={}",
+            "preference: ref={} alt={} usable_ref={} usable_alt={}",
             ref_common_names,
             alt_common_names,
+            ref_common_preference_names,
+            alt_common_preference_names,
         )
 
     ref_preferred = _unique_names(
-        ref_common_names
+        ref_common_preference_names
         + _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_ref))
     )
     if anchor_names[0] and anchor_names[0] not in ref_preferred:
@@ -2330,12 +2448,12 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         if lig_alt
         else []
     )
-    alt_preferred = _unique_names(alt_common_names + alt_preferred)
+    alt_preferred = _unique_names(alt_common_preference_names + alt_preferred)
     ref_names = _resolve_ref_boresch_atom_names(
         ref_residue,
         anchor_names,
         receptor_atoms=receptor_atoms,
-        preferred_atom_names=ref_common_names,
+        preferred_atom_names=ref_common_preference_names,
         preferred_first_names=ref_preferred,
     )
     alt_names = _resolve_alt_boresch_atom_names(
@@ -2344,7 +2462,7 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         ref_names=ref_names,
         mapping_path=mapping_path,
         receptor_atoms=receptor_atoms,
-        preferred_atom_names=alt_common_names,
+        preferred_atom_names=alt_common_preference_names,
         preferred_first_names=alt_preferred,
     )
 

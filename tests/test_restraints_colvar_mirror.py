@@ -88,6 +88,55 @@ def test_load_common_core_indices_supports_scmask_format(tmp_path: Path) -> None
     assert alt_indices == [2, 8]
 
 
+def test_common_core_boresch_preference_requires_more_than_three_atoms() -> None:
+    assert restraints._common_core_boresch_preference_names(
+        ["A1", "A2", "A3"],
+        label="alternate",
+    ) == []
+
+    assert restraints._common_core_boresch_preference_names(
+        ["A1", "A2", "A2", "", "A3", "A4"],
+        label="alternate",
+    ) == ["A1", "A2", "A3", "A4"]
+
+
+def test_common_core_boresch_preference_threshold_controls_selection() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, 0.0, 0.0)),
+        _FakeAtom("P2", (0.0, -4.0, 0.0)),
+        _FakeAtom("P3", (4.0, -4.0, 0.0)),
+    ]
+    residue = _FakeResidue(
+        [
+            _FakeAtom("R1", (1.0, 0.0, 0.0)),
+            _FakeAtom("R2", (2.0, 0.0, 0.0)),
+            _FakeAtom("R3", (1.0, 1.0, 0.0)),
+            _FakeAtom("R4", (1.0, 0.0, 1.0)),
+            _FakeAtom("R5", (3.0, 2.0, 1.0)),
+        ]
+    )
+
+    below_threshold = restraints._common_core_boresch_preference_names(
+        ["R1", "R2", "R3"],
+        label="reference",
+    )
+    assert below_threshold == []
+
+    above_threshold = restraints._common_core_boresch_preference_names(
+        ["R1", "R2", "R3", "R4"],
+        label="reference",
+    )
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        residue,
+        receptor_atoms=receptor_atoms,
+        label="reference",
+        preferred_atom_names=above_threshold,
+        preferred_first_names=above_threshold,
+    )
+
+    assert set(names) <= set(above_threshold)
+
+
 def test_septop_ref_boresch_ignores_abfe_ligand_anchors() -> None:
     ref = _FakeResidue(
         [
@@ -236,6 +285,38 @@ def test_septop_boresch_selection_rejects_endpoint_torsions() -> None:
     assert names != ["C8", "O1", "C12"]
     assert angle_margin >= restraints.BORESCH_MIN_ANGLE_MARGIN_DEG
     assert torsion_margin >= restraints.BORESCH_MIN_TORSION_MARGIN_DEG
+
+
+def test_boresch_selection_relaxes_local_geometry_before_first_three() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, -3.0, 1.0)),
+        _FakeAtom("P2", (0.0, -4.0, 0.0)),
+        _FakeAtom("P3", (4.0, -4.0, 0.0)),
+    ]
+    ligand = _FakeResidue(
+        [
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (2.0, 0.0, 0.0)),
+            _FakeAtom("A4", (1.0, 0.05, 0.0)),
+            _FakeAtom("A5", (1.0, 0.0, 0.05)),
+        ]
+    )
+
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        ligand,
+        receptor_atoms=receptor_atoms,
+        label="alternate",
+    )
+
+    atoms_by_name = {atom.name: atom for atom in ligand.atoms}
+    values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name[name] for name in names],
+    )
+
+    assert names != ["A1", "A2", "A3"]
+    assert values is not None
 
 
 def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
