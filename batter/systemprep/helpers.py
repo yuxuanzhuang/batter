@@ -183,10 +183,10 @@ def select_receptor_anchor_atoms(
                 min_distance=min_dist,
                 max_distance=max_dist,
             )
-            if nearby.n_atoms < 3:
+            if nearby.n_atoms < 1:
                 continue
             anchors = _score_anchor_triplets(
-                nearby,
+                tier_candidates,
                 ligand_reference,
                 ligand_interactions,
                 min_anchor_distance=min_anchor_distance,
@@ -194,6 +194,7 @@ def select_receptor_anchor_atoms(
                 max_candidates=max_candidates,
                 max_p1_candidates=max_p1_candidates,
                 fixed_p1_atom=preferred_p1_atom,
+                p1_candidates=nearby,
             )
             if anchors is None:
                 continue
@@ -219,7 +220,7 @@ def select_receptor_anchor_atoms(
 
     raise ValueError(
         "Could not auto-select receptor anchors satisfying BATTER tutorial "
-        f"criteria: backbone atoms near the first ligand, P1-P2 and P2-P3 >= "
+        f"criteria: P1 backbone atom near the first ligand, P1-P2 and P2-P3 >= "
         f"{min_anchor_distance:.1f} A, and angle near {target_angle:.0f} degrees. "
         "Provide create.anchor_atoms manually or inspect the first ligand pose."
     )
@@ -736,52 +737,55 @@ def _score_anchor_triplets(
     max_candidates: int,
     max_p1_candidates: int,
     fixed_p1_atom: Any | None = None,
+    p1_candidates: mda.AtomGroup | None = None,
 ) -> list[Any] | None:
     ligand_center = ligand_reference.center_of_geometry()
-    ligand_distances = distance_array(
-        np.asarray([ligand_center], dtype=float),
-        candidates.positions,
-        box=candidates.universe.dimensions,
-    )[0]
 
-    candidate_records = []
-    for idx, atom in enumerate(candidates):
-        interaction_rank, interaction_distance = _best_residue_interaction(
-            atom.residue,
-            ligand_interactions,
-        )
-        name_penalty = 0.0 if atom.name == "CA" else 0.05
-        candidate_records.append(
-            {
-                "atom": atom,
-                "ligand_distance": float(ligand_distances[idx]),
-                "interaction_rank": interaction_rank,
-                "interaction_distance": interaction_distance,
-                "p1_score": 10.0 * interaction_rank
-                + interaction_distance
-                + 0.05 * abs(float(ligand_distances[idx]) - 8.0)
-                + name_penalty,
-            }
-        )
+    def _candidate_records(atoms: mda.AtomGroup) -> list[dict[str, Any]]:
+        if atoms.n_atoms == 0:
+            return []
+        ligand_distances = distance_array(
+            np.asarray([ligand_center], dtype=float),
+            atoms.positions,
+            box=atoms.universe.dimensions,
+        )[0]
+        records = []
+        for idx, atom in enumerate(atoms):
+            interaction_rank, interaction_distance = _best_residue_interaction(
+                atom.residue,
+                ligand_interactions,
+            )
+            name_penalty = 0.0 if atom.name == "CA" else 0.05
+            records.append(
+                {
+                    "atom": atom,
+                    "ligand_distance": float(ligand_distances[idx]),
+                    "interaction_rank": interaction_rank,
+                    "interaction_distance": interaction_distance,
+                    "p1_score": 10.0 * interaction_rank
+                    + interaction_distance
+                    + 0.05 * abs(float(ligand_distances[idx]) - 8.0)
+                    + name_penalty,
+                }
+            )
+        records.sort(key=lambda item: (item["p1_score"], item["atom"].index))
+        return records
 
-    candidate_records.sort(key=lambda item: (item["p1_score"], item["atom"].index))
+    candidate_records = _candidate_records(candidates)
     limited_records = candidate_records[:max(3, int(max_candidates))]
+    p1_source = p1_candidates if p1_candidates is not None else candidates
+    p1_candidate_records = _candidate_records(p1_source)
     if fixed_p1_atom is not None:
         fixed_records = [
             record
-            for record in candidate_records
+            for record in p1_candidate_records
             if int(record["atom"].index) == int(fixed_p1_atom.index)
         ]
         if not fixed_records:
             return None
         p1_records = fixed_records
-        if all(
-            int(record["atom"].index) != int(fixed_p1_atom.index)
-            for record in limited_records
-        ):
-            limited_records = fixed_records + limited_records
     else:
-        p1_records = candidate_records[:max(1, int(max_p1_candidates))]
+        p1_records = p1_candidate_records[:max(1, int(max_p1_candidates))]
 
     best_score: float | None = None
     best_atoms: list[Any] | None = None
