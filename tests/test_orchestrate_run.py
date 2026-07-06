@@ -449,6 +449,58 @@ def test_build_rbfe_network_plan_defaults_septop_to_pocket_shape_scorer(
     assert seen["protocol"] == "rbfe_septop"
 
 
+def test_build_rbfe_network_plan_orients_generated_edges_by_larger_volume(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+
+    def _fake_konnektor_pairs(*args, **kwargs):
+        return [("A", "B")]
+
+    def _fake_orient_pairs(pairs, ligand_files):
+        assert list(pairs) == [("A", "B")]
+        assert set(ligand_files) == {"A", "B"}
+        return [("B", "A")], [
+            {
+                "input_pair": ["A", "B"],
+                "pair": ["B", "A"],
+                "reference": "B",
+                "target": "A",
+                "flipped": True,
+                "input_reference_volume_voxels": 100,
+                "input_target_volume_voxels": 180,
+                "reference_volume_voxels": 180,
+                "target_volume_voxels": 100,
+                "reason": "larger_reference_volume",
+            }
+        ]
+
+    monkeypatch.setattr("batter.rbfe.konnektor_pairs", _fake_konnektor_pairs)
+    monkeypatch.setattr(
+        "batter.rbfe.orient_pairs_by_ligand_volume",
+        _fake_orient_pairs,
+    )
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        lambda **kwargs: {},
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {"A": str(tmp_path / "A.sdf"), "B": str(tmp_path / "B.sdf")},
+        RBFENetworkArgs(mapping="konnektor"),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["B", "A"]]
+    assert payload["direction_policy"] == "larger_volume"
+    assert payload["direction_policy_applied"] is True
+    assert payload["direction_decisions"][0]["flipped"] is True
+
+
 def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
     monkeypatch,
     tmp_path: Path,

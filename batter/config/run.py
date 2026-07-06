@@ -885,6 +885,15 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    direction_policy: Literal["larger_volume", "preserve"] = Field(
+        "larger_volume",
+        description=(
+            "How BATTER orients generated RBFE edges. 'larger_volume' chooses "
+            "the ligand with the larger grid-occupied heavy-atom volume as "
+            "the reference; 'preserve' keeps the mapper/network edge order. "
+            "Explicit rbfe.mapping_file directions are always preserved."
+        ),
+    )
     add_atom_mapping_edges: bool = Field(
         False,
         description=(
@@ -970,6 +979,13 @@ class RBFENetworkArgs(BaseModel):
                 "rbfe.network_scorer must be one of: auto, lomap, shape_difference, pocket_shape"
             )
         return text
+
+    @field_validator("direction_policy", mode="before")
+    @classmethod
+    def _lower_direction_policy(cls, v):
+        if v is None:
+            return "larger_volume"
+        return str(v).strip().lower().replace("-", "_")
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":

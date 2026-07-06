@@ -91,7 +91,6 @@ def _required_window_files(window_dir: Path, *, hmr: bool) -> list[Path]:
         window_dir / "full.prmtop",
         window_dir / "full.inpcrd",
         window_dir / "full_merged.prmtop",
-        window_dir / "eq.rst7",
     ]
     if hmr:
         paths.append(window_dir / "full.hmr.prmtop")

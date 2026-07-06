@@ -23,6 +23,7 @@ from batter.rbfe import (
     konnektor_pairs,
     load_atom_mapping_file,
     load_mapping_file,
+    orient_pairs_by_ligand_volume,
     resolve_network_scorer_name,
     resolve_mapping_fn,
     validate_rbfe_network_ligand_coverage,
@@ -375,6 +376,36 @@ def test_pocket_grid_overlap_prioritizes_shared_pocket_occupancy() -> None:
     assert metrics["pocket_grid_score"] > 0
     assert metrics["pocket_grid_containment"] > metrics["pocket_grid_jaccard"]
     assert metrics["pocket_grid_overlap_voxels"] > 0
+
+
+def test_orient_pairs_by_ligand_volume_selects_larger_reference(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    small = _make_pose_mol([(0.0, 0.0, 0.0)])
+    large = _make_pose_mol([(0.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+    mols = {"A": small, "B": large, "C": small}
+
+    monkeypatch.setattr(
+        "batter.rbfe._load_rdkit_mol",
+        lambda path: mols[Path(path).stem],
+    )
+
+    pairs, decisions = orient_pairs_by_ligand_volume(
+        [("A", "B"), ("A", "C")],
+        {
+            "A": tmp_path / "A.sdf",
+            "B": tmp_path / "B.sdf",
+            "C": tmp_path / "C.sdf",
+        },
+    )
+
+    assert pairs == [("B", "A"), ("A", "C")]
+    assert decisions[0]["flipped"] is True
+    assert decisions[0]["reference"] == "B"
+    assert decisions[0]["reference_volume_voxels"] > decisions[0]["target_volume_voxels"]
+    assert decisions[1]["flipped"] is False
+    assert decisions[1]["reason"] == "equal_volume"
 
 
 def test_write_pocket_shape_overlap_png(tmp_path: Path) -> None:

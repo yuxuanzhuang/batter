@@ -22,7 +22,6 @@ def _write_required_window_files(window_dir: Path) -> None:
         "full.hmr.prmtop",
         "full.inpcrd",
         "full_merged.prmtop",
-        "eq.rst7",
     ):
         (window_dir / name).write_text("x\n")
 

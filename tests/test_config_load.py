@@ -288,6 +288,13 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
     assert cfg.minimal_mapping_atom == 3
+    assert cfg.direction_policy == "larger_volume"
+
+
+def test_rbfe_direction_policy_normalizes_hyphenated_value() -> None:
+    cfg = RBFENetworkArgs(direction_policy="larger-volume")
+
+    assert cfg.direction_policy == "larger_volume"
 
 
 def test_rbfe_minimal_mapping_atom_must_be_positive() -> None:

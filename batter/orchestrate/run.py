@@ -460,7 +460,9 @@ def _build_rbfe_network_plan(
         load_mapping_file,
         load_atom_mapping_file,
         konnektor_pairs,
+        draw_explicit_konnektor_network,
         resolve_network_scorer_name,
+        orient_pairs_by_ligand_volume,
         write_planned_mapping_artifacts,
         deduplicate_identical_ligands,
         validate_rbfe_network_ligand_coverage,
@@ -563,6 +565,16 @@ def _build_rbfe_network_plan(
         network_scorer,
         protocol=protocol,
     )
+    direction_policy = (
+        str(getattr(rbfe_cfg, "direction_policy", "larger_volume") or "larger_volume")
+        .strip()
+        .lower()
+        .replace("-", "_")
+    )
+    if direction_policy not in {"larger_volume", "preserve"}:
+        raise ValueError(
+            "rbfe.direction_policy must be one of: larger_volume, preserve"
+        )
     minimal_mapping_atom = getattr(rbfe_cfg, "minimal_mapping_atom", 3)
     mapper_options = _rbfe_mapper_options(rbfe_cfg)
     atom_mapping_overrides = None
@@ -634,6 +646,44 @@ def _build_rbfe_network_plan(
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
             pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
+
+    mapping_source["direction_policy"] = direction_policy
+    mapping_source["direction_policy_applied"] = False
+    if rbfe_cfg.mapping_file:
+        mapping_source["direction_policy_reason"] = "mapping_file_preserves_direction"
+    elif direction_policy == "larger_volume" and network.pairs:
+        ligand_files_for_direction = {
+            name: Path(lig_map[name])
+            for name in available
+            if name in lig_map
+        }
+        oriented_pairs, direction_decisions = orient_pairs_by_ligand_volume(
+            network.pairs,
+            ligand_files_for_direction,
+        )
+        mapping_source["direction_policy_applied"] = True
+        if direction_decisions:
+            mapping_source["direction_decisions"] = direction_decisions
+        if tuple(oriented_pairs) != tuple(network.pairs):
+            network = RBFENetwork.from_ligands(
+                available,
+                mapping_fn=lambda _: oriented_pairs,
+            )
+            pairs = list(network.pairs)
+            try:
+                draw_explicit_konnektor_network(
+                    pairs,
+                    ligand_files_for_direction,
+                    config_dir / "rbfe_network.png",
+                    atom_mapper=atom_mapper,
+                    kartograf_options=mapper_options["kartograf"],
+                    lomap_options=mapper_options["lomap"],
+                    atom_mapping_overrides=atom_mapping_overrides,
+                    network_scorer=network_scorer,
+                    protocol=protocol,
+                )
+            except Exception as exc:
+                logger.debug(f"Could not redraw oriented RBFE network plot: {exc}")
     mapping_source["atom_mapper"] = atom_mapper
     mapping_source["network_scorer"] = resolved_network_scorer
     mapping_source["minimal_mapping_atom"] = minimal_mapping_atom

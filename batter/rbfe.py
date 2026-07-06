@@ -186,6 +186,95 @@ def _pocket_grid_occupancy(
     return voxels or None
 
 
+def _pocket_grid_volume_voxels(
+    mol: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> int | None:
+    voxels = _pocket_grid_occupancy(
+        mol,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not voxels:
+        return None
+    return len(voxels)
+
+
+def orient_pairs_by_ligand_volume(
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ligand_files: Mapping[str, Path | str],
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> tuple[List[RBFEPair], List[dict[str, Any]]]:
+    """Orient generated RBFE pairs so the larger grid volume is the reference."""
+    volume_by_ligand: dict[str, int | None] = {}
+
+    def _volume(name: str) -> int | None:
+        if name in volume_by_ligand:
+            return volume_by_ligand[name]
+        path = ligand_files.get(name)
+        if path is None:
+            volume_by_ligand[name] = None
+            return None
+        try:
+            volume = _pocket_grid_volume_voxels(
+                _load_rdkit_mol(Path(path)),
+                spacing=spacing,
+                radius_buffer=radius_buffer,
+            )
+        except Exception as exc:
+            logger.debug(
+                f"Could not compute RBFE direction grid volume for {name}: {exc}"
+            )
+            volume = None
+        volume_by_ligand[name] = volume
+        return volume
+
+    oriented: List[RBFEPair] = []
+    decisions: List[dict[str, Any]] = []
+    for raw_pair in pairs:
+        ref, alt = _normalize_pair(raw_pair)
+        ref_volume = _volume(ref)
+        alt_volume = _volume(alt)
+        flipped = (
+            ref_volume is not None
+            and alt_volume is not None
+            and alt_volume > ref_volume
+        )
+        out_ref, out_alt = (alt, ref) if flipped else (ref, alt)
+        oriented.append((out_ref, out_alt))
+
+        record: dict[str, Any] = {
+            "input_pair": [ref, alt],
+            "pair": [out_ref, out_alt],
+            "reference": out_ref,
+            "target": out_alt,
+            "flipped": flipped,
+        }
+        if ref_volume is not None:
+            record["input_reference_volume_voxels"] = ref_volume
+        if alt_volume is not None:
+            record["input_target_volume_voxels"] = alt_volume
+        selected_ref_volume = alt_volume if flipped else ref_volume
+        selected_alt_volume = ref_volume if flipped else alt_volume
+        if selected_ref_volume is not None:
+            record["reference_volume_voxels"] = selected_ref_volume
+        if selected_alt_volume is not None:
+            record["target_volume_voxels"] = selected_alt_volume
+        if ref_volume is None or alt_volume is None:
+            record["reason"] = "volume_unavailable"
+        elif ref_volume == alt_volume:
+            record["reason"] = "equal_volume"
+        else:
+            record["reason"] = "larger_reference_volume"
+        decisions.append(record)
+
+    return _dedupe_pairs(oriented), decisions
+
+
 def _pocket_grid_overlap_score(
     mol_a: Chem.Mol,
     mol_b: Chem.Mol,
