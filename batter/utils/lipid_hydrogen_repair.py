@@ -80,12 +80,21 @@ def _write_restart(
     coords: np.ndarray,
     tail: np.ndarray,
 ) -> None:
-    values = np.concatenate([coords.reshape(-1), tail])
+    coord_values = coords.reshape(-1)
     with path.open("w") as handle:
         handle.write(f"{title}\n")
         handle.write(f"{atom_line}\n")
-        for i in range(0, values.size, 6):
-            handle.write("".join(f"{value:12.7f}" for value in values[i : i + 6]) + "\n")
+        for i in range(0, coord_values.size, 6):
+            handle.write(
+                "".join(f"{value:12.7f}" for value in coord_values[i : i + 6])
+                + "\n"
+            )
+        if tail.size:
+            for i in range(0, tail.size, 6):
+                handle.write(
+                    "".join(f"{value:12.7f}" for value in tail[i : i + 6])
+                    + "\n"
+                )
 
 
 def _minimum_image(delta: np.ndarray, box: np.ndarray | None) -> np.ndarray:
