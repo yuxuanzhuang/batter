@@ -127,6 +127,17 @@ The generated script uses ``job_manager.header``/``job_manager.body`` in the sam
 way as ``batter run --slurm-submit``. Use ``--partition`` or
 ``--slurm-manager-path`` to override the generated manager script.
 
+To generate a per-ligand (or per-RBFE-pair) SLURM array script without submitting
+it immediately, use ``--job-array``::
+
+   batter fe analyze work/adrb2 run-20240101 --job-array --workers 2
+
+This writes ``*_array.sbatch`` and a matching ``*.tasks.tsv`` task file in the
+current directory. Submit the generated script with ``sbatch`` after inspection.
+Use ``--array-limit`` to control concurrent array tasks, ``--array-output`` to
+choose the script path, and ``--partition`` to set the generated script's
+partition.
+
 For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
 ``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory
 contains replicate RBFE runs, BATTER prints a follow-up note with the matching

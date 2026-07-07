@@ -559,6 +559,168 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     assert scripts[0].name in calls["cmd"]
 
 
+def test_cli_fe_analyze_job_array_writes_script_and_tasks(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    run_dir = work_dir / "executions" / "rep1"
+    index_dir = run_dir / "artifacts" / "ligand_params"
+    config_dir = run_dir / "artifacts" / "config"
+    index_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    (config_dir / "run_meta.json").write_text(json.dumps({"protocol": "abfe"}))
+    (index_dir / "index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {"ligand": "LIG1", "residue_name": "l1"},
+                    {"ligand": "LIG2", "residue_name": "l2"},
+                ]
+            }
+        )
+    )
+
+    fake_batter = tmp_path / "env" / "bin" / "batter"
+    fake_batter.parent.mkdir(parents=True)
+    fake_batter.write_text("#!/bin/sh\n")
+    fake_batter.chmod(0o755)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fake_batter) if name == "batter" else None,
+    )
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("run_analysis_from_execution should not run")
+
+    def fail_sbatch(*args, **kwargs):
+        raise AssertionError("sbatch should not be called for --job-array")
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fail_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fail_run)
+    monkeypatch.setattr("subprocess.run", fail_sbatch)
+
+    script_path = tmp_path / "custom_array.sbatch"
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(work_dir),
+            "rep1",
+            "--job-array",
+            "--workers",
+            "2",
+            "--array-limit",
+            "3",
+            "--array-output",
+            str(script_path),
+            "--analysis-start-step",
+            "2500",
+            "--n-bootstrap",
+            "64",
+            "--overwrite",
+            "--partition",
+            "owners",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Wrote SLURM array script" in result.output
+    assert script_path.exists()
+    tasks_path = script_path.with_suffix(".tasks.tsv")
+    assert tasks_path.read_text().splitlines() == ["rep1\tLIG1", "rep1\tLIG2"]
+    script_text = script_path.read_text()
+    assert "#SBATCH --partition=owners" in script_text
+    assert "#SBATCH --cpus-per-task=2" in script_text
+    assert "#SBATCH --array=1-2%3" in script_text
+    assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
+    assert "fe analyze" in script_text
+    assert str(work_dir.resolve()) in script_text
+    assert '--ligand "$TARGET"' in script_text
+    assert '--workers "$WORKERS"' in script_text
+    assert "--analysis-start-step 2500" in script_text
+    assert "--n-bootstrap 64" in script_text
+    assert "--overwrite" in script_text
+    assert "--no-raise-on-error" in script_text
+    assert "--local-run" in script_text
+    assert "--job-array" not in script_text
+    assert "--slurm-submit" not in script_text
+    assert "unset PYTHONPATH" in script_text
+
+
+def test_cli_fe_analyze_job_array_rbfe_endpoint_filter(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    run_dir = work_dir / "executions" / "rep1"
+    index_dir = run_dir / "artifacts" / "ligand_params"
+    config_dir = run_dir / "artifacts" / "config"
+    trans_root = run_dir / "simulations" / "transformations"
+    index_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    (trans_root / "A~B").mkdir(parents=True)
+    (trans_root / "B~C").mkdir(parents=True)
+    (config_dir / "run_meta.json").write_text(json.dumps({"protocol": "rbfe"}))
+    (index_dir / "index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {"ligand": "A", "residue_name": "aaa"},
+                    {"ligand": "B", "residue_name": "bbb"},
+                    {"ligand": "C", "residue_name": "ccc"},
+                ]
+            }
+        )
+    )
+    fake_batter = tmp_path / "env" / "bin" / "batter"
+    fake_batter.parent.mkdir(parents=True)
+    fake_batter.write_text("#!/bin/sh\n")
+    fake_batter.chmod(0o755)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fake_batter) if name == "batter" else None,
+    )
+
+    script_path = tmp_path / "rbfe_array.sbatch"
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(work_dir),
+            "rep1",
+            "--ligand",
+            "A",
+            "--job-array",
+            "--array-output",
+            str(script_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert script_path.with_suffix(".tasks.tsv").read_text().splitlines() == [
+        "rep1\tA~B"
+    ]
+    assert "#SBATCH --array=1-1%2" in script_path.read_text()
+
+
+def test_cli_fe_analyze_job_array_rejects_slurm_submit(
+    tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+
+    result = runner.invoke(
+        cli,
+        ["fe", "analyze", str(work_dir), "rep1", "--job-array", "--slurm-submit"],
+    )
+
+    assert result.exit_code == 1
+    assert "--job-array cannot be combined with --slurm-submit" in result.output
+
+
 def test_cli_fe_analyze_accepts_execution_dir(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:

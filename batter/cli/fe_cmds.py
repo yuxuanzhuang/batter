@@ -765,6 +765,221 @@ def _submit_fe_analyze_slurm(
     click.echo(f"STDERR: {result.stderr}")
 
 
+def _safe_slurm_name(text: str, *, max_len: int = 48) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("_")
+    if not safe:
+        safe = "fe_analyze"
+    return safe[:max_len]
+
+
+def _fe_analysis_targets_for_run(
+    work_dir: Path,
+    run_id: str,
+    ligand: str | None,
+) -> list[str]:
+    """Return ligand or RBFE pair targets accepted by ``batter fe analyze --ligand``."""
+    run_dir = work_dir / "executions" / run_id
+    config_dir = run_dir / "artifacts" / "config"
+    run_meta_path = config_dir / "run_meta.json"
+    run_meta: dict[str, object] = {}
+    if run_meta_path.exists():
+        run_meta = json.loads(run_meta_path.read_text()) or {}
+    protocol = str(run_meta.get("protocol", "abfe")).lower()
+
+    index_path = run_dir / "artifacts" / "ligand_params" / "index.json"
+    if not index_path.exists():
+        raise FileNotFoundError(
+            f"Ligand index missing for run '{run_id}' at {index_path}."
+        )
+    payload = json.loads(index_path.read_text()) or {}
+    entries = payload.get("ligands", [])
+    requested = (ligand or "").strip() or None
+
+    if protocol == "rbfe":
+        trans_root = run_dir / "simulations" / "transformations"
+        if not trans_root.is_dir():
+            raise FileNotFoundError(
+                f"RBFE transformations directory not found for run '{run_id}': {trans_root}"
+            )
+        targets: list[str] = []
+        for pair_dir in sorted([p for p in trans_root.iterdir() if p.is_dir()]):
+            pair_id = pair_dir.name
+            ref = alt = None
+            if "~" in pair_id:
+                ref, alt = pair_id.split("~", 1)
+            if requested:
+                endpoint_match = requested == ref or requested == alt
+                if requested != pair_id and not endpoint_match:
+                    continue
+            targets.append(pair_id)
+        if requested and not targets:
+            raise KeyError(
+                f"RBFE target '{ligand}' not present in run '{run_id}' "
+                "(expected a pair id like 'LIG1~LIG2' or an endpoint ligand name)."
+            )
+        if not targets:
+            raise RuntimeError(f"No RBFE transformation pairs found in run '{run_id}'.")
+        return targets
+
+    targets = [
+        str(entry["ligand"])
+        for entry in entries
+        if entry.get("ligand") and (requested is None or entry.get("ligand") == requested)
+    ]
+    if requested and not targets:
+        raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+    if not targets:
+        raise RuntimeError(f"No ligands recorded for run '{run_id}'.")
+    return targets
+
+
+def _write_fe_analyze_job_array(
+    *,
+    work_dir: Path,
+    run_ids: list[str],
+    ligand: str | None,
+    workers: int | None,
+    raise_on_error: bool,
+    analysis_start_step: int | None,
+    n_bootstraps: int | None,
+    overwrite: bool,
+    log_level: str,
+    partition: str | None,
+    array_limit: int,
+    array_output: Path | None,
+) -> Path:
+    if array_limit < 1:
+        raise ValueError("array_limit must be >= 1.")
+
+    work_dir_abs = work_dir.resolve()
+    tasks: list[tuple[str, str]] = []
+    for rid in run_ids:
+        for target in _fe_analysis_targets_for_run(work_dir_abs, rid, ligand):
+            tasks.append((rid, target))
+
+    if not tasks:
+        raise RuntimeError("No FE analysis targets found for job array.")
+
+    target_label = run_ids[0] if len(run_ids) == 1 else f"{len(run_ids)}runs"
+    run_hash = _hash_fe_analyze_submission(
+        command="fe analyze job array",
+        work_dir=str(work_dir_abs),
+        run_ids=",".join(run_ids),
+        ligand=ligand or "",
+        workers=workers if workers is not None else "",
+        raise_on_error=raise_on_error,
+        analysis_start_step=analysis_start_step
+        if analysis_start_step is not None
+        else "",
+        n_bootstraps=n_bootstraps if n_bootstraps is not None else "",
+        overwrite=overwrite,
+        log_level=log_level.upper(),
+        partition=partition or "",
+        array_limit=array_limit,
+        targets=len(tasks),
+    )
+    script_path = array_output or Path(f"{run_hash}_array.sbatch")
+    script_path = script_path.resolve()
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    tasks_path = script_path.with_suffix(".tasks.tsv")
+    log_dir = script_path.parent / "fe_analyze_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    tasks_path.write_text(
+        "".join(f"{rid}\t{target}\n" for rid, target in tasks),
+        encoding="utf-8",
+    )
+
+    cpus = max(1, int(workers or 1))
+    job_name = _safe_slurm_name(f"feana_{work_dir_abs.name}_{target_label}")
+    batter_cmd = _which_batter()
+    raise_flag = "--raise-on-error" if raise_on_error else "--no-raise-on-error"
+
+    cmd_lines = [
+        f"{batter_cmd} fe analyze {shlex.quote(str(work_dir_abs))} \"$RUN_ID\"",
+        '  --ligand "$TARGET"',
+        '  --workers "$WORKERS"',
+        f"  {raise_flag}",
+        f"  --log-level {shlex.quote(log_level.upper())}",
+        "  --local-run",
+    ]
+    if analysis_start_step is not None:
+        cmd_lines.append(f"  --analysis-start-step {int(analysis_start_step)}")
+    if n_bootstraps is not None:
+        cmd_lines.append(f"  --n-bootstrap {int(n_bootstraps)}")
+    if overwrite:
+        cmd_lines.append("  --overwrite")
+    run_cmd = " \\\n".join(cmd_lines)
+
+    partition_line = f"#SBATCH --partition={partition}\n" if partition else ""
+    script = (
+        "#!/bin/bash\n"
+        f"#SBATCH --job-name={job_name}\n"
+        f"{partition_line}"
+        "#SBATCH --nodes=1\n"
+        "#SBATCH --ntasks=1\n"
+        f"#SBATCH --cpus-per-task={cpus}\n"
+        "#SBATCH --mem=24G\n"
+        "#SBATCH --time=8:00:00\n"
+        f"#SBATCH --array=1-{len(tasks)}%{array_limit}\n"
+        "#SBATCH --open-mode=append\n"
+        f"#SBATCH --output={shlex.quote(str(log_dir))}/%x-%A_%a.out\n"
+        f"#SBATCH --error={shlex.quote(str(log_dir))}/%x-%A_%a.err\n"
+        "\n"
+        "set -euo pipefail\n"
+        "\n"
+        f"TASK_FILE={shlex.quote(str(tasks_path))}\n"
+        f"WORKERS=\"${{WORKERS:-{cpus}}}\"\n"
+        "\n"
+        + _batter_path_export_block()
+        + "\n"
+        "export OMP_NUM_THREADS=1\n"
+        "export MKL_NUM_THREADS=1\n"
+        "export OPENBLAS_NUM_THREADS=1\n"
+        "export NUMEXPR_NUM_THREADS=1\n"
+        "export PYTHONNOUSERSITE=1\n"
+        'export PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/batter_pycache_'
+        '${SLURM_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"\n'
+        'export MPLCONFIGDIR="${TMPDIR:-/tmp}/batter_mpl_${SLURM_JOB_ID:-manual}_${SLURM_ARRAY_TASK_ID:-0}"\n'
+        "\n"
+        "unset PYTHONPATH\n"
+        "unset PYTHONSTARTUP\n"
+        "\n"
+        'if [[ ! -f "$TASK_FILE" ]]; then\n'
+        '  echo "[ERROR] Missing task file: $TASK_FILE" >&2\n'
+        "  exit 2\n"
+        "fi\n"
+        "\n"
+        'task_line="$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$TASK_FILE")"\n'
+        'if [[ -z "$task_line" ]]; then\n'
+        '  echo "[ERROR] No task for SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID}" >&2\n'
+        "  exit 2\n"
+        "fi\n"
+        "\n"
+        "IFS=$'\\t' read -r RUN_ID TARGET <<< \"$task_line\"\n"
+        'if [[ -z "${RUN_ID:-}" || -z "${TARGET:-}" ]]; then\n'
+        '  echo "[ERROR] Malformed task line: $task_line" >&2\n'
+        "  exit 2\n"
+        "fi\n"
+        "\n"
+        'echo "[INFO] Host: $(hostname)"\n'
+        'echo "[INFO] Job: ${SLURM_JOB_ID:-unknown}, array task: ${SLURM_ARRAY_TASK_ID:-manual}/'
+        f'{len(tasks)}"\n'
+        'echo "[INFO] Run: $RUN_ID"\n'
+        'echo "[INFO] Target: $TARGET"\n'
+        f'echo "[INFO] Work dir: {work_dir_abs}"\n'
+        'echo "[INFO] Workers: $WORKERS"\n'
+        'echo "[INFO] Started: $(date)"\n'
+        "\n"
+        f"cd {shlex.quote(str(script_path.parent))}\n"
+        f"{run_cmd}\n"
+        "\n"
+        'echo "[INFO] Finished: $(date)"\n'
+    )
+    script_path.write_text(script, encoding="utf-8")
+    return script_path
+
+
 @fe.command("analyze")
 @click.argument(
     "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
@@ -831,7 +1046,25 @@ def _submit_fe_analyze_slurm(
     "--partition",
     "-p",
     default=None,
-    help="Override the SLURM partition in the generated manager script.",
+    help="Override the SLURM partition in the generated manager or array script.",
+)
+@click.option(
+    "--job-array/--no-job-array",
+    default=False,
+    help="Generate a per-ligand/per-pair SLURM array script instead of running analysis.",
+)
+@click.option(
+    "--array-limit",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Maximum number of concurrent tasks in the generated SLURM array.",
+)
+@click.option(
+    "--array-output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional output path for the generated *_array.sbatch script.",
 )
 def fe_analyze(
     work_dir: Path,
@@ -846,6 +1079,9 @@ def fe_analyze(
     slurm_submit: bool = False,
     slurm_manager_path: Path | None = None,
     partition: str | None = None,
+    job_array: bool = False,
+    array_limit: int = 2,
+    array_output: Path | None = None,
 ) -> None:
     """
     Re-run the FE analysis stage for stored execution(s).
@@ -864,7 +1100,10 @@ def fe_analyze(
         run_id = work_dir.name
         work_dir = work_dir.parent.parent
 
-    if slurm_submit and run_id is None:
+    if slurm_submit and job_array:
+        raise click.ClickException("--job-array cannot be combined with --slurm-submit.")
+
+    if (slurm_submit or job_array) and run_id is None:
         runs_root = work_dir / "executions"
         if not runs_root.is_dir():
             raise click.ClickException(f"No executions found under {work_dir}.")
@@ -897,6 +1136,28 @@ def fe_analyze(
         if not run_ids:
             raise click.ClickException(f"No executions found under {work_dir}.")
         logger.info(f"No run_id provided; analyzing all {len(run_ids)} available runs.")
+
+    if job_array:
+        try:
+            script_path = _write_fe_analyze_job_array(
+                work_dir=work_dir,
+                run_ids=run_ids,
+                ligand=ligand,
+                workers=workers,
+                raise_on_error=raise_on_error,
+                analysis_start_step=analysis_start_step,
+                n_bootstraps=n_bootstraps,
+                overwrite=overwrite,
+                log_level=log_level,
+                partition=partition,
+                array_limit=array_limit,
+                array_output=array_output,
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Wrote SLURM array script: {script_path}")
+        click.echo(f"Wrote SLURM array tasks: {script_path.with_suffix('.tasks.tsv')}")
+        return
 
     failed_runs: list[tuple[str, str]] = []
     for rid in run_ids:
