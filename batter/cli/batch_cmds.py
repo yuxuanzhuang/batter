@@ -582,6 +582,7 @@ def _run_remd_batch(
     signal_mins: float,
     max_resubmit_count: int,
     current_submission_time: int,
+    force_job_attempt: int | None,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -624,6 +625,8 @@ def _run_remd_batch(
         raise click.ClickException(
             "--current-submission-time must be >= 0 when auto-resubmit is enabled."
         )
+    if force_job_attempt is not None and force_job_attempt < 1:
+        raise click.ClickException("--force-job-attempt must be >= 1.")
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
@@ -678,6 +681,8 @@ def _run_remd_batch(
             resubmit_args.extend(["--nodes", str(nodes)])
         if gpus_per_node is not None:
             resubmit_args.extend(["--gpus-per-node", str(gpus_per_node)])
+        if force_job_attempt is not None:
+            resubmit_args.extend(["--force-job-attempt", str(force_job_attempt)])
         resubmit_args.extend(
             [
                 "--auto-resubmit",
@@ -697,6 +702,7 @@ def _run_remd_batch(
         'echo "Job started at $(date)"',
         "status=0",
         "pids=()",
+        f"FORCE_JOB_ATTEMPT={force_job_attempt or ''}",
         "mpi_base=$(echo \"${MPI_EXEC:-mpirun}\" | awk '{print $1}')",
         "mpi_base=${mpi_base##*/}",
         "use_srun=0",
@@ -733,6 +739,34 @@ def _run_remd_batch(
             'trap "regen_and_submit" USR1',
         ]
     body_lines += [
+        "read_component_attempt() {",
+        '  local dir="$1"',
+        '  local attempt_file="${dir}/job_attempt.txt"',
+        "  local attempt=1",
+        '  if [[ "${FORCE_JOB_ATTEMPT:-}" =~ ^[0-9]+$ && "$FORCE_JOB_ATTEMPT" -ge 1 ]]; then',
+        '    printf "%s\\n" "$FORCE_JOB_ATTEMPT"',
+        "    return",
+        "  fi",
+        '  if [[ -f "$attempt_file" ]]; then',
+        '    attempt=$(tr -d "[:space:]" < "$attempt_file")',
+        "  fi",
+        '  if [[ ! "$attempt" =~ ^[0-9]+$ || "$attempt" -lt 1 ]]; then',
+        "    attempt=1",
+        "  fi",
+        '  printf "%s\\n" "$attempt"',
+        "}",
+        "advance_component_attempt() {",
+        '  local dir="$1"',
+        '  local attempt="$2"',
+        '  local attempt_file="${dir}/job_attempt.txt"',
+        '  if [[ ! "$attempt" =~ ^[0-9]+$ || "$attempt" -lt 1 ]]; then',
+        "    attempt=1",
+        "  fi",
+        "  local next_attempt=$((attempt + 1))",
+        '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
+        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
+        "}",
+        "",
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
@@ -748,7 +782,14 @@ def _run_remd_batch(
         '      mpi_flags="${extra_flags}"',
         "    fi",
         "  fi",
-        '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-remd.bash ) || status=1',
+        "  local attempt",
+        '  attempt=$(read_component_attempt "$dir")',
+        '  echo "[INFO] ${label}: running with job_attempt=${attempt}"',
+        '  if ! ( cd "$dir" && MPI_FLAGS="$mpi_flags" RETRY_COUNT="$attempt" RETRY="$attempt" JOB_ATTEMPT_FILE="job_attempt.txt" bash ./run-local-remd.bash ); then',
+        '    advance_component_attempt "$dir" "$attempt"',
+        "    status=1",
+        "    return 1",
+        "  fi",
         "}",
         "",
     ]
@@ -850,6 +891,7 @@ def _run_remd_batch(
         f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | "
         f"max-resubmit-count: {max_resubmit_count if auto_resubmit else 'n/a'} | "
         f"current-submission-time: {current_submission_time if auto_resubmit else 'n/a'} | "
+        f"force-job-attempt: {force_job_attempt if force_job_attempt is not None else 'none'} | "
         f"job-name: {job_name}"
     )
 
@@ -935,6 +977,12 @@ def _run_remd_batch(
     help="Internal counter for auto-resubmit; increments on each resubmission.",
 )
 @click.option(
+    "--force-job-attempt",
+    type=int,
+    default=None,
+    help="Use this job attempt value for every queued component instead of reading job_attempt.txt.",
+)
+@click.option(
     "--remd/--no-remd",
     default=False,
     show_default=True,
@@ -953,6 +1001,7 @@ def batch(
     signal_mins: float,
     max_resubmit_count: int,
     current_submission_time: int,
+    force_job_attempt: int | None,
     remd: bool,
 ) -> None:
     """
@@ -973,6 +1022,7 @@ def batch(
             signal_mins=signal_mins,
             max_resubmit_count=max_resubmit_count,
             current_submission_time=current_submission_time,
+            force_job_attempt=force_job_attempt,
         )
         return
 
@@ -1014,6 +1064,8 @@ def batch(
         raise click.ClickException(
             "--current-submission-time must be >= 0 when auto-resubmit is enabled."
         )
+    if force_job_attempt is not None and force_job_attempt < 1:
+        raise click.ClickException("--force-job-attempt must be >= 1.")
 
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
@@ -1069,6 +1121,8 @@ def batch(
             resubmit_args.extend(["--nodes", str(nodes)])
         if gpus_per_node is not None:
             resubmit_args.extend(["--gpus-per-node", str(gpus_per_node)])
+        if force_job_attempt is not None:
+            resubmit_args.extend(["--force-job-attempt", str(force_job_attempt)])
         resubmit_args.extend(
             [
                 "--auto-resubmit",
@@ -1088,6 +1142,7 @@ def batch(
         'echo "Job started at $(date)"',
         "status=0",
         "pids=()",
+        f"FORCE_JOB_ATTEMPT={force_job_attempt or ''}",
         "mpi_base=$(echo \"${MPI_EXEC:-mpirun}\" | awk '{print $1}')",
         "mpi_base=${mpi_base##*/}",
         "use_srun=0",
@@ -1124,6 +1179,34 @@ def batch(
             'trap "regen_and_submit" USR1',
         ]
     body_lines += [
+        "read_component_attempt() {",
+        '  local dir="$1"',
+        '  local attempt_file="${dir}/job_attempt.txt"',
+        "  local attempt=1",
+        '  if [[ "${FORCE_JOB_ATTEMPT:-}" =~ ^[0-9]+$ && "$FORCE_JOB_ATTEMPT" -ge 1 ]]; then',
+        '    printf "%s\\n" "$FORCE_JOB_ATTEMPT"',
+        "    return",
+        "  fi",
+        '  if [[ -f "$attempt_file" ]]; then',
+        '    attempt=$(tr -d "[:space:]" < "$attempt_file")',
+        "  fi",
+        '  if [[ ! "$attempt" =~ ^[0-9]+$ || "$attempt" -lt 1 ]]; then',
+        "    attempt=1",
+        "  fi",
+        '  printf "%s\\n" "$attempt"',
+        "}",
+        "advance_component_attempt() {",
+        '  local dir="$1"',
+        '  local attempt="$2"',
+        '  local attempt_file="${dir}/job_attempt.txt"',
+        '  if [[ ! "$attempt" =~ ^[0-9]+$ || "$attempt" -lt 1 ]]; then',
+        "    attempt=1",
+        "  fi",
+        "  local next_attempt=$((attempt + 1))",
+        '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
+        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
+        "}",
+        "",
         "run_batch_task() {",
         '  local label="$1"',
         '  local dir="$2"',
@@ -1139,7 +1222,14 @@ def batch(
         '      mpi_flags="${extra_flags}"',
         "    fi",
         "  fi",
-        '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-batch.bash ) || status=1',
+        "  local attempt",
+        '  attempt=$(read_component_attempt "$dir")',
+        '  echo "[INFO] ${label}: running with job_attempt=${attempt}"',
+        '  if ! ( cd "$dir" && MPI_FLAGS="$mpi_flags" RETRY_COUNT="$attempt" RETRY="$attempt" JOB_ATTEMPT_FILE="job_attempt.txt" bash ./run-local-batch.bash ); then',
+        '    advance_component_attempt "$dir" "$attempt"',
+        "    status=1",
+        "    return 1",
+        "  fi",
         "}",
         "",
     ]
@@ -1237,5 +1327,6 @@ def batch(
         f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | "
         f"max-resubmit-count: {max_resubmit_count if auto_resubmit else 'n/a'} | "
         f"current-submission-time: {current_submission_time if auto_resubmit else 'n/a'} | "
+        f"force-job-attempt: {force_job_attempt if force_job_attempt is not None else 'none'} | "
         f"job-name: {job_name}"
     )

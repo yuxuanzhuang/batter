@@ -150,6 +150,80 @@ def _require_file(path: Path, label: str) -> Path:
     return path
 
 
+def _load_json_mapping(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _ligand_pdb_exists(stage_dir: Path, ligand: str) -> bool:
+    return any(
+        (stage_dir / f"{candidate}.pdb").exists()
+        for candidate in (ligand, ligand.upper())
+    )
+
+
+def _system_prep_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    stage_dir = run_dir / "all-ligands"
+    manifest = _load_json_mapping(stage_dir / "manifest.json")
+    manifest_ligands = manifest.get("ligands") if manifest else None
+    present = set(manifest_ligands) if isinstance(manifest_ligands, dict) else set()
+    missing: List[str] = []
+    for name in lig_map:
+        if name not in present and name.upper() not in present:
+            missing.append(name)
+            continue
+        if not _ligand_pdb_exists(stage_dir, name):
+            missing.append(name)
+    return missing
+
+
+def _param_index_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    index = _load_json_mapping(run_dir / "artifacts" / "ligand_params" / "index.json")
+    entries = index.get("ligands") if index else None
+    present = {
+        str(entry.get("ligand"))
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("ligand")
+    }
+    return [name for name in lig_map if name not in present]
+
+
+def _rbfe_network_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    network = _load_json_mapping(run_dir / "artifacts" / "config" / "rbfe_network.json")
+    ligands = network.get("ligands") if network else None
+    present = {str(name) for name in ligands or []}
+    return [name for name in lig_map if name not in present]
+
+
+def _parent_phase_done_for_ligands(
+    system: SimSystem,
+    phase_name: str,
+    lig_map: Dict[str, Path],
+) -> bool:
+    if not is_done(system, phase_name):
+        return False
+
+    missing: List[str] = []
+    if phase_name in {"system_prep", "system_prep_asfe"}:
+        missing = _system_prep_missing_ligands(system.root, lig_map)
+    elif phase_name == "param_ligands":
+        missing = _param_index_missing_ligands(system.root, lig_map)
+    elif phase_name == "prepare_rbfe":
+        missing = _rbfe_network_missing_ligands(system.root, lig_map)
+
+    if missing:
+        logger.info(
+            "[{}] existing artifacts are missing ligand(s): {}; rerunning phase.",
+            phase_name,
+            ", ".join(missing),
+        )
+        return False
+    return True
+
+
 def _preflight_rbfe_mapping_files(rc: RunConfig, run_dir: Path) -> None:
     """Fail early on missing RBFE mapping files before execution steps start."""
     if not _is_rbfe_protocol(rc.protocol):
@@ -165,8 +239,13 @@ def _preflight_rbfe_mapping_files(rc: RunConfig, run_dir: Path) -> None:
     config_dir = Path(run_dir) / "artifacts" / "config"
     rbfe_network_path = config_dir / "rbfe_network.json"
     prepare_marker = config_dir / "prepare_rbfe.ok"
-    if prepare_marker.exists():
-        _require_file(rbfe_network_path, "prepared RBFE network file")
+    if prepare_marker.exists() and not rbfe_network_path.exists():
+        logger.warning(
+            "Found stale prepare_rbfe marker without rbfe_network.json at {}; "
+            "removing marker so the RBFE network can be regenerated.",
+            prepare_marker,
+        )
+        prepare_marker.unlink(missing_ok=True)
 
 
 def _require_rbfe_network_file(config_dir: Path) -> Path:
@@ -1096,21 +1175,50 @@ def _run_from_yaml_impl(
     lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
     stored_names = _load_stored_ligand_names(run_dir)
+    requested_lig_map: Dict[str, Path] = {}
+    requested_original_names: Dict[str, str] = {}
+    try:
+        requested_lig_map, requested_original_names = resolve_ligand_map(rc, yaml_dir)
+    except Exception as exc:
+        if not staged_lig_map:
+            raise
+        logger.debug(
+            "Could not resolve current ligand input; resuming from staged ligands only: {}",
+            exc,
+        )
+
     if staged_lig_map:
-        lig_map = staged_lig_map
-        lig_original_names = stored_names
+        lig_map = dict(staged_lig_map)
+        lig_original_names = dict(stored_names)
         if lig_original_names:
             logger.debug(
                 "Loaded %d original ligand names from %s",
                 len(lig_original_names),
                 _ligand_names_path(run_dir),
             )
+
+        added_ligands: List[str] = []
+        for name, lig_path in requested_lig_map.items():
+            lig_original_names[name] = requested_original_names.get(name, name)
+            if name in lig_map:
+                continue
+            lig_map[name] = lig_path
+            added_ligands.append(name)
+
         logger.info(
-            f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
+            f"Resuming with {len(staged_lig_map)} staged ligand(s) discovered under {run_dir}"
         )
+        if added_ligands:
+            logger.info(
+                "Added ligand(s) from current input to existing execution: {}",
+                ", ".join(added_ligands),
+            )
+        if lig_original_names:
+            _store_ligand_names(run_dir, lig_original_names)
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
-        lig_map, lig_original_names = resolve_ligand_map(rc, yaml_dir)
+        lig_map = requested_lig_map
+        lig_original_names = requested_original_names
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
@@ -1228,7 +1336,7 @@ def _run_from_yaml_impl(
         names = [s.name for s in parent_only.ordered_steps()]
         logger.debug(f"Executing parent-only steps at {run_dir}: {names}")
         for step in parent_only.ordered_steps():
-            if is_done(run_sys, step.name):
+            if _parent_phase_done_for_ligands(run_sys, step.name, lig_map):
                 logger.info(f"[skip] {step.name}: finished.")
                 continue
             try:
