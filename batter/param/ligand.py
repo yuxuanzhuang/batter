@@ -61,8 +61,47 @@ __all__ = [
 # helpers                                                                     #
 # --------------------------------------------------------------------------- #
 
-# forbidden molecule names in MDA selection language and AMBER residue names
-FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not", "set"}
+# Forbidden molecule residue names in MDA selection language and common AMBER
+# biomolecular residues. Ligands must not be named like protein residues because
+# downstream residue-name selections and LEaP libraries can otherwise become
+# ambiguous.
+_SELECTION_KEYWORD_RESNAMES = {"add", "all", "and", "any", "not", "set"}
+_AMBER_BIOMOLECULE_RESNAMES = {
+    "ace",
+    "ala",
+    "arg",
+    "ash",
+    "asn",
+    "asp",
+    "cym",
+    "cys",
+    "cyx",
+    "glh",
+    "gln",
+    "glu",
+    "gly",
+    "hid",
+    "hie",
+    "hip",
+    "his",
+    "ile",
+    "leu",
+    "lyn",
+    "lys",
+    "met",
+    "nhe",
+    "nma",
+    "nme",
+    "phe",
+    "pro",
+    "ser",
+    "thr",
+    "trp",
+    "tyr",
+    "val",
+    "wat",
+}
+FORBIDDEN_MOL_NAMES = _SELECTION_KEYWORD_RESNAMES | _AMBER_BIOMOLECULE_RESNAMES
 _SCIENTIFIC_NOTATION_RESNAME_RE = re.compile(r"^\d+e\d+$", re.IGNORECASE)
 
 
