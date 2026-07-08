@@ -773,18 +773,18 @@ def _score_anchor_triplets(
 
     candidate_records = _candidate_records(candidates)
     limited_records = candidate_records[:max(3, int(max_candidates))]
-    p1_source = p1_candidates if p1_candidates is not None else candidates
-    p1_candidate_records = _candidate_records(p1_source)
     if fixed_p1_atom is not None:
         fixed_records = [
             record
-            for record in p1_candidate_records
+            for record in candidate_records
             if int(record["atom"].index) == int(fixed_p1_atom.index)
         ]
         if not fixed_records:
             return None
         p1_records = fixed_records
     else:
+        p1_source = p1_candidates if p1_candidates is not None else candidates
+        p1_candidate_records = _candidate_records(p1_source)
         p1_records = p1_candidate_records[:max(1, int(max_p1_candidates))]
 
     best_score: float | None = None
