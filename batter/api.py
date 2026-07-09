@@ -470,7 +470,18 @@ def run_analysis_from_execution(
         try:
             from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
 
-            cinnabar_export = auto_write_rbfe_cinnabar_for_run(work_root, run_id)
+            cinnabar_export = auto_write_rbfe_cinnabar_for_run(
+                work_root,
+                run_id,
+                x_convergence_filter=getattr(
+                    sim_cfg, "cinnabar_x_convergence_filter", (0.8, 1.0)
+                ),
+                x_convergence_fallback_filter=getattr(
+                    sim_cfg,
+                    "cinnabar_x_convergence_fallback_filter",
+                    (0.5, 2.0),
+                ),
+            )
             logger.info(
                 f"Wrote RBFE Cinnabar bundle for run '{run_id}' to {cinnabar_export['output_dir']}."
             )

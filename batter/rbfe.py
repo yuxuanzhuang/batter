@@ -16,6 +16,8 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
+_RBFE_PROTONATION_PRIORITY_SCORE = 1.25
+
 
 def _normalize_atom_mapper(atom_mapper: str | None) -> str:
     mapper = str(atom_mapper or "kartograf").strip().lower()
@@ -612,6 +614,69 @@ def _pocket_shape_network_score(mapping) -> float:
     return max(0.0, min(1.0, 0.85 * grid_score + 0.15 * shape_score))
 
 
+def _mol_hash(mol: Chem.Mol, hash_name: str) -> str | None:
+    try:
+        from rdkit.Chem import rdMolHash
+
+        hash_func = getattr(rdMolHash.HashFunction, hash_name)
+        return str(rdMolHash.MolHash(mol, hash_func))
+    except Exception:
+        return None
+
+
+def _mol_without_hs(mol: Chem.Mol) -> Chem.Mol:
+    try:
+        return Chem.RemoveHs(Chem.Mol(mol))
+    except Exception:
+        return mol
+
+
+def _mol_formal_charge(mol: Chem.Mol) -> int | None:
+    try:
+        return int(sum(atom.GetFormalCharge() for atom in mol.GetAtoms()))
+    except Exception:
+        return None
+
+
+def _mapping_is_protonation_state_pair(mapping: Any) -> bool:
+    mol_a = _rdkit_mol_from_component(_mapping_component(mapping, "componentA"))
+    mol_b = _rdkit_mol_from_component(_mapping_component(mapping, "componentB"))
+    if mol_a is None or mol_b is None:
+        return False
+
+    heavy_mol_a = _mol_without_hs(mol_a)
+    heavy_mol_b = _mol_without_hs(mol_b)
+    element_graph_a = _mol_hash(heavy_mol_a, "ElementGraph")
+    element_graph_b = _mol_hash(heavy_mol_b, "ElementGraph")
+    if not element_graph_a or element_graph_a != element_graph_b:
+        return False
+
+    canonical_a = _mol_hash(heavy_mol_a, "CanonicalSmiles")
+    canonical_b = _mol_hash(heavy_mol_b, "CanonicalSmiles")
+    if canonical_a == canonical_b:
+        return False
+
+    charge_a = _mol_formal_charge(mol_a)
+    charge_b = _mol_formal_charge(mol_b)
+    formula_a = _mol_hash(mol_a, "MolFormula")
+    formula_b = _mol_hash(mol_b, "MolFormula")
+    return charge_a != charge_b or formula_a != formula_b
+
+
+def _with_protonation_state_priority(base_scorer):
+    def _scorer(mapping):
+        if _mapping_is_protonation_state_pair(mapping):
+            return _RBFE_PROTONATION_PRIORITY_SCORE
+        return base_scorer(mapping)
+
+    _scorer.__name__ = getattr(
+        base_scorer,
+        "__name__",
+        "protonation_state_priority_scorer",
+    )
+    return _scorer
+
+
 def _network_scorer_callable(
     network_scorer: str | None = None,
     *,
@@ -619,13 +684,13 @@ def _network_scorer_callable(
 ):
     scorer_name = resolve_network_scorer_name(network_scorer, protocol=protocol)
     if scorer_name == "pocket_shape":
-        return _pocket_shape_network_score
+        return _with_protonation_state_priority(_pocket_shape_network_score)
     if scorer_name == "shape_difference":
-        return _shape_difference_network_score
+        return _with_protonation_state_priority(_shape_difference_network_score)
 
     from lomap.gufe_bindings.scorers import default_lomap_score
 
-    return default_lomap_score
+    return _with_protonation_state_priority(default_lomap_score)
 
 
 def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
@@ -674,6 +739,7 @@ def _kartograf_mapper_kwargs(
     additional_mapping_filter_functions = []
     if use_element_filter:
         additional_mapping_filter_functions.append(filter_element_changes)
+    additional_mapping_filter_functions.append(filter_chirality_flips)
     if use_attached_h_filter:
         additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
     kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions
@@ -824,6 +890,71 @@ def filter_mismatched_attached_h_count(
 
         filtered[i] = j
     return filtered
+
+
+def _assigned_tetrahedral_cip_labels(mol: Chem.Mol) -> dict[int, str]:
+    def _find_labels(work: Chem.Mol) -> dict[int, str]:
+        try:
+            Chem.AssignStereochemistry(work, cleanIt=True, force=True)
+        except Exception:
+            pass
+        try:
+            centers = Chem.FindMolChiralCenters(
+                work,
+                force=True,
+                includeUnassigned=False,
+                includeCIP=True,
+                useLegacyImplementation=False,
+            )
+        except TypeError:
+            centers = Chem.FindMolChiralCenters(
+                work,
+                includeUnassigned=False,
+                includeCIP=True,
+            )
+        return {
+            int(idx): str(label)
+            for idx, label in centers
+            if str(label) in {"R", "S"}
+        }
+
+    try:
+        tagged = Chem.Mol(mol)
+    except Exception:
+        return {}
+
+    labels = _find_labels(tagged)
+    if labels or tagged.GetNumConformers() == 0:
+        return labels
+
+    try:
+        from_3d = Chem.Mol(mol)
+        Chem.AssignStereochemistryFrom3D(from_3d, confId=-1, replaceExistingTags=True)
+        return _find_labels(from_3d)
+    except Exception:
+        return labels
+
+
+def filter_chirality_flips(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Reject Kartograf mappings that invert an assigned tetrahedral center."""
+    labels_a = _assigned_tetrahedral_cip_labels(molA)
+    labels_b = _assigned_tetrahedral_cip_labels(molB)
+    if not labels_a or not labels_b:
+        return dict(mapping)
+
+    for i, j in mapping.items():
+        label_a = labels_a.get(int(i))
+        label_b = labels_b.get(int(j))
+        if label_a is not None and label_b is not None and label_a != label_b:
+            logger.debug(
+                "Rejected Kartograf atom mapping with flipped chirality: "
+                f"molA atom {i} ({label_a}) -> molB atom {j} ({label_b})."
+            )
+            return {}
+
+    return dict(mapping)
 
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
@@ -1838,11 +1969,12 @@ def _write_manual_pair_mapping_artifacts(
     serialized = _serialize_atom_mapping(map_b_to_a)
     if not serialized:
         raise ValueError(f"Manual RBFE atom mapping for {pair_id} is empty.")
-    _validate_minimal_mapping_atom(
-        pair_id,
-        len(serialized),
-        minimal_mapping_atom,
-    )
+    if not include_pocket_shape:
+        _validate_minimal_mapping_atom(
+            pair_id,
+            len(serialized),
+            minimal_mapping_atom,
+        )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     _remove_optional_mapping_artifacts(pair_dir)
@@ -1973,11 +2105,12 @@ def write_pair_mapping_artifacts(
                 pair_dir,
                 prefer_pocket_shape=include_pocket_shape,
             )
-            _validate_minimal_mapping_atom(
-                pair_id,
-                _cached_pair_mapping_atom_count(pair_dir, cached_asset),
-                minimal_mapping_atom,
-            )
+            if not include_pocket_shape:
+                _validate_minimal_mapping_atom(
+                    pair_id,
+                    _cached_pair_mapping_atom_count(pair_dir, cached_asset),
+                    minimal_mapping_atom,
+                )
             if not include_pocket_shape:
                 return cached_asset
             if "pocket_shape_score" in cached_asset and (
@@ -2023,12 +2156,18 @@ def write_pair_mapping_artifacts(
     map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
     map_b_to_a = _serialize_atom_mapping(map_b_to_a)
     if not map_b_to_a:
-        raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
-    _validate_minimal_mapping_atom(
-        pair_id,
-        len(map_b_to_a),
-        minimal_mapping_atom,
-    )
+        if not include_pocket_shape:
+            raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+        logger.debug(
+            f"No atom mapping found for planned RBFE Septop pair {pair_id}; "
+            "continuing with full-ligand softcore and pocket-shape metadata."
+        )
+    elif not include_pocket_shape:
+        _validate_minimal_mapping_atom(
+            pair_id,
+            len(map_b_to_a),
+            minimal_mapping_atom,
+        )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     mapping_json.write_text(json.dumps(map_b_to_a, indent=2, sort_keys=True))
@@ -2038,6 +2177,7 @@ def write_pair_mapping_artifacts(
         "target": alt,
         "mapper": mapper_name,
         "n_mapped": len(map_b_to_a),
+        "mapping_required": not include_pocket_shape,
     }
     status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
     status_payload.update(_mapping_metric_scores(atom_mapping_obj))
@@ -2058,16 +2198,19 @@ def write_pair_mapping_artifacts(
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )
-    try:
-        with (pair_dir / "mapping.pkl").open("wb") as fh:
-            pickle.dump(atom_mapping_obj, fh)
-    except Exception as exc:
-        logger.debug(f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}")
+    if atom_mapping_obj is not None and map_b_to_a:
+        try:
+            with (pair_dir / "mapping.pkl").open("wb") as fh:
+                pickle.dump(atom_mapping_obj, fh)
+        except Exception as exc:
+            logger.debug(
+                f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}"
+            )
 
-    try:
-        atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
-    except Exception as exc:
-        logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
+        try:
+            atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
+        except Exception as exc:
+            logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
 
     return _edge_asset_from_mapping_dir(
         pair_id,

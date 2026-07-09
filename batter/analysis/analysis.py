@@ -1474,6 +1474,20 @@ def analyze_lig_task(
     with open(f"{lig_path}/Results/Results.dat", "w") as f:
         f.write("\n".join(results_entries))
 
+    def _timeseries_json_value(ts: np.ndarray) -> list:
+        arr = np.asarray(ts, dtype=float)
+        return arr.tolist()
+
+    component_timeseries = {
+        comp: {
+            "fe_timeseries": _timeseries_json_value(ts),
+            "fe_timeseries_backward": _timeseries_json_value(
+                fe_timeseries_backward.get(comp, ts)
+            ),
+        }
+        for comp, ts in fe_timeseries.items()
+    }
+
     with open(f"{lig_path}/Results/fe_timeseries.json", "w") as f:
         json.dump(
             {
@@ -1481,6 +1495,7 @@ def analyze_lig_task(
                 "fe_std": fe_ts_err.tolist(),
                 "backward_fe_value": fe_ts_backward_val.tolist(),
                 "backward_fe_std": fe_ts_backward_err.tolist(),
+                "components": component_timeseries,
             },
             f,
             indent=2,

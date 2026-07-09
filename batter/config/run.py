@@ -578,6 +578,20 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
+    cinnabar_x_convergence_filter: Optional[Tuple[float, float]] = Field(
+        (0.8, 1.0),
+        description=(
+            "RBFE Cinnabar x-component convergence filter as "
+            "(minimum_data_fraction, tolerance_kcal_mol). Set to null/off/no to disable."
+        ),
+    )
+    cinnabar_x_convergence_fallback_filter: Optional[Tuple[float, float]] = Field(
+        (0.5, 2.0),
+        description=(
+            "Looser RBFE Cinnabar x-component convergence filter used only to "
+            "restore skipped edges needed for network connectivity."
+        ),
+    )
 
     @field_validator(
         "rocklin_correction",
@@ -607,6 +621,51 @@ class FESimArgs(BaseModel):
                 "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
             )
         return aliases[text]
+
+    @field_validator(
+        "cinnabar_x_convergence_filter",
+        "cinnabar_x_convergence_fallback_filter",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cinnabar_x_convergence_filter(cls, value: Any):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text or text in {
+                "none",
+                "off",
+                "false",
+                "no",
+                "disabled",
+                "disable",
+            }:
+                return None
+            parts = [part for part in re.split(r"[,\s]+", text) if part]
+        elif isinstance(value, (list, tuple)):
+            parts = list(value)
+        else:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must be a two-value list/tuple, "
+                "string, or null."
+            )
+        if len(parts) != 2:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must contain exactly two values: "
+                "(minimum_data_fraction, tolerance_kcal_mol)."
+            )
+        fraction = float(parts[0])
+        tolerance = float(parts[1])
+        if fraction <= 0.0 or fraction > 1.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+            )
+        if tolerance < 0.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter tolerance must be non-negative."
+            )
+        return (fraction, tolerance)
 
     @field_validator("remd", mode="before")
     @classmethod

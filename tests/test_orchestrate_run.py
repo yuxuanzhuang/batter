@@ -48,7 +48,8 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "edit rbfe_network.json" in note
     assert "reloads its pairs field" in note
     assert "fall back to the configured atom mapper" in note
-    assert "Identical duplicate ligands and full-map edges are omitted" in note
+    assert "Identical duplicate ligands are omitted" in note
+    assert "Full-map edges are retained" in note
     assert "run.only_rbfe_network" in note
     assert "--full-rbfe" in note
 
@@ -579,7 +580,7 @@ def test_build_rbfe_network_plan_all_identical_ligands_writes_empty_network(
     assert json.loads((tmp_path / "rbfe_network.json").read_text())["pairs"] == []
 
 
-def test_build_rbfe_network_plan_skips_full_map_edges(
+def test_build_rbfe_network_plan_keeps_full_map_edges(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -639,18 +640,55 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
     )
 
     assert seen["pairs"] == [["A", "B"], ["A", "C"], ["B", "C"]]
-    assert payload["pairs"] == [["A", "C"], ["B", "C"]]
-    assert payload["skipped_full_atom_map_edges"] == [
-        {
-            "pair": ["A", "B"],
-            "n_mapped": 6,
-            "n_ref_atoms": 8,
-            "n_alt_atoms": 8,
-            "n_ref_heavy_atoms": 6,
-            "n_alt_heavy_atoms": 6,
-            "reason": "full_heavy_atom_mapping",
+    assert payload["pairs"] == [["A", "B"], ["A", "C"], ["B", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
+    assert "skipped_full_atom_map_edges" not in payload
+
+
+def test_build_rbfe_network_plan_keeps_full_map_edges_for_septop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+
+    def _fake_mapping_artifacts(**kwargs):
+        assert kwargs["protocol"] == "rbfe_septop"
+        return {
+            "A~B": {
+                "full_atom_mapping": True,
+                "full_heavy_atom_mapping": True,
+                "n_mapped": 12,
+            },
+            "A~C": {
+                "full_atom_mapping": False,
+                "n_mapped": 4,
+            },
         }
-    ]
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+        protocol="rbfe_septop",
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
+    assert "skipped_full_atom_map_edges" not in payload
 
 
 def test_build_rbfe_network_plan_rejects_orphan_ligand(
@@ -676,7 +714,7 @@ def test_build_rbfe_network_plan_rejects_orphan_ligand(
         )
 
 
-def test_build_rbfe_network_plan_rejects_orphan_after_full_map_filter(
+def test_build_rbfe_network_plan_keeps_ligand_connected_by_full_map_edge(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -701,17 +739,19 @@ def test_build_rbfe_network_plan_rejects_orphan_after_full_map_filter(
         _fake_mapping_artifacts,
     )
 
-    with pytest.raises(ValueError, match="C"):
-        run_mod._build_rbfe_network_plan(
-            ["A", "B", "C"],
-            {
-                "A": str(tmp_path / "A.sdf"),
-                "B": str(tmp_path / "B.sdf"),
-                "C": str(tmp_path / "C.sdf"),
-            },
-            RBFENetworkArgs(mapping_file=mapping_file),
-            tmp_path,
-        )
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
 
 
 def test_build_rbfe_network_plan_treats_reverse_atom_mapping_edge_as_planned(
@@ -794,17 +834,19 @@ def test_rbfe_preflight_requires_atom_mapping_file(tmp_path: Path) -> None:
         run_mod._preflight_rbfe_mapping_files(rc, tmp_path / "run")
 
 
-def test_rbfe_preflight_requires_network_file_when_prepare_marker_exists(
+def test_rbfe_preflight_removes_stale_prepare_marker_without_network(
     tmp_path: Path,
 ) -> None:
     run_dir = tmp_path / "run"
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True)
-    (config_dir / "prepare_rbfe.ok").write_text("ok\n")
+    marker = config_dir / "prepare_rbfe.ok"
+    marker.write_text("ok\n")
     rc = SimpleNamespace(protocol="rbfe", rbfe=None)
 
-    with pytest.raises(FileNotFoundError, match="rbfe_network.json"):
-        run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+    run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+
+    assert not marker.exists()
 
 
 def test_rbfe_network_pair_guard_rejects_empty_network(tmp_path: Path) -> None:

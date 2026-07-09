@@ -398,6 +398,44 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Separator used in BATTER RBFE pair labels.",
 )
 @click.option(
+    "--x-convergence-filter",
+    "x_convergence_filter",
+    nargs=2,
+    type=float,
+    default=(0.8, 1.0),
+    show_default=True,
+    metavar="FRACTION KCAL",
+    help=(
+        "Filter RBFE edge measurements whose x-component forward/backward "
+        "convergence has not reached KCAL kcal/mol by FRACTION data."
+    ),
+)
+@click.option(
+    "--no-x-convergence-filter",
+    "disable_x_convergence_filter",
+    is_flag=True,
+    help="Disable x-component convergence filtering for this Cinnabar export.",
+)
+@click.option(
+    "--x-convergence-fallback-filter",
+    "x_convergence_fallback_filter",
+    nargs=2,
+    type=float,
+    default=(0.5, 2.0),
+    show_default=True,
+    metavar="FRACTION KCAL",
+    help=(
+        "Fallback x-component convergence threshold used to restore skipped "
+        "edges needed for network connectivity."
+    ),
+)
+@click.option(
+    "--no-x-convergence-fallback-filter",
+    "disable_x_convergence_fallback_filter",
+    is_flag=True,
+    help="Disable fallback restoration of skipped edges for connectivity.",
+)
+@click.option(
     "--source",
     default="BATTER_RBFE",
     show_default=True,
@@ -489,6 +527,10 @@ def fe_cinnabar(
     merge_bidirectional: bool,
     uncertainty_mode: str,
     edge_separator: str,
+    x_convergence_filter: tuple[float, float],
+    disable_x_convergence_filter: bool,
+    x_convergence_fallback_filter: tuple[float, float],
+    disable_x_convergence_fallback_filter: bool,
     source: str,
     experimental_csv: Path | None,
     exp_ligand_column: str,
@@ -535,9 +577,17 @@ def fe_cinnabar(
         assert work_dir is not None
         output_root = work_dir / "results" / "cinnabar"
 
+    resolved_x_convergence_filter = None if disable_x_convergence_filter else x_convergence_filter
+    resolved_x_convergence_fallback_filter = (
+        None
+        if disable_x_convergence_filter or disable_x_convergence_fallback_filter
+        else x_convergence_fallback_filter
+    )
     common_kwargs = {
         "ligands": ligands or None,
         "edge_separator": edge_separator,
+        "x_convergence_filter": resolved_x_convergence_filter,
+        "x_convergence_fallback_filter": resolved_x_convergence_fallback_filter,
         "uncertainty_mode": uncertainty_mode.lower(),
         "combine_by_run_first": combine_by_run_first,
         "merge_bidirectional": merge_bidirectional,
@@ -553,6 +603,12 @@ def fe_cinnabar(
         "exp_value_unit": exp_value_unit,
         "exp_error_unit": exp_error_unit,
     }
+
+    def _unskipped_kwargs(kwargs: dict[str, object]) -> dict[str, object]:
+        out = dict(kwargs)
+        out["x_convergence_filter"] = None
+        out["x_convergence_fallback_filter"] = None
+        return out
 
     try:
         if run_inputs:
@@ -580,6 +636,25 @@ def fe_cinnabar(
                 f"Wrote combined Cinnabar bundle to {output_root} "
                 f"({len(outputs)} files tracked)."
             )
+            if getattr(result, "x_convergence_filter", None) is not None:
+                unskipped_out = output_root / "unskipped"
+                unskipped_result = build_batter_rbfe_cinnabar_from_runs(
+                    list(run_inputs),
+                    **_unskipped_kwargs(common_kwargs),
+                )
+                unskipped_outputs = write_cinnabar_outputs(
+                    unskipped_result,
+                    unskipped_out,
+                    method_name="BATTER",
+                    target_name="combined explicit runs unskipped",
+                    write_plots=write_plots,
+                    write_cycle_closure=write_cycle_closure,
+                    absolute_offset=absolute_offset,
+                )
+                click.echo(
+                    f"Wrote unskipped Cinnabar bundle to {unskipped_out} "
+                    f"({len(unskipped_outputs)} files tracked)."
+                )
             return
 
         assert work_dir is not None
@@ -620,6 +695,24 @@ def fe_cinnabar(
                 f"Wrote combined Cinnabar bundle to {output_root} "
                 f"({len(outputs)} files tracked)."
             )
+            if getattr(result, "x_convergence_filter", None) is not None:
+                unskipped_out = output_root / "unskipped"
+                unskipped_result = build_batter_rbfe_cinnabar(
+                    **_unskipped_kwargs(legacy_kwargs)
+                )
+                unskipped_outputs = write_cinnabar_outputs(
+                    unskipped_result,
+                    unskipped_out,
+                    method_name="BATTER",
+                    target_name=f"{work_dir.name} unskipped",
+                    write_plots=write_plots,
+                    write_cycle_closure=write_cycle_closure,
+                    absolute_offset=absolute_offset,
+                )
+                click.echo(
+                    f"Wrote unskipped Cinnabar bundle to {unskipped_out} "
+                    f"({len(unskipped_outputs)} files tracked)."
+                )
             return
 
         bundles = build_batter_rbfe_cinnabar_by_run(**legacy_kwargs)
@@ -644,6 +737,24 @@ def fe_cinnabar(
                 stats = summarize_directionality(result.edge_summary)
                 stats["run_id"] = run_id
                 split_direction_stats.append(stats)
+        if any(
+            getattr(result, "x_convergence_filter", None) is not None
+            for result in bundles.values()
+        ):
+            unskipped_bundles = build_batter_rbfe_cinnabar_by_run(
+                **_unskipped_kwargs(legacy_kwargs)
+            )
+            for run_id, result in unskipped_bundles.items():
+                run_out_dir = output_root / run_id / "unskipped"
+                write_cinnabar_outputs(
+                    result,
+                    run_out_dir,
+                    method_name="BATTER",
+                    target_name=f"{work_dir.name}:{run_id} unskipped",
+                    write_plots=write_plots,
+                    write_cycle_closure=write_cycle_closure,
+                    absolute_offset=absolute_offset,
+                )
         if not merge_bidirectional and split_direction_stats:
             total_recip = sum(int(item["n_reciprocal_pairs"]) for item in split_direction_stats)
             total_dir = sum(int(item["n_directional_edges"]) for item in split_direction_stats)

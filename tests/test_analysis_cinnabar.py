@@ -196,6 +196,46 @@ def rbfe_index_df() -> pd.DataFrame:
     )
 
 
+def _write_x_results_json(
+    work_dir: Path,
+    *,
+    run_id: str,
+    ligand: str,
+    final: float,
+    forward_80: float,
+    backward_80: float,
+) -> None:
+    result_dir = work_dir / "results" / run_id / ligand / "Results"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "fe": final,
+        "fe_error": 0.1,
+        "fe_timeseries": [[final - 0.2, 0.1], [forward_80, 0.1], [final, 0.1]],
+        "fe_timeseries_backward": [
+            [final + 0.2, 0.1],
+            [backward_80, 0.1],
+            [final, 0.1],
+        ],
+        "convergence": {
+            "time_convergence": {
+                "columns": [
+                    "data_fraction",
+                    "Forward",
+                    "Forward_Error",
+                    "Backward",
+                    "Backward_Error",
+                ],
+                "records": [
+                    {"data_fraction": 0.5},
+                    {"data_fraction": 0.8},
+                    {"data_fraction": 1.0},
+                ],
+            }
+        },
+    }
+    (result_dir / "x_results.json").write_text(json.dumps(payload, indent=2))
+
+
 def test_build_batter_rbfe_cinnabar_combines_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -212,6 +252,190 @@ def test_build_batter_rbfe_cinnabar_combines_runs(
     assert pytest.approx(edge["calc_DDG"], rel=1e-6) == 1.12
     assert result.absolute_summary is not None
     assert set(result.absolute_summary["label"]) == {"A", "B"}
+
+
+def test_build_batter_rbfe_cinnabar_filters_unconverged_x_edges(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "B~C",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 2.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "A~C",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.5,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="A~B",
+        final=1.0,
+        forward_80=1.4,
+        backward_80=0.9,
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="B~C",
+        final=2.0,
+        forward_80=4.0,
+        backward_80=2.1,
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="A~C",
+        final=1.5,
+        forward_80=1.6,
+        backward_80=1.4,
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1"])
+
+    assert {(row.labelA, row.labelB) for row in result.edge_summary.itertuples(index=False)} == {
+        ("A", "B"),
+        ("A", "C"),
+    }
+    assert result.x_convergence_filter == (0.8, 1.0)
+    assert result.x_convergence_fallback_filter == (0.5, 2.0)
+    summary = result.convergence_filter_summary.set_index("ligand")
+    assert bool(summary.loc["A~B", "included"]) is True
+    assert bool(summary.loc["B~C", "included"]) is False
+    assert summary.loc["B~C", "reason"] == "unconverged_x_component"
+    assert bool(summary.loc["B~C", "restored_for_connectivity"]) is False
+
+
+def test_build_batter_rbfe_cinnabar_restores_fallback_edge_for_connectivity(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "B~C",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 2.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="A~B",
+        final=1.0,
+        forward_80=1.1,
+        backward_80=0.9,
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="B~C",
+        final=2.0,
+        forward_80=4.0,
+        backward_80=2.1,
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1"])
+
+    assert {(row.labelA, row.labelB) for row in result.edge_summary.itertuples(index=False)} == {
+        ("A", "B"),
+        ("B", "C"),
+    }
+    summary = result.convergence_filter_summary.set_index("ligand")
+    assert bool(summary.loc["B~C", "included"]) is True
+    assert bool(summary.loc["B~C", "restored_for_connectivity"]) is True
+    assert summary.loc["B~C", "reason"] == "restored_for_connectivity"
+    assert bool(summary.loc["B~C", "fallback_included"]) is True
+
+
+def test_build_batter_rbfe_cinnabar_can_disable_x_convergence_filter(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "B~C",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 2.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    _write_x_results_json(
+        tmp_path,
+        run_id="run1",
+        ligand="B~C",
+        final=2.0,
+        forward_80=4.0,
+        backward_80=2.1,
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(
+        tmp_path,
+        run_ids=["run1"],
+        x_convergence_filter=None,
+    )
+
+    assert len(result.edge_summary) == 2
+    assert result.x_convergence_filter is None
+    assert result.convergence_filter_summary.empty
 
 
 def test_build_batter_rbfe_cinnabar_from_runs_combines_different_work_dirs(
@@ -792,6 +1016,8 @@ def test_auto_write_rbfe_cinnabar_for_run_uses_run_scoped_output_and_replicate_n
     assert called["build_work_dir"] == tmp_path
     assert called["build_kwargs"] == {
         "run_ids": ["rep1"],
+        "x_convergence_filter": (0.8, 1.0),
+        "x_convergence_fallback_filter": (0.5, 2.0),
         "combine_by_run_first": True,
         "merge_bidirectional": True,
     }
@@ -803,6 +1029,50 @@ def test_auto_write_rbfe_cinnabar_for_run_uses_run_scoped_output_and_replicate_n
     assert "batter fe cinnabar" in note
     assert "--run-id rep1" in note
     assert "--run-id rep2" in note
+
+
+def test_auto_write_rbfe_cinnabar_for_run_writes_unskipped_bundle(
+    monkeypatch, tmp_path: Path
+) -> None:
+    filtered = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+        x_convergence_filter=(0.8, 1.0),
+    )
+    unskipped = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+    )
+    build_filters: list[object] = []
+    write_dirs: list[Path] = []
+
+    def _fake_build(work_dir, **kwargs):
+        build_filters.append(kwargs.get("x_convergence_filter"))
+        return filtered if kwargs.get("x_convergence_filter") is not None else unskipped
+
+    def _fake_write(result, out_dir, **kwargs):
+        write_dirs.append(Path(out_dir))
+        return {"manifest_json": Path(out_dir) / "manifest.json"}
+
+    monkeypatch.setattr(cinnabar_mod, "build_batter_rbfe_cinnabar", _fake_build)
+    monkeypatch.setattr(cinnabar_mod, "write_cinnabar_outputs", _fake_write)
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "list_fe_runs",
+        lambda work_dir: pd.DataFrame(
+            [{"run_id": "rep1", "protocol": "rbfe", "system_name": "sys"}]
+        ),
+    )
+
+    export = cinnabar_mod.auto_write_rbfe_cinnabar_for_run(tmp_path, "rep1")
+
+    out_dir = tmp_path / "results" / "cinnabar" / "rep1"
+    assert build_filters == [(0.8, 1.0), None]
+    assert write_dirs == [out_dir, out_dir / "unskipped"]
+    assert export["unskipped_output_dir"] == out_dir / "unskipped"
+    assert export["unskipped_result"] is unskipped
 
 
 def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
@@ -976,6 +1246,8 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
     assert result.exit_code == 0
     assert called["build_kwargs"]["work_dir"] == tmp_path
     assert called["build_kwargs"]["merge_bidirectional"] is True
+    assert called["build_kwargs"]["x_convergence_filter"] == (0.8, 1.0)
+    assert called["build_kwargs"]["x_convergence_fallback_filter"] == (0.5, 2.0)
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
     assert called["write_kwargs"]["absolute_offset"] == 0.0
@@ -1029,9 +1301,134 @@ def test_cli_fe_cinnabar_accepts_explicit_run_inputs(
 
     assert result.exit_code == 0
     assert called["runs"] == [(work_a, "rep1"), (work_b, "rep2")]
+    assert called["build_kwargs"]["x_convergence_filter"] == (0.8, 1.0)
+    assert called["build_kwargs"]["x_convergence_fallback_filter"] == (0.5, 2.0)
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == out_dir
     assert "combined Cinnabar bundle" in result.output
+
+
+def test_cli_fe_cinnabar_can_override_x_convergence_filter(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: called.setdefault("build_kwargs", kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {},
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "cinnabar",
+            str(tmp_path),
+            "--x-convergence-filter",
+            "0.9",
+            "0.5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["build_kwargs"]["x_convergence_filter"] == (0.9, 0.5)
+    assert called["build_kwargs"]["x_convergence_fallback_filter"] == (0.5, 2.0)
+
+
+def test_cli_fe_cinnabar_can_override_x_convergence_fallback_filter(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: called.setdefault("build_kwargs", kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {},
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "cinnabar",
+            str(tmp_path),
+            "--x-convergence-fallback-filter",
+            "0.6",
+            "1.5",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["build_kwargs"]["x_convergence_filter"] == (0.8, 1.0)
+    assert called["build_kwargs"]["x_convergence_fallback_filter"] == (0.6, 1.5)
+
+
+def test_cli_fe_cinnabar_can_disable_x_convergence_filter(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: called.setdefault("build_kwargs", kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {},
+    )
+
+    result = runner.invoke(
+        cli,
+        ["fe", "cinnabar", str(tmp_path), "--no-x-convergence-filter"],
+    )
+
+    assert result.exit_code == 0
+    assert called["build_kwargs"]["x_convergence_filter"] is None
+    assert called["build_kwargs"]["x_convergence_fallback_filter"] is None
+
+
+def test_cli_fe_cinnabar_writes_unskipped_bundle(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    filtered = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+        x_convergence_filter=(0.8, 1.0),
+    )
+    unskipped = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+    )
+    build_filters: list[object] = []
+    write_dirs: list[Path] = []
+
+    def _fake_build(**kwargs):
+        build_filters.append(kwargs.get("x_convergence_filter"))
+        return filtered if kwargs.get("x_convergence_filter") is not None else unskipped
+
+    def _fake_write(result, out_dir, **kwargs):
+        write_dirs.append(Path(out_dir))
+        return {"manifest_json": Path(out_dir) / "manifest.json"}
+
+    monkeypatch.setattr("batter.cli.fe_cmds.build_batter_rbfe_cinnabar", _fake_build)
+    monkeypatch.setattr("batter.cli.fe_cmds.write_cinnabar_outputs", _fake_write)
+
+    result = runner.invoke(cli, ["fe", "cinnabar", str(tmp_path)])
+
+    out_dir = tmp_path / "results" / "cinnabar"
+    assert result.exit_code == 0
+    assert build_filters == [(0.8, 1.0), None]
+    assert write_dirs == [out_dir, out_dir / "unskipped"]
+    assert "Wrote unskipped Cinnabar bundle" in result.output
 
 
 def test_cli_fe_cinnabar_can_disable_cycle_closure(

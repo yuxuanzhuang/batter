@@ -280,8 +280,8 @@ def _rbfe_network_review_note(run_dir: Path) -> str:
         "You may edit rbfe_network.json before continuing; BATTER reloads its "
         "pairs field for RBFE transformation setup. Newly added pairs without "
         "prepared mapping artifacts fall back to the configured atom mapper.\n"
-        "Identical duplicate ligands and full-map edges are omitted from "
-        "pairs and recorded in the JSON skip metadata when detected.\n"
+        "Identical duplicate ligands are omitted from pairs and recorded in "
+        "the JSON skip metadata when detected. Full-map edges are retained.\n"
         "If the network looks correct, set run.only_rbfe_network: false or rerun "
         "with --full-rbfe to continue."
     )
@@ -872,44 +872,7 @@ def _build_rbfe_network_plan(
         protocol=protocol,
         minimal_mapping_atom=minimal_mapping_atom,
     )
-    skipped_full_atom_map_edges: List[dict[str, Any]] = []
-    filtered_pairs: List[List[str]] = []
-    for ref, alt in payload.get("pairs", []):
-        pair_id = f"{ref}~{alt}"
-        asset = edge_assets.get(pair_id, {})
-        skip_reason = None
-        if bool(asset.get("full_atom_mapping")):
-            skip_reason = "full_atom_mapping"
-        elif bool(asset.get("full_heavy_atom_mapping")):
-            skip_reason = "full_heavy_atom_mapping"
-        if skip_reason is not None:
-            skip_record = {
-                "pair": [ref, alt],
-                "n_mapped": asset.get("n_mapped"),
-                "n_ref_atoms": asset.get("n_ref_atoms"),
-                "n_alt_atoms": asset.get("n_alt_atoms"),
-                "n_ref_heavy_atoms": asset.get("n_ref_heavy_atoms"),
-                "n_alt_heavy_atoms": asset.get("n_alt_heavy_atoms"),
-                "reason": skip_reason,
-            }
-            skipped_full_atom_map_edges.append(
-                {key: value for key, value in skip_record.items() if value is not None}
-            )
-            logger.warning(
-                "RBFE skipped edge {} because its atom map is full coverage ({}).",
-                pair_id,
-                skip_reason,
-            )
-            continue
-        filtered_pairs.append([ref, alt])
-    if skipped_full_atom_map_edges:
-        payload["pairs"] = filtered_pairs
-        mapping_source["skipped_full_atom_map_edges"] = skipped_full_atom_map_edges
-        validate_rbfe_network_ligand_coverage(
-            available,
-            payload.get("pairs", []),
-            context="Planned RBFE network after full-map edge filtering",
-        )
+    mapping_source["full_atom_map_edge_filter"] = "disabled"
     mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
@@ -1946,7 +1909,14 @@ def _run_from_yaml_impl(
         try:
             from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
 
-            cinnabar_export = auto_write_rbfe_cinnabar_for_run(rc.run.output_folder, run_id)
+            cinnabar_export = auto_write_rbfe_cinnabar_for_run(
+                rc.run.output_folder,
+                run_id,
+                x_convergence_filter=sim_cfg_updated.cinnabar_x_convergence_filter,
+                x_convergence_fallback_filter=(
+                    sim_cfg_updated.cinnabar_x_convergence_fallback_filter
+                ),
+            )
             logger.info(
                 f"Wrote RBFE Cinnabar bundle for run '{run_id}' to {cinnabar_export['output_dir']}."
             )

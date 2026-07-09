@@ -14,12 +14,14 @@ from batter.rbfe import (
     _edge_asset_from_mapping_dir,
     _kartograf_mapper_kwargs,
     _mapping_metric_scores,
+    _network_scorer_callable,
     _pocket_grid_overlap_metrics,
     _pocket_grid_overlap_score,
     _write_pocket_shape_overlap_png,
     _wrap_atom_mapper_with_overrides,
     ManualAtomMappingOverrides,
     RBFENetwork,
+    filter_chirality_flips,
     konnektor_pairs,
     load_atom_mapping_file,
     load_mapping_file,
@@ -102,6 +104,25 @@ def test_kartograf_mapper_kwargs_defaults() -> None:
     assert kwargs["map_exact_ring_matches_only"] is True
     assert kwargs["allow_partial_fused_rings"] is True
     assert kwargs["allow_bond_breaks"] is False
+    assert [
+        fn.__name__ for fn in kwargs["additional_mapping_filter_functions"]
+    ] == ["filter_element_changes", "filter_chirality_flips"]
+
+
+def test_filter_chirality_flips_rejects_inverted_tetrahedral_center() -> None:
+    mol_r = Chem.MolFromSmiles("F[C@](Cl)(Br)I")
+    mol_s = Chem.MolFromSmiles("F[C@@](Cl)(Br)I")
+    mapping = {idx: idx for idx in range(mol_r.GetNumAtoms())}
+
+    assert filter_chirality_flips(mol_r, mol_s, mapping) == {}
+
+
+def test_filter_chirality_flips_keeps_matching_tetrahedral_center() -> None:
+    mol_a = Chem.MolFromSmiles("F[C@](Cl)(Br)I")
+    mol_b = Chem.MolFromSmiles("F[C@](Cl)(Br)I")
+    mapping = {idx: idx for idx in range(mol_a.GetNumAtoms())}
+
+    assert filter_chirality_flips(mol_a, mol_b, mapping) == mapping
 
 
 def test_resolve_mapping_konnektor_requires_orchestrator() -> None:
@@ -215,6 +236,50 @@ def test_write_pair_mapping_artifacts_allows_lower_minimal_mapping_atom(
     )
 
     assert asset["n_mapped"] == 1
+
+
+def test_write_pair_mapping_artifacts_allows_empty_map_for_septop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _install_fake_konnektor(monkeypatch, {})
+
+    class EmptyMapping:
+        componentB_to_componentA = {}
+        componentA_to_componentB = {}
+
+    class EmptyLomapAtomMapper:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def suggest_mappings(self, component_a, component_b):
+            yield EmptyMapping()
+
+    monkeypatch.setattr("lomap.LomapAtomMapper", EmptyLomapAtomMapper)
+    mol = _make_pose_mol([(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: mol)
+    monkeypatch.setattr(
+        "batter.rbfe._write_pocket_shape_overlap_png",
+        lambda mol_a, mol_b, out, pair_id: out.write_bytes(b"shape") or True,
+    )
+
+    asset = write_pair_mapping_artifacts(
+        ref="A",
+        alt="B",
+        ligand_files={"A": tmp_path / "A.sdf", "B": tmp_path / "B.sdf"},
+        out_dir=tmp_path / "mappings",
+        atom_mapper="lomap",
+        include_pocket_shape=True,
+    )
+
+    pair_dir = tmp_path / "mappings" / "A~B"
+    assert json.loads((pair_dir / "mapping.json").read_text()) == {}
+    status = json.loads((pair_dir / "mapping_status.json").read_text())
+    assert status["n_mapped"] == 0
+    assert status["mapping_required"] is False
+    assert status["pocket_shape_score"] > 0
+    assert asset["n_mapped"] == 0
+    assert asset["image_kind"] == "pocket_shape_overlap"
 
 
 def test_write_pair_mapping_artifacts_rejects_tiny_cached_mapping(
@@ -539,6 +604,40 @@ def test_network_scorer_auto_defaults_to_pocket_shape_for_septop() -> None:
     assert resolve_network_scorer_name("grid-shape", protocol="rbfe") == "pocket_shape"
 
 
+def test_network_scorer_prioritizes_chemical_protonation_pairs(
+    monkeypatch,
+) -> None:
+    lomap_mod = types.ModuleType("lomap")
+    lomap_gufe_bindings_mod = types.ModuleType("lomap.gufe_bindings")
+    lomap_scorers_mod = types.ModuleType("lomap.gufe_bindings.scorers")
+    lomap_scorers_mod.default_lomap_score = lambda mapping: 0.25
+    lomap_gufe_bindings_mod.scorers = lomap_scorers_mod
+    lomap_mod.gufe_bindings = lomap_gufe_bindings_mod
+    monkeypatch.setitem(sys.modules, "lomap", lomap_mod)
+    monkeypatch.setitem(sys.modules, "lomap.gufe_bindings", lomap_gufe_bindings_mod)
+    monkeypatch.setitem(
+        sys.modules, "lomap.gufe_bindings.scorers", lomap_scorers_mod
+    )
+
+    class Component:
+        def __init__(self, smiles):
+            self._mol = Chem.MolFromSmiles(smiles)
+
+        def to_rdkit(self):
+            return self._mol
+
+    class Mapping:
+        def __init__(self, smiles_a, smiles_b):
+            self.componentA = Component(smiles_a)
+            self.componentB = Component(smiles_b)
+
+    scorer = _network_scorer_callable("lomap", protocol="rbfe")
+
+    assert scorer(Mapping("CCN", "CC[NH3+]")) > scorer(
+        Mapping("CCN", "CCO")
+    )
+
+
 def test_validate_rbfe_network_ligand_coverage_rejects_orphan_ligand() -> None:
     with pytest.raises(ValueError, match="C"):
         validate_rbfe_network_ligand_coverage(
@@ -577,6 +676,63 @@ def test_konnektor_pairs_septop_auto_uses_pocket_shape_scorer(
     assert pairs == [("L1", "L2")]
     assert callable(seen["scorer"])
     assert getattr(seen["scorer"], "__name__", "") == "_pocket_shape_network_score"
+
+
+def test_konnektor_pairs_scores_protonation_edges_top(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class Mapping:
+        def __init__(self, component_a, component_b):
+            self.componentA = component_a
+            self.componentB = component_b
+
+    class BestScoreNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            self.scorer = kwargs["scorer"]
+
+        def generate_ligand_network(self, components):
+            scored = []
+            for i, component_a in enumerate(components):
+                for component_b in components[i + 1 :]:
+                    score = self.scorer(Mapping(component_a, component_b))
+                    scored.append((score, component_a, component_b))
+            _score, best_a, best_b = max(scored, key=lambda item: item[0])
+
+            class Network:
+                edges = [(best_a, best_b)]
+
+            return Network()
+
+    _install_fake_konnektor(
+        monkeypatch,
+        {"BestScoreNetworkGenerator": BestScoreNetworkGenerator},
+    )
+    smiles_by_stem = {
+        "lig_a": "CCN",
+        "lig_b": "CC[NH3+]",
+        "lig_c": "CCO",
+    }
+    monkeypatch.setattr(
+        "batter.rbfe._load_rdkit_mol",
+        lambda path: Chem.MolFromSmiles(smiles_by_stem[Path(path).stem]),
+    )
+    sys.modules["lomap.gufe_bindings.scorers"].default_lomap_score = (
+        lambda mapping: 0.25
+    )
+
+    pairs = konnektor_pairs(
+        ["LIG_A", "LIG_B", "LIG_C"],
+        {
+            "LIG_A": tmp_path / "lig_a.sdf",
+            "LIG_B": tmp_path / "lig_b.sdf",
+            "LIG_C": tmp_path / "lig_c.sdf",
+        },
+        layout="bestscore",
+        protocol="rbfe",
+    )
+
+    assert pairs == [("LIG_A", "LIG_B")]
 
 
 def test_konnektor_pairs_unknown_layout(monkeypatch, tmp_path: Path) -> None:
@@ -726,7 +882,9 @@ def test_konnektor_pairs_forwards_kartograf_options(monkeypatch, tmp_path: Path)
     assert kwargs["allow_bond_breaks"] is True
     assert kwargs["atom_map_hydrogens"] is False
     assert kwargs["map_hydrogens_on_hydrogens_only"] is True
-    assert kwargs["additional_mapping_filter_functions"] == []
+    assert [
+        fn.__name__ for fn in kwargs["additional_mapping_filter_functions"]
+    ] == ["filter_chirality_flips"]
 
 
 def test_konnektor_pairs_rejects_unknown_atom_mapper(monkeypatch, tmp_path: Path) -> None:

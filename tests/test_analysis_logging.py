@@ -214,6 +214,11 @@ def test_analyze_lig_task_writes_backward_fe_timeseries(
     assert payload["fe_std"][:2] == [0.1, 0.2]
     assert payload["backward_fe_value"][:2] == [3.0, 4.0]
     assert payload["backward_fe_std"][:2] == [0.3, 0.4]
+    assert payload["components"]["x"]["fe_timeseries"] == [[1.0, 0.1], [2.0, 0.2]]
+    assert payload["components"]["x"]["fe_timeseries_backward"] == [
+        [3.0, 0.3],
+        [4.0, 0.4],
+    ]
 
 
 def test_analyze_lig_task_adds_septop_boresch_corrections(

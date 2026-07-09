@@ -215,6 +215,45 @@ class SimulationConfig(BaseModel):
         if n_bootstraps_val < 0:
             raise ValueError("n_bootstraps must be >= 0.")
 
+        def _coerce_cinnabar_x_convergence_filter(value: Any):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                text = value.strip().lower()
+                if not text or text in {
+                    "none",
+                    "off",
+                    "false",
+                    "no",
+                    "disabled",
+                    "disable",
+                }:
+                    return None
+                parts = [part for part in re.split(r"[,\s]+", text) if part]
+            elif isinstance(value, (list, tuple)):
+                parts = list(value)
+            else:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter must be a two-value "
+                    "list/tuple, string, or null."
+                )
+            if len(parts) != 2:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter must contain exactly two "
+                    "values: (minimum_data_fraction, tolerance_kcal_mol)."
+                )
+            fraction = float(parts[0])
+            tolerance = float(parts[1])
+            if fraction <= 0.0 or fraction > 1.0:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+                )
+            if tolerance < 0.0:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter tolerance must be non-negative."
+                )
+            return (fraction, tolerance)
+
         max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
         if max_fe_steps and analysis_start_step_val >= max_fe_steps:
             raise ValueError(
@@ -289,6 +328,15 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
             "n_bootstraps": n_bootstraps_val,
+            "cinnabar_x_convergence_filter": _coerce_cinnabar_x_convergence_filter(
+                _fe_attr("cinnabar_x_convergence_filter", lambda: (0.8, 1.0))
+            ),
+            "cinnabar_x_convergence_fallback_filter": _coerce_cinnabar_x_convergence_filter(
+                _fe_attr(
+                    "cinnabar_x_convergence_fallback_filter",
+                    lambda: (0.5, 2.0),
+                )
+            ),
             "slurm_header_dir": Path(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -401,6 +449,20 @@ class SimulationConfig(BaseModel):
         0,
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
+    )
+    cinnabar_x_convergence_filter: Optional[Tuple[float, float]] = Field(
+        (0.8, 1.0),
+        description=(
+            "RBFE Cinnabar x-component convergence filter as "
+            "(minimum_data_fraction, tolerance_kcal_mol). Set to null/off/no to disable."
+        ),
+    )
+    cinnabar_x_convergence_fallback_filter: Optional[Tuple[float, float]] = Field(
+        (0.5, 2.0),
+        description=(
+            "Looser RBFE Cinnabar x-component convergence filter used only to "
+            "restore skipped edges needed for network connectivity."
+        ),
     )
 
     # --- Force constants ---
@@ -614,6 +676,51 @@ class SimulationConfig(BaseModel):
                 "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
             )
         return aliases[text]
+
+    @field_validator(
+        "cinnabar_x_convergence_filter",
+        "cinnabar_x_convergence_fallback_filter",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cinnabar_x_convergence_filter(cls, value: Any):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text or text in {
+                "none",
+                "off",
+                "false",
+                "no",
+                "disabled",
+                "disable",
+            }:
+                return None
+            parts = [part for part in re.split(r"[,\s]+", text) if part]
+        elif isinstance(value, (list, tuple)):
+            parts = list(value)
+        else:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must be a two-value list/tuple, "
+                "string, or null."
+            )
+        if len(parts) != 2:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must contain exactly two values: "
+                "(minimum_data_fraction, tolerance_kcal_mol)."
+            )
+        fraction = float(parts[0])
+        tolerance = float(parts[1])
+        if fraction <= 0.0 or fraction > 1.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+            )
+        if tolerance < 0.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter tolerance must be non-negative."
+            )
+        return (fraction, tolerance)
 
     @field_validator("lambdas", mode="before")
     @classmethod

@@ -448,6 +448,9 @@ def _kartograf_mapper_kwargs(
     additional_mapping_filter_functions = []
     if use_element_filter:
         additional_mapping_filter_functions.append(filter_element_changes)
+    from batter.rbfe import filter_chirality_flips
+
+    additional_mapping_filter_functions.append(filter_chirality_flips)
     if use_attached_h_filter:
         additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
     kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions

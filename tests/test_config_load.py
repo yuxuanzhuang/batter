@@ -841,6 +841,46 @@ def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
     assert cfg.n_bootstraps == 64
 
 
+def test_cinnabar_x_convergence_filter_default(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter == (0.8, 1.0)
+    assert cfg.cinnabar_x_convergence_fallback_filter == (0.5, 2.0)
+
+
+def test_cinnabar_x_convergence_filter_can_be_disabled(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+        cinnabar_x_convergence_filter="off",
+        cinnabar_x_convergence_fallback_filter="off",
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter is None
+    assert cfg.cinnabar_x_convergence_fallback_filter is None
+
+
+def test_cinnabar_x_convergence_filter_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+        cinnabar_x_convergence_filter=[0.9, 0.5],
+        cinnabar_x_convergence_fallback_filter=[0.6, 1.5],
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter == (0.9, 0.5)
+    assert cfg.cinnabar_x_convergence_fallback_filter == (0.6, 1.5)
+
+
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
