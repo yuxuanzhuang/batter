@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 from pathlib import Path
 import json
@@ -760,14 +761,90 @@ def _build_konnektor_atom_mapper(
 
         mapper = LomapAtomMapper(**_lomap_mapper_kwargs(lomap_options))
     else:
-        mapper = _build_current_kartograf_atom_mapper_for_network(
-            kartograf_options=kartograf_options
+        mapper = _wrap_kartograf_mapper_with_alignment(
+            _build_current_kartograf_atom_mapper_for_network(
+                kartograf_options=kartograf_options
+            )
         )
 
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
     if overrides:
         return _wrap_atom_mapper_with_overrides(mapper, overrides)
     return mapper
+
+
+class _AlignedKartografAtomMapper:
+    """Align componentB to componentA before Konnektor asks Kartograf for maps."""
+
+    def __init__(self, wrapped_mapper: Any):
+        self.wrapped_mapper = wrapped_mapper
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self.wrapped_mapper, name)
+
+    def suggest_mappings(self, componentA: Any, componentB: Any):
+        try:
+            from kartograf.atom_aligner import align_mol_shape
+
+            aligned_componentB = align_mol_shape(componentB, ref_mol=componentA)
+        except Exception:
+            aligned_componentB = componentB
+
+        for mapping in self.wrapped_mapper.suggest_mappings(
+            componentA,
+            aligned_componentB,
+        ):
+            mapped_count = _mapping_mapped_atom_count(mapping)
+            if mapped_count == 0:
+                continue
+            yield mapping
+
+    @classmethod
+    def _defaults(cls):
+        return {"wrapped_mapper": None}
+
+    @classmethod
+    def _from_dict(cls, d):
+        raise TypeError(
+            "AlignedKartografAtomMapper cannot be reconstructed without the "
+            "wrapped Kartograf mapper instance."
+        )
+
+    def _to_dict(self):
+        return {"wrapped_mapper_identity": self._wrapped_mapper_identity()}
+
+    def _wrapped_mapper_identity(self) -> str:
+        try:
+            return str(self.wrapped_mapper.key)
+        except Exception:
+            pass
+        identity = {
+            "class": self.wrapped_mapper.__class__.__qualname__,
+            "kwargs": getattr(self.wrapped_mapper, "kwargs", None),
+        }
+        return json.dumps(identity, sort_keys=True, default=str)
+
+    def _gufe_tokenize(self):
+        identity = f"{self.__class__.__qualname__}:{self._wrapped_mapper_identity()}"
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+try:
+    from gufe import AtomMapper as _GufeAtomMapper
+
+    class AlignedKartografAtomMapper(_AlignedKartografAtomMapper, _GufeAtomMapper):
+        pass
+
+except Exception:
+
+    class AlignedKartografAtomMapper(_AlignedKartografAtomMapper):
+        pass
+
+
+def _wrap_kartograf_mapper_with_alignment(delegate: Any):
+    return AlignedKartografAtomMapper(delegate)
 
 
 def _build_current_kartograf_atom_mapper_for_network(
@@ -2249,12 +2326,34 @@ def write_planned_mapping_artifacts(
     for ref_raw, alt_raw in pairs:
         ref = sanitize_ligand_name(str(ref_raw))
         alt = sanitize_ligand_name(str(alt_raw))
+        pair_id = f"{ref}~{alt}"
         missing = [name for name in (ref, alt) if name not in ligand_files]
         if missing:
             raise FileNotFoundError(
                 f"Missing ligand file(s) for RBFE mapping {ref}~{alt}: {missing}"
             )
-        assets[f"{ref}~{alt}"] = write_pair_mapping_artifacts(
+        reverse_pair_id = f"{alt}~{ref}"
+        reverse_asset = assets.get(reverse_pair_id)
+        if reverse_asset is not None:
+            reverse_mapping_path = Path(str(reverse_asset.get("mapping_path", "")))
+            if reverse_mapping_path.is_file():
+                reverse_map = _atom_mapping_payload_to_b_to_a(
+                    json.loads(reverse_mapping_path.read_text()),
+                    context=reverse_mapping_path.name,
+                )
+                assets[pair_id] = _write_manual_pair_mapping_artifacts(
+                    ref=ref,
+                    alt=alt,
+                    ligand_files=ligand_files,
+                    pair_dir=Path(out_dir) / pair_id,
+                    map_b_to_a=_invert_atom_mapping(reverse_map),
+                    source_label=f"inverse:{reverse_pair_id}",
+                    include_pocket_shape=include_pocket_shape,
+                    minimal_mapping_atom=minimal_mapping_atom,
+                )
+                continue
+
+        assets[pair_id] = write_pair_mapping_artifacts(
             ref=ref,
             alt=alt,
             ligand_files=ligand_files,
