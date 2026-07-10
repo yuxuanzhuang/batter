@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional, Sequence
 from loguru import logger
 
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
+from batter._internal.ops.cleanup import cleanup_prepare_fe_root
 from batter.orchestrate.state_registry import register_phase_state
 from batter._internal.ops import remd as remd_ops
 from batter._internal.ops import batch as batch_ops
@@ -271,6 +272,12 @@ def prepare_fe_handler(
 
     # emit the common OK marker used by the orchestrator
     _atomic_write_marker(marker)
+    if not bool(payload.get("store_debug_files", False)):
+        cleanup_prepare_fe_root(
+            fe_root,
+            components=components,
+            drop_build_files=(phase_name == "pre_prepare_fe"),
+        )
 
     logger.debug(f"[{phase_name}] finished ligand={ligand} → {marker}")
     marker_rel = marker.relative_to(system.root).as_posix()
@@ -431,6 +438,12 @@ def prepare_fe_windows_handler(
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
 
     _atomic_write_marker(prepare_finished)
+    if not bool(payload.get("store_debug_files", False)):
+        cleanup_prepare_fe_root(
+            child_root / "fe",
+            components=components,
+            drop_build_files=True,
+        )
 
     windows_rel = prepare_finished.relative_to(system.root).as_posix()
     prepare_rel = (

@@ -1116,6 +1116,14 @@ class RunSection(BaseModel):
         False,
         description="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
     )
+    store_debug_files: bool = Field(
+        False,
+        description=(
+            "Keep intermediate build, LEaP, ParmEd, and trajectory debug files. "
+            "When false, successful preparation/analysis stages prune files not "
+            "needed to run simulations, resume, or prepare downstream stages."
+        ),
+    )
     remd: Literal["yes", "no"] = Field(
         "no",
         description="Enable REMD execution.",

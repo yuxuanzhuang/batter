@@ -25,6 +25,7 @@ def select_pipeline(
     *,
     sys_params: Optional[SystemParams | dict] = None,
     partition: str | None = None,
+    store_debug_files: bool = False,
 ) -> Pipeline:
     """Return the protocol-specific pipeline for a run.
 
@@ -55,7 +56,9 @@ def select_pipeline(
         if isinstance(sys_params, SystemParams)
         else SystemParams.model_validate(sys_params or {})
     )
-    extra = {"partition": partition} if partition else {}
+    extra = {"store_debug_files": bool(store_debug_files)}
+    if partition:
+        extra["partition"] = partition
 
     if name == "abfe":
         return make_abfe_pipeline(

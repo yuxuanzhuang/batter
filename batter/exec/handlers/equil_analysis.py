@@ -20,6 +20,7 @@ from batter.analysis.sim_validation import (
     STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
     SimValidator,
 )
+from batter._internal.ops.cleanup import cleanup_equil_after_analysis
 from batter._internal.ops.box import _restore_protein_resids_from_renum
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
@@ -44,6 +45,9 @@ PROLIF_ARTIFACT_FILENAMES = {
 def _paths(root: Path) -> dict[str, Path]:
     """Return commonly accessed equilibration paths under ``root``."""
     eq = root / "equil"
+    prot_renum = eq / "q_build_files" / "protein_renum.txt"
+    if not prot_renum.exists():
+        prot_renum = eq / "protein_renum.txt"
     return {
         "equil_dir": eq,
         "finished": eq / "FINISHED",
@@ -60,7 +64,7 @@ def _paths(root: Path) -> dict[str, Path]:
         "prolif_interaction_diagram": eq
         / PROLIF_ARTIFACT_FILENAMES["interaction_diagram_png"],
         "build_files": eq / "q_build_files",
-        "prot_renum": eq / "q_build_files" / "protein_renum.txt",
+        "prot_renum": prot_renum,
         "full_pdb": eq / "full.pdb",
     }
 
@@ -1038,6 +1042,12 @@ def _add_existing_prolif_artifacts(
             artifacts[key] = path
 
 
+def _maybe_cleanup_equil(payload: StepPayload, paths: dict[str, Path]) -> None:
+    if bool(payload.get("store_debug_files", False)):
+        return
+    cleanup_equil_after_analysis(paths["equil_dir"])
+
+
 def equil_analysis_handler(
     step: Step, system: SimSystem, params: Dict[str, Any]
 ) -> ExecResult:
@@ -1105,6 +1115,7 @@ def equil_analysis_handler(
 
     if p["unbound"].exists():
         logger.warning(f"[equil_check:{lig}] previously marked UNBOUND — keeping as is")
+        _maybe_cleanup_equil(payload, p)
         return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
     # if representative already exists, we're done (idempotent). For auto-anchor
@@ -1168,6 +1179,7 @@ def equil_analysis_handler(
         if p["stable_boresch_distance"].exists():
             artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
         _add_existing_prolif_artifacts(artifacts, p)
+        _maybe_cleanup_equil(payload, p)
         return ExecResult(job_ids=[], artifacts=artifacts)
 
     if not p["full_pdb"].exists():
@@ -1203,6 +1215,7 @@ def equil_analysis_handler(
             if p["stable_boresch_distance"].exists():
                 artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
             _add_existing_prolif_artifacts(artifacts, p)
+            _maybe_cleanup_equil(payload, p)
             return ExecResult(job_ids=[], artifacts=artifacts)
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
 
@@ -1298,6 +1311,7 @@ def equil_analysis_handler(
         if p["stable_boresch_distance"].exists():
             artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
         _add_existing_prolif_artifacts(artifacts, p)
+        _maybe_cleanup_equil(payload, p)
         return ExecResult(job_ids=[], artifacts=artifacts)
 
     # Run validation
@@ -1333,6 +1347,7 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] UNBOUND (ligand_bs={ligand_bs_last:.2f} Å) > {threshold:.2f} Å"
             )
             p["unbound"].write_text(f"UNBOUND with ligand_bs = {ligand_bs_last:.3f}\n")
+            _maybe_cleanup_equil(payload, p)
             return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
         try:
@@ -1475,4 +1490,5 @@ def equil_analysis_handler(
     if p["stable_boresch_distance"].exists():
         artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
     _add_existing_prolif_artifacts(artifacts, p)
+    _maybe_cleanup_equil(payload, p)
     return ExecResult(job_ids=[], artifacts=artifacts)

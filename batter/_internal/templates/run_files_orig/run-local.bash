@@ -149,7 +149,7 @@ run_minimization_cuda() {
     local rst_file=$3
     local nc_file=$4
     local coord=$5
-    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP -c $coord -o $out_file -r $rst_file -x $nc_file -ref $coord >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP_MERGED -c $coord -o $out_file -r $rst_file -x $nc_file -ref $coord >> \"$log_file\" 2>&1"
 }
 
 archive_existing_log_file "$log_file"

@@ -1730,12 +1730,35 @@ def build_complex_z(ctx) -> bool:
         else:
             raise FileNotFoundError(f"Missing required file: {src}")
 
+    def _copy_first_existing(candidates: Sequence[Path], dst_name: str):
+        for src in candidates:
+            if src.exists():
+                shutil.copy2(src, _p(dst_name))
+                return src
+        raise FileNotFoundError(
+            "Missing required file; tried: "
+            + ", ".join(str(src) for src in candidates)
+        )
+
     # 1) copy artifacts from equil
-    _copy(equil_dir / "q_build_files" / f"{ligand}.pdb", f"{ligand}.pdb")
+    _copy_first_existing(
+        (
+            equil_dir / "q_build_files" / f"{ligand}.pdb",
+            equil_dir / f"{ligand}.pdb",
+            equil_dir / f"{mol}.pdb",
+        ),
+        f"{ligand}.pdb",
+    )
     _copy(equil_dir / "representative.rst7", "representative.rst7")
     _copy(equil_dir / "representative.pdb", "aligned-nc.pdb")
     _copy(equil_dir / "build_amber_renum.txt", "build_amber_renum.txt")
-    _copy(equil_dir / "q_build_files" / "protein_renum.txt", "protein_renum.txt")
+    _copy_first_existing(
+        (
+            equil_dir / "q_build_files" / "protein_renum.txt",
+            equil_dir / "protein_renum.txt",
+        ),
+        "protein_renum.txt",
+    )
 
     for p in equil_dir.glob("full*.prmtop"):
         shutil.copy2(p, _p(p.name))

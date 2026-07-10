@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from batter._internal.builders.equil import PrepareEquilBuilder
+from batter._internal.ops.cleanup import cleanup_prepare_equil
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
@@ -99,17 +100,22 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     os.makedirs(system_root / "equil", exist_ok=True)
     prepare_finished = system_root / "equil" / "prepare_equil.ok"
     open(prepare_finished, "w").close()
+    if not bool(payload.get("store_debug_files", False)):
+        cleanup_prepare_equil(working_dir, ligand=ligand)
 
     prepare_rel = prepare_finished.relative_to(system.root).as_posix()
     full_prmtop = (system_root / "equil" / "full.prmtop").relative_to(system.root).as_posix()
+    equil_info = (
+        system_root / "equil" / f"equil-{residue_name}.pdb"
+    ).relative_to(system.root).as_posix()
     failed_rel = (system_root / "equil" / "prepare_equil.failed").relative_to(
         system.root
     ).as_posix()
     register_phase_state(
         system.root,
         "prepare_equil",
-        required=[[full_prmtop, prepare_rel], [failed_rel]],
-        success=[[full_prmtop, prepare_rel]],
+        required=[[full_prmtop, equil_info, prepare_rel], [failed_rel]],
+        success=[[full_prmtop, equil_info, prepare_rel]],
         failure=[[failed_rel]],
     )
 

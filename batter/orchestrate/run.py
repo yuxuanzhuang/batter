@@ -37,6 +37,7 @@ from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository
 
 from batter.exec.slurm_mgr import SlurmJobManager
+from batter._internal.ops.cleanup import cleanup_fe_equil_after_success
 
 from batter.orchestrate.backend import register_local_handlers
 from batter.orchestrate.ligands import (
@@ -1267,6 +1268,7 @@ def _run_from_yaml_impl(
         rc.run.only_fe_preparation,
         sys_params=sys_params,
         partition=rc.run.slurm.partition if rc.run.slurm else None,
+        store_debug_files=bool(getattr(rc.run, "store_debug_files", False)),
     )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
@@ -1591,6 +1593,12 @@ def _run_from_yaml_impl(
         )
         if should_exit:
             return
+        if not bool(getattr(rc.run, "store_debug_files", False)):
+            for child in children:
+                cleanup_fe_equil_after_success(
+                    child.root / "pre_fe",
+                    components=["z"],
+                )
     else:
         logger.info("[skip] pre_fe_equil: no steps in this protocol.")
 
@@ -1790,6 +1798,12 @@ def _run_from_yaml_impl(
         )
         if should_exit:
             return
+        if not bool(getattr(rc.run, "store_debug_files", False)):
+            for child in children:
+                cleanup_fe_equil_after_success(
+                    child.root / "fe",
+                    components=final_components,
+                )
     else:
         logger.info("[skip] fe_equil: no steps in this protocol.")
 

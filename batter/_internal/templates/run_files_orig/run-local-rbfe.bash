@@ -106,7 +106,7 @@ minimization_failed_for_noshake_retry() {
 
 run_rbfe_seed_minimization_cuda() {
     local mdin=$1
-    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP_MERGED -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
 }
 
 archive_existing_log_file "$log_file"
@@ -200,7 +200,7 @@ EOF
             "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
         
         cd "$win_folder"
-        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
         cd ../COMPONENT-1
     done
