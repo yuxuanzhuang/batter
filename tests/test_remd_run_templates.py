@@ -105,6 +105,13 @@ def _write_success_pmemd_stub(path: Path) -> None:
     )
 
 
+def _remove_production_is_complete(check_run: Path) -> None:
+    text = check_run.read_text()
+    start = text.index("\nproduction_is_complete() {")
+    end = text.index("\nmdin_set_cntrl_value()", start)
+    check_run.write_text(text[:start] + text[end:])
+
+
 @pytest.mark.parametrize(
     ("script_name", "template_name"),
     [
@@ -134,6 +141,38 @@ def test_remd_run_templates_zero_step_finish(
     archived_logs = list((comp_dir / "ARCHIVED_LOGS").glob("*_run.log"))
     assert len(archived_logs) == 1
     assert archived_logs[0].read_text() == "old log\n"
+    assert (comp_dir / "FINISHED").exists()
+    assert (win0 / "FINISHED").exists()
+
+
+@pytest.mark.parametrize(
+    ("script_name", "template_name"),
+    [
+        ("run-local-remd.bash", "mdin-remd-template"),
+        ("run-local-batch.bash", "mdin-batch-template"),
+    ],
+)
+def test_remd_run_templates_finish_with_old_check_run_without_completion_helper(
+    tmp_path: Path, script_name: str, template_name: str
+) -> None:
+    comp_dir, win0, _ = _prepare_component(
+        tmp_path,
+        script_name=script_name,
+        template_name=template_name,
+        total_steps=0,
+    )
+    _remove_production_is_complete(comp_dir / "check_run.bash")
+
+    result = subprocess.run(
+        ["bash", f"./{script_name}"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "production_is_complete: command not found" not in result.stderr
     assert (comp_dir / "FINISHED").exists()
     assert (win0 / "FINISHED").exists()
 

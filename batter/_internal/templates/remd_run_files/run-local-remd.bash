@@ -26,6 +26,24 @@ if [[ ! -f ./check_run.bash ]]; then
 fi
 source ./check_run.bash
 
+if ! declare -F production_is_complete >/dev/null 2>&1; then
+production_is_complete() {
+    local current_ps=$1
+    local total_ps=$2
+    local dt_ps=${3:-0}
+
+    awk -v cur="$current_ps" -v tot="$total_ps" -v dt="$dt_ps" '
+        BEGIN {
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            exit !((cur + tol) >= tot)
+        }
+    '
+}
+fi
+
 # Write a REMD mdin current file:
 # - keep nstlim fixed to the REMD interval
 # - update numexchg based on remaining steps

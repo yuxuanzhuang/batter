@@ -184,6 +184,11 @@ def save_fe_records(
     if n_bootstraps_val is not None:
         n_bootstraps_val = int(n_bootstraps_val)
     protein_align = getattr(sim_cfg_updated, "protein_align", None)
+    has_rbfe = any(
+        str(child.meta.get("mode", "")).upper() == "RBFE" for child in children_all
+    )
+    if has_rbfe:
+        _copy_rbfe_network_artifacts(run_dir, repo, run_id)
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
@@ -225,7 +230,6 @@ def save_fe_records(
                 n_bootstraps=n_bootstraps_val,
             )
             if is_rbfe:
-                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 ref = child.meta.get("ligand_ref")
                 alt = child.meta.get("ligand_alt")
                 res_ref = child.meta.get("residue_ref") or mol_name
@@ -283,7 +287,6 @@ def save_fe_records(
             )
             repo.save(rec, copy_from=results_dir)
             if is_rbfe:
-                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 _copy_mapping_artifacts(
                     child.root / "fe" / "x" / "x-1",
                     repo.ligand_dir(run_id, lig_name),
@@ -339,7 +342,6 @@ def save_fe_records(
                 n_bootstraps=n_bootstraps_val,
             )
             if is_rbfe:
-                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 ref = child.meta.get("ligand_ref")
                 alt = child.meta.get("ligand_alt")
                 res_ref = child.meta.get("residue_ref") or mol_name
@@ -444,16 +446,16 @@ def _copy_mapping_artifacts(src_dir: Path, dest_root: Path) -> None:
             shutil.copy2(src, dest_dir / src_name)
 
 
-def _copy_rbfe_network_plot(
-    run_dir: Path, repo: FEResultsRepository, run_id: str, ligand: str
+def _copy_rbfe_network_artifacts(
+    run_dir: Path, repo: FEResultsRepository, run_id: str
 ) -> None:
-    dest_dir = repo.ligand_dir(run_id, ligand) / "Results"
-    for name in ("rbfe_network.png", "rbfe_network.html"):
+    dest_dir = repo.run_dir(run_id)
+    for name in ("rbfe_network.json", "rbfe_network.png", "rbfe_network.html"):
         src = run_dir / "artifacts" / "config" / name
-        if not src.exists():
+        if not src.is_file():
             continue
         dest_dir.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copy2(src, dest_dir / src.name)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Failed to copy shared RBFE network artifact {src}: {exc}")

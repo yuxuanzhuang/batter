@@ -200,10 +200,11 @@ def test_extract_ligand_metadata_records_both_rbfe_endpoints(tmp_path: Path) -> 
     assert original_path == "/inputs/ref.sdf~/inputs/alt.sdf"
 
 
-def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
+def test_save_fe_records_does_not_duplicate_rbfe_network_plot(tmp_path: Path) -> None:
     run_dir = tmp_path / "run1"
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "rbfe_network.json").write_text('{"pairs": []}')
     (config_dir / "rbfe_network.png").write_text("png")
     (config_dir / "rbfe_network.html").write_text("<html></html>")
 
@@ -243,9 +244,19 @@ def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
 
     assert not failures
     out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.png"
-    assert out.exists()
+    assert not out.exists()
     html_out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.html"
-    assert html_out.exists()
+    assert not html_out.exists()
+    assert (
+        run_dir / "results" / "run1" / "rbfe_network.json"
+    ).read_text() == '{"pairs": []}'
+    assert (run_dir / "results" / "run1" / "rbfe_network.png").read_text() == "png"
+    assert (
+        run_dir / "results" / "run1" / "rbfe_network.html"
+    ).read_text() == "<html></html>"
+    assert (config_dir / "rbfe_network.json").exists()
+    assert (config_dir / "rbfe_network.png").exists()
+    assert (config_dir / "rbfe_network.html").exists()
 
 
 def test_build_rbfe_network_plan_writes_planned_html(
