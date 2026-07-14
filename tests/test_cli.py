@@ -706,6 +706,62 @@ def test_cli_fe_analyze_job_array_rbfe_endpoint_filter(
     assert "#SBATCH --array=1-1%2" in script_path.read_text()
 
 
+def test_cli_fe_analyze_job_array_rbfe_septop_uses_pairs(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    run_dir = work_dir / "executions" / "rep1"
+    index_dir = run_dir / "artifacts" / "ligand_params"
+    config_dir = run_dir / "artifacts" / "config"
+    trans_root = run_dir / "simulations" / "transformations"
+    index_dir.mkdir(parents=True)
+    config_dir.mkdir(parents=True)
+    (trans_root / "A~B").mkdir(parents=True)
+    (trans_root / "B~C").mkdir(parents=True)
+    (config_dir / "run_meta.json").write_text(json.dumps({"protocol": "rbfe_septop"}))
+    (index_dir / "index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {"ligand": "A", "residue_name": "aaa"},
+                    {"ligand": "B", "residue_name": "bbb"},
+                    {"ligand": "C", "residue_name": "ccc"},
+                ]
+            }
+        )
+    )
+    fake_batter = tmp_path / "env" / "bin" / "batter"
+    fake_batter.parent.mkdir(parents=True)
+    fake_batter.write_text("#!/bin/sh\n")
+    fake_batter.chmod(0o755)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fake_batter) if name == "batter" else None,
+    )
+
+    script_path = tmp_path / "septop_array.sbatch"
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(work_dir),
+            "rep1",
+            "--job-array",
+            "--array-output",
+            str(script_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert script_path.with_suffix(".tasks.tsv").read_text().splitlines() == [
+        "rep1\tA~B",
+        "rep1\tB~C",
+    ]
+    assert "#SBATCH --array=1-2%2" in script_path.read_text()
+
+
 def test_cli_fe_analyze_job_array_rejects_slurm_submit(
     tmp_path: Path, runner: CliRunner
 ) -> None:

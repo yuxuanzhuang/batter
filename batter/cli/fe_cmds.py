@@ -883,6 +883,10 @@ def _safe_slurm_name(text: str, *, max_len: int = 48) -> str:
     return safe[:max_len]
 
 
+def _is_rbfe_protocol_name(protocol: str | None) -> bool:
+    return (protocol or "").lower().replace("-", "_") in {"rbfe", "rbfe_septop"}
+
+
 def _fe_analysis_targets_for_run(
     work_dir: Path,
     run_id: str,
@@ -906,7 +910,7 @@ def _fe_analysis_targets_for_run(
     entries = payload.get("ligands", [])
     requested = (ligand or "").strip() or None
 
-    if protocol == "rbfe":
+    if _is_rbfe_protocol_name(protocol):
         trans_root = run_dir / "simulations" / "transformations"
         if not trans_root.is_dir():
             raise FileNotFoundError(
