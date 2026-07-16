@@ -36,6 +36,67 @@ from batter._internal.ops.ring_repair import (
 pmd = import_parmed()
 
 
+def _pdb_residue_records(path: Path) -> list[tuple[str, str, int]]:
+    records: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for line in path.read_text(errors="ignore").splitlines():
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+        resname = line[17:20].strip()
+        chain = line[21].strip() or "_"
+        resid_text = line[22:26].strip()
+        try:
+            resid = int(resid_text)
+        except ValueError:
+            fields = line.split()
+            if len(fields) < 5:
+                continue
+            resname = fields[3]
+            if len(fields) >= 6 and re.fullmatch(r"-?\d+", fields[5]):
+                chain = fields[4]
+                resid_text = fields[5]
+            else:
+                chain = "_"
+                resid_text = fields[4]
+            try:
+                resid = int(resid_text)
+            except ValueError:
+                continue
+        key = (resname, chain, resid)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(key)
+    return records
+
+
+def _write_identity_amber_renum(input_pdb: Path, renum_path: Path) -> None:
+    lines = []
+    for resname, chain, resid in _pdb_residue_records(input_pdb):
+        lines.append(f"{resname} {chain} {resid:5d} {resname} {resid:5d}\n")
+    renum_path.write_text("".join(lines))
+
+
+def _run_pdb4amber_for_box_or_copy(
+    input_pdb: Path, output_pdb: Path, *, working_dir: Path
+) -> None:
+    if shutil.which("pdb4amber"):
+        run_with_log(
+            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
+            working_dir=working_dir,
+        )
+        return
+
+    shutil.copy2(input_pdb, output_pdb)
+    _write_identity_amber_renum(input_pdb, working_dir / "build_amber_renum.txt")
+    (working_dir / "build_amber_sslink").write_text("")
+    logger.warning(
+        "pdb4amber was not found; copying {} to {} and writing identity "
+        "build_amber_renum.txt without additional cleanup.",
+        input_pdb,
+        output_pdb,
+    )
+
 
 _PRE_RING_REPAIR_FILES = {
     "full_inpcrd": "full.inpcrd.pre_ring_repair",
@@ -1626,6 +1687,14 @@ def _renum_resname(row: pd.Series) -> str:
     return new_resname or str(row.get("old_resname", "")).strip()
 
 
+def _renum_row_is_protein_like(row: pd.Series) -> bool:
+    resname = _renum_resname(row)
+    return (
+        _is_amber_protein_resname(resname)
+        or resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+    )
+
+
 def _resnames_match_for_renum(residue_resname: str, row: pd.Series) -> bool:
     residue_resname = residue_resname.strip()
     row_resnames = {
@@ -1716,6 +1785,11 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
         if resname in ["HIS", "HIE", "HIP", "HID"]:
             resname = "HIS"
 
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+
         if row_pos < len(rows) and _resnames_match_for_renum(
             resname, rows.iloc[row_pos]
         ):
@@ -1731,6 +1805,10 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
             rows.iloc[row_pos]
         ) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
             row_pos += 1
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
         if row_pos < len(rows):
             old_resids.append(int(rows.iloc[row_pos]["old_resid"]))
             row_pos += 1
@@ -1738,6 +1816,53 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
             old_resids.append(int(residue.resid))
 
     return old_resids
+
+
+def _renum_chain_ids_for_residues(residues, renum_df: pd.DataFrame) -> list[str]:
+    rows = renum_df.reset_index(drop=True)
+    row_pos = 0
+    chain_ids: list[str] = []
+    last_chain = "A"
+
+    for residue in residues:
+        resname = str(residue.resname).strip()
+        if resname in ["HIS", "HIE", "HIP", "HID"]:
+            resname = "HIS"
+
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+
+        if row_pos < len(rows) and _resnames_match_for_renum(
+            resname, rows.iloc[row_pos]
+        ):
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            chain_ids.append(last_chain)
+            row_pos += 1
+            continue
+
+        if resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            chain_ids.append(last_chain)
+            continue
+
+        while row_pos < len(rows) and _renum_resname(
+            rows.iloc[row_pos]
+        ) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            row_pos += 1
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+        if row_pos < len(rows):
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            chain_ids.append(last_chain)
+            row_pos += 1
+        else:
+            chain_ids.append(last_chain)
+
+    return chain_ids
 
 
 def _restore_protein_resids_from_renum(atom_group, renum_df: pd.DataFrame) -> None:
@@ -2418,8 +2543,9 @@ def create_box(ctx: BuildContext) -> None:
     # pdb4amber is only used here for residue-renumbering and disulfide metadata.
     # For membrane FE systems, do not send the full solvent box through pdb4amber.
     pdb4amber_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
-    run_with_log(
-        f"pdb4amber -i {pdb4amber_input} -o build_amber.pdb -y",
+    _run_pdb4amber_for_box_or_copy(
+        window_dir / pdb4amber_input,
+        window_dir / "build_amber.pdb",
         working_dir=window_dir,
     )
     renum_df = pd.read_csv(
@@ -2580,15 +2706,11 @@ def create_box(ctx: BuildContext) -> None:
         _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
 
         # set chainIDs using renum_df and write protein by chains
-        for residue in final_system_prot.residues:
-            resid_resname = (
-                "HIS"
-                if residue.resname in ["HIS", "HIE", "HIP", "HID"]
-                else residue.resname
-            )
-            residue.atoms.chainIDs = _chain_id_from_renum(
-                renum_df, resid=residue.resid, resname=resid_resname
-            )
+        for residue, chain_id in zip(
+            final_system_prot.residues,
+            _renum_chain_ids_for_residues(final_system_prot.residues, renum_df),
+        ):
+            residue.atoms.chainIDs = chain_id
         _collapse_terminal_cap_resids_in_place(final_system_prot.residues)
         prot_lines = []
         for chain_name in np.unique(final_system_prot.atoms.chainIDs):

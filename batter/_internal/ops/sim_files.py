@@ -1190,7 +1190,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
                 elif "nmropt = " in line:
-                    line = "nmropt = 0,\n"
+                    line = "nmropt = 1,\n"
                 elif "restraint_wt = " in line:
                     line = "restraint_wt = 10,\n"
                 elif "restraintmask" in line:
@@ -1225,7 +1225,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("  nmd = 1000,\n")
             mdin.write("  nmc = 1000,\n")
             mdin.write(f"  mcwatmask = \"{ref_lig_in_site_mask}\",\n")
-            mdin.write("  mcligshift = 40,\n")
+            mdin.write("  mcligshift = 10,\n")
             mdin.write("  mcwatretry = 3000,\n")
             mdin.write("  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
@@ -1871,7 +1871,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "restraint_wt = " in line:
                 line = f"  restraint_wt = 5,\n"
             elif "nmropt = " in line:
-                line = "  nmropt = 1,\n" if septop else "  nmropt = 0,\n"
+                line = "  nmropt = 1,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
@@ -1917,7 +1917,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write(f"  nmd = 1000,\n")
         mdin.write(f"  nmc = 1000,\n")
         mdin.write(f"  mcwatmask = \"{lig_in_site_mask}\",\n")
-        mdin.write(f"  mcligshift = 40,\n")
+        mdin.write(f"  mcligshift = 10,\n")
         mdin.write(f"  mcwatretry = 3000,\n")
         mdin.write(f"  mcresstr = \"WAT\",\n")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")

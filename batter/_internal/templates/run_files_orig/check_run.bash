@@ -717,7 +717,27 @@ check_sim_failure() {
         reduce_dt_on_failure "$tmpl" 0.001 "$stage" "$retry_count" "$reduction_start"
     }
 
+    recoverable_gpu_box_grid_restart() {
+        case "$stage" in
+            "MD segment "*) ;;
+            *) return 1 ;;
+        esac
+
+        [[ -f "$log_file" ]] || return 1
+        grep -Eqi "Periodic box dimensions have changed too much|GPU code does not automatically reorganize grid cells" "$log_file" || return 1
+        [[ -n "$rst_file" && -s "$rst_file" ]] || return 1
+
+        if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+            return 1
+        fi
+        return 0
+    }
+
     if [[ $command_status =~ ^[0-9]+$ && $command_status -ne 0 ]]; then
+        if recoverable_gpu_box_grid_restart; then
+            echo "[INFO] $stage hit Amber GPU periodic-box grid-cell restart condition; found usable $rst_file, continuing with next segment."
+            return 0
+        fi
         echo "[ERROR] $stage simulation failed. Command exited with status $command_status."
         if [[ -f "$log_file" ]]; then
             tail -n 200 "$log_file" || true
@@ -733,6 +753,11 @@ check_sim_failure() {
 
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
+
+    if recoverable_gpu_box_grid_restart; then
+        echo "[INFO] $stage hit Amber GPU periodic-box grid-cell restart condition; found usable $rst_file, continuing with next segment."
+        return 0
+    fi
 
     if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL|cudaGetDeviceCount|Calculation halted" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"

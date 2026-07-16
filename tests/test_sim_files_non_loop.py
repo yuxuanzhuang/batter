@@ -814,6 +814,7 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
         "  ntwx = 100,\n"
         "  ntwprt = 10,\n"
         "  dt = _step_,\n"
+        "  nmropt = 0,\n"
         "  restraint_wt = 50.0,\n"
         "  restraintmask = ':1-2',\n"
         "/\n"
@@ -852,6 +853,7 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
     assert "((@CA & :1) | (@10-11,20-21) | :1-2 ) & !@H=" in eq_text
+    assert "nmropt = 1" in eq_text
     assert re.search(r"\|\s*@10\s*\|", eq_text) is None
 
     assert "(:1-2 | @10 | @20) & !@H=" in template_text

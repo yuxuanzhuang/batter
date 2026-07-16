@@ -705,6 +705,143 @@ def test_chain_id_from_renum_uses_amber_residue_ids() -> None:
     assert box._chain_id_from_renum(renum_df, resid=33, resname="NHE") == "A"
 
 
+def test_renum_chain_ids_for_shifted_fe_protein_uses_sequence(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "full_pre.pdb"
+    lines = [
+        _pdb_atom(1, "DU", "DUM", " ", 1, 0, 0, 0, "C"),
+        _pdb_atom(2, "DU", "DUM", " ", 2, 0, 0, 0, "C"),
+        _pdb_atom(3, "N", "LEU", " ", 3, 0, 0, 0, "N"),
+        _pdb_atom(4, "CA", "LEU", " ", 3, 0, 0, 0, "C"),
+        _pdb_atom(5, "N", "ALA", " ", 4, 0, 0, 0, "N"),
+        _pdb_atom(6, "CA", "ALA", " ", 4, 0, 0, 0, "C"),
+        _pdb_atom(7, "N", "GLU", " ", 5, 0, 0, 0, "N"),
+        _pdb_atom(8, "CA", "GLU", " ", 5, 0, 0, 0, "C"),
+        _pdb_atom(9, "N", "HID", " ", 6, 0, 0, 0, "N"),
+        _pdb_atom(10, "CA", "HID", " ", 6, 0, 0, 0, "C"),
+        _pdb_atom(11, "N", "LEU", " ", 7, 0, 0, 0, "N"),
+        _pdb_atom(12, "CA", "LEU", " ", 7, 0, 0, 0, "C"),
+        _pdb_atom(13, "N", "VAL", " ", 8, 0, 0, 0, "N"),
+        _pdb_atom(14, "CA", "VAL", " ", 8, 0, 0, 0, "C"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    universe = mda.Universe(str(pdb))
+    residues = universe.select_atoms(box._PROTEIN_WITH_TERMINAL_CAPS).residues
+    renum_df = pd.DataFrame(
+        [
+            {
+                "old_resname": "DUM",
+                "old_chain": "D",
+                "old_resid": 1,
+                "new_resname": "DUM",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "DUM",
+                "old_chain": "D",
+                "old_resid": 2,
+                "new_resname": "DUM",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "LEU",
+                "old_chain": "A",
+                "old_resid": 306,
+                "new_resname": "LEU",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "ALA",
+                "old_chain": "A",
+                "old_resid": 307,
+                "new_resname": "ALA",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "GLU",
+                "old_chain": "B",
+                "old_resid": 523,
+                "new_resname": "GLU",
+                "new_resid": 3,
+            },
+            {
+                "old_resname": "HIE",
+                "old_chain": "B",
+                "old_resid": 524,
+                "new_resname": "HIE",
+                "new_resid": 4,
+            },
+            {
+                "old_resname": "LEU",
+                "old_chain": "B",
+                "old_resid": 525,
+                "new_resname": "LEU",
+                "new_resid": 5,
+            },
+            {
+                "old_resname": "VAL",
+                "old_chain": "C",
+                "old_resid": 534,
+                "new_resname": "VAL",
+                "new_resid": 6,
+            },
+            {
+                "old_resname": "WAT",
+                "old_chain": "W",
+                "old_resid": 999,
+                "new_resname": "WAT",
+                "new_resid": 999,
+            },
+        ]
+    )
+
+    assert box._renum_chain_ids_for_residues(residues, renum_df) == [
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "C",
+    ]
+
+
+def test_write_identity_amber_renum_preserves_pdb_residue_records(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+    renum = tmp_path / "build_amber_renum.txt"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "DU", "DUM", "D", 1, 0, 0, 0, "C"),
+                "TER\n",
+                _pdb_atom(2, "DU", "DUM", "D", 2, 0, 0, 0, "C"),
+                "TER\n",
+                _pdb_atom(3, "N", "LEU", "A", 3, 0, 0, 0, "N"),
+                _pdb_atom(4, "CA", "LEU", "A", 3, 0, 0, 0, "C"),
+                _pdb_atom(5, "N", "HID", "B", 217, 0, 0, 0, "N"),
+                _pdb_atom(6, "CA", "HID", "B", 217, 0, 0, 0, "C"),
+                _pdb_atom(7, "O", "WAT", "W", 999, 0, 0, 0, "O"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    box._write_identity_amber_renum(pdb, renum)
+
+    assert renum.read_text().splitlines() == [
+        "DUM D     1 DUM     1",
+        "DUM D     2 DUM     2",
+        "LEU A     3 LEU     3",
+        "HID B   217 HID   217",
+        "WAT W   999 WAT   999",
+    ]
+
+
 def test_collapse_terminal_cap_resid_values_uses_neighbor_resids() -> None:
     renum_df = pd.DataFrame(
         [

@@ -35,6 +35,24 @@ def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]
     )
 
 
+def test_abfe_window_equilibration_runs_window_eq_in() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    run_local = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-local.bash"
+    )
+    text = run_local.read_text()
+
+    assert 'init_dst="${win_folder}/eq_init.rst7"' in text
+    assert 'final_dst="${win_folder}/eq.rst7"' in text
+    assert "-i eq.in -p $PRMTOP_MERGED -c eq_init.rst7" in text
+    assert "-o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7" in text
+
+
 def test_check_min_energy_prefers_eamber():
     data_dir = Path(__file__).resolve().parent / "data" / "md_output"
     result = _run_check_min_energy(data_dir / "mini.out")
@@ -272,6 +290,86 @@ def test_check_sim_failure_allows_mbar_energy_overflow_in_completed_output(
     assert "Equilibration seed completed successfully" in result.stdout
     assert (tmp_path / "eq.rst7").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_allows_gpu_box_change_when_md_restart_exists(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =  5000000   TIME(PS) =  20000.000\n"
+    )
+    (tmp_path / "md-01.nc").write_text("partial trajectory\n")
+    (tmp_path / "cmass-01.txt").write_text("partial cmass\n")
+    (tmp_path / "run.log").write_text(
+        "ERROR: Calculation halted.  Periodic box dimensions have changed too much from their initial values.\n"
+        "The GPU code does not automatically reorganize grid cells and thus you\n"
+        "will need to restart the calculation from the previous restart file.\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
+        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "md-01.out md-01.nc cmass-01.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "continuing with next segment" in result.stdout
+    assert (tmp_path / "md-current.rst7").exists()
+    assert (tmp_path / "md-01.out").exists()
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_rejects_gpu_box_change_without_md_restart(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =  5000000   TIME(PS) =  20000.000\n"
+    )
+    (tmp_path / "md-01.nc").write_text("partial trajectory\n")
+    (tmp_path / "cmass-01.txt").write_text("partial cmass\n")
+    (tmp_path / "run.log").write_text(
+        "ERROR: Calculation halted.  Periodic box dimensions have changed too much from their initial values.\n"
+        "The GPU code does not automatically reorganize grid cells and thus you\n"
+        "will need to restart the calculation from the previous restart file.\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
+        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "md-01.out md-01.nc cmass-01.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Command exited with status 255" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "md-01.out").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.out"))
 
 
 def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(

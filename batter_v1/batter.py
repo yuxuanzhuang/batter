@@ -3744,7 +3744,7 @@ class System:
                                                     '  nmd = 100,\n'
                                                     '  nmc = 1000,\n'
                                                     f"  mcwatmask = ':{mol}',\n"
-                                                    '  mcligshift = 30,\n'
+                                                    '  mcligshift = 10,\n'
                                                     '  mcresstr = "WAT",\n'
                                                 )
                                         if component in COMPONENTS_DICT['dd'] and remd and stage != 'mini.in':

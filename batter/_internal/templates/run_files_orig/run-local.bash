@@ -294,7 +294,8 @@ EOF
         ' < <(printf "%s\n" "${lambda_eq_list[@]}")
         }
 
-        # 2) For each window, pick closest EQ lambda frame and copy restart
+        # 2) For each window, pick closest EQ lambda frame and run local eq.in
+        seed_dir=$(pwd)
         for ((i=0; i<NWINDOWS; i++)); do
             win_folder=$(printf "../COMPONENT%02d" "$i")
             lambda_win="${lambda_set_list[$i]}"
@@ -304,20 +305,29 @@ EOF
             # cpptraj "multi" numbering starts at 1 => frame file index = best_i + 1
             frame=$((best_i + 1))
             src="eq.rst7.${frame}"
-            dst="${win_folder}/eq.rst7"
+            init_dst="${win_folder}/eq_init.rst7"
+            final_dst="${win_folder}/eq.rst7"
 
             if [[ ! -f "$src" ]]; then
                 echo "ERROR: missing source restart $src (check eq.rst7.* generation)" >&2
                 exit 1
             fi
-            if should_skip_completed_step "Window equilibration for window $i" "$dst" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"; then
+            if should_skip_completed_step "Window equilibration for window $i" "$final_dst" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"; then
                 continue
             fi
             mkdir -p "$win_folder"
-            cp -f "$src" "$dst"
+            cp -f "$src" "$init_dst"
 
             printf "window %02d lambda=%s -> closest_eq_lambda=%s (diff=%s) : %s -> %s\n" \
-                "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
+                "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$init_dst"
+
+            cd "$win_folder" || exit 1
+            require_nonempty_file_or_attempt_fail "eq.in" "[ERROR] Missing eq.in; cannot run window equilibration for window $i."
+            rm -f FAILED ATTEMPT_FAILED
+            archive_existing_log_file "$log_file"
+            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
+            check_sim_failure "Window equilibration for window $i" "$log_file" eq.rst7
+            cd "$seed_dir" || exit 1
         done
     fi
 

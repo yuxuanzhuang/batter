@@ -34,7 +34,7 @@ Equilibrate, NPT.
   nmd = 100,
   nmc = 1000,
   mcwatmask = ":_lig_name_",
-  mcligshift = 40,
+  mcligshift = 10,
   mcresstr = "WAT",
  /
  &wt type='DUMPFREQ', istep1=1000, /
