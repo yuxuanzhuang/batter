@@ -73,6 +73,53 @@ def test_write_build_from_aligned_uses_first_atom_in_dum_pdb(tmp_path):
     assert simprep._field(first_atom, 17, 20) == "DUM"
 
 
+def test_write_build_from_aligned_ter_marker_applies_once_per_residue(tmp_path):
+    window_dir = tmp_path / "window"
+    build_dir = tmp_path / "q_build_files"
+    window_dir.mkdir()
+    build_dir.mkdir()
+    (build_dir / "dum1.pdb").write_text(
+        "ATOM      1  Pb  DUM D   1       0.000   0.000   0.000  0.00  0.00\n"
+        "END\n"
+    )
+    aligned_pdb = tmp_path / "aligned.pdb"
+    aligned_pdb.write_text(
+        "ATOM      1  N   ALA A   1       1.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      2  CA  ALA A   1       2.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      3  N   GLU A 214       3.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      4  CA  GLU A 214       4.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      5  C   GLU A 214       5.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      6  O   GLU A 214       6.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      7  N   SER A 215       7.000   0.000   0.000  0.00  0.00\n"
+        "ATOM      8  CA  SER A 215       8.000   0.000   0.000  0.00  0.00\n"
+        "END\n"
+    )
+
+    simprep.write_build_from_aligned(
+        lig="LIG",
+        window_dir=window_dir,
+        build_dir=build_dir,
+        aligned_pdb=aligned_pdb,
+        other_mol=[],
+        lipid_mol=[],
+        ion_mol=[],
+        use_ter_markers=True,
+        ter_residues={("A", 214)},
+    )
+
+    lines = (window_dir / "build.pdb").read_text().splitlines()
+    glu_indices = [
+        idx
+        for idx, line in enumerate(lines)
+        if simprep._is_atom_line(line)
+        and simprep._field(line, 17, 20) == "GLU"
+        and int(simprep._field(line, 22, 26)) == 215
+    ]
+    assert len(glu_indices) == 4
+    assert all(line != "TER" for line in lines[glu_indices[0] : glu_indices[-1]])
+    assert lines[glu_indices[-1] + 1] == "TER"
+
+
 def test_write_build_from_aligned_can_use_template_for_shifted_ligand(tmp_path):
     window_dir = tmp_path / "window"
     build_dir = tmp_path / "q_build_files"
@@ -145,11 +192,7 @@ def test_write_build_from_aligned_can_use_template_for_shifted_ligand(tmp_path):
         sum(coord[axis] for coord in site_coords) / len(site_coords)
         for axis in range(3)
     )
-    assert shifted_center == (
-        site_center[0] + 4.0,
-        site_center[1] + 5.0,
-        site_center[2] + 10.0,
-    )
+    assert shifted_center == (4.0, 5.0, site_center[2] + 10.0)
 
 
 def test_write_build_from_aligned_can_duplicate_two_template_solvent_copies(tmp_path):

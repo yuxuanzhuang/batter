@@ -28,7 +28,7 @@ import itertools
 
 from MDAnalysis.analysis.results import Results
 
-STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 4
+STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 5
 STABLE_BORESCH_DISTANCE_RANKED_PAIR_LIMIT = 50
 _VMD_FIRST_ANCHOR_ANGLE_TARGET = 90.0
 _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE = 70.0
@@ -419,6 +419,7 @@ class SimValidator:
         max_distance: float = 7.0,
         ligand_atom_names: Sequence[str] | None = None,
         protein_residue_ids: Sequence[int] | None = None,
+        protein_residue_priorities: dict[int, int] | None = None,
     ) -> dict[str, Any]:
         """
         Pick a stable protein-ligand atom pair from the equilibration tail.
@@ -539,9 +540,21 @@ class SimValidator:
             )
 
         mid_distance = (float(min_distance) + float(max_distance)) / 2.0
+        residue_priorities = {
+            int(resid): int(priority)
+            for resid, priority in (protein_residue_priorities or {}).items()
+        }
 
-        def _rank_key(flat_idx: int) -> tuple[float, float, float, float, int, int]:
+        def _protein_residue_priority(flat_idx: int) -> int:
+            protein_idx = int(flat_idx // ligand_candidates.n_atoms)
+            resid = int(protein_candidates[protein_idx].resid)
+            if not residue_priorities:
+                return 0
+            return residue_priorities.get(resid, 99)
+
+        def _rank_key(flat_idx: int) -> tuple[int, float, float, float, float, int, int]:
             return (
+                _protein_residue_priority(flat_idx),
                 float(std_dist[flat_idx]),
                 float(std_angle[flat_idx]) if np.isfinite(std_angle[flat_idx]) else 0.0,
                 abs(float(mean_angle[flat_idx]) - _VMD_FIRST_ANCHOR_ANGLE_TARGET)
@@ -627,6 +640,7 @@ class SimValidator:
                 },
                 "angle": angle_record,
                 "rank_score": {
+                    "protein_interaction_priority": _protein_residue_priority(flat_idx),
                     "distance_std": float(std_dist[flat_idx]),
                     "angle_std": float(std_angle[flat_idx])
                     if np.isfinite(std_angle[flat_idx])
@@ -688,6 +702,10 @@ class SimValidator:
                 "protein_atom_names": ["CA"],
                 "protein_residue_ids": [
                     int(resid) for resid in protein_residue_ids or []
+                ],
+                "protein_residue_priorities": [
+                    {"resid": int(resid), "priority": int(priority)}
+                    for resid, priority in sorted(residue_priorities.items())
                 ],
                 "ligand_atom_names": [
                     str(name).strip()

@@ -721,7 +721,7 @@ def write_build_from_aligned(
     sdr_dist: float = 0.0,
     start_off_set: int = 0,
     use_ter_markers: bool = False,
-    ter_atoms: Optional[Set[int]] = None,
+    ter_residues: Optional[Set[Tuple[str, int]]] = None,
     extra_ligand_source_pdb: Path | None = None,
     extra_ligand_source_pdbs: Sequence[Path | None] | None = None,
     extra_ligand_offsets: Sequence[Tuple[float, float, float] | None] | None = None,
@@ -734,7 +734,7 @@ def write_build_from_aligned(
 
     Returns the last receptor residue id.
     """
-    ter_atoms = ter_atoms or set()
+    ter_residues = ter_residues or set()
 
     # ---- read aligned system
     lines = [ln for ln in aligned_pdb.read_text().splitlines() if ln.strip()]
@@ -857,24 +857,38 @@ def write_build_from_aligned(
 
         # Receptor (+dum_count)
         prev_chain = None
-        for name, resname, resid, chain, x, y, z in recep_block:
+        previous_write_was_ter = False
+        for idx, (name, resname, resid, chain, x, y, z) in enumerate(recep_block):
             if (
                 prev_chain is not None
                 and chain != prev_chain
                 and resname not in om
                 and resname != "WAT"
+                and not previous_write_was_ter
             ):
                 fout.write("TER\n")
+                previous_write_was_ter = True
             prev_chain = chain
             fout.write(
                 _fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z)
                 + "\n"
             )
+            previous_write_was_ter = False
             serial += 1
             if use_ter_markers:
-                leg_idx = resid + 2 - dum_count
-                if leg_idx in (ter_atoms or set()):
+                original_residue_key = (chain, resid + start_off_set)
+                next_residue_key = None
+                if idx + 1 < len(recep_block):
+                    _next_name, _next_resname, next_resid, next_chain, *_ = (
+                        recep_block[idx + 1]
+                    )
+                    next_residue_key = (next_chain, next_resid)
+                if (
+                    original_residue_key in ter_residues
+                    and (chain, resid) != next_residue_key
+                ):
                     fout.write("TER\n")
+                    previous_write_was_ter = True
         fout.write("TER\n")
 
         # Ligand at lig_resid
@@ -1281,12 +1295,14 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
                 fout.write(ln)
 
     _run_pdb4amber_or_copy(rec_clean, rec_amber)
-    ter_atoms: List[int] = []
+    ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
             if ln.startswith("TER"):
                 try:
-                    ter_atoms.append(int(ln[6:11].strip()))
+                    chain = _field(ln, 21, 22)
+                    resid = int(_field(ln, 22, 26))
+                    ter_residues.append((chain, resid))
                 except Exception:
                     pass
 
@@ -1337,7 +1353,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         sdr_dist=sdr_dist,
         start_off_set=1,  # equil offset
         use_ter_markers=True,
-        ter_atoms=set(ter_atoms),
+        ter_residues=set(ter_residues),
         extra_ligand_source_pdb=None,
         extra_ligand_source_pdbs=extra_ligand_source_pdbs,
         extra_ligand_offsets=extra_ligand_offsets,
@@ -1394,12 +1410,14 @@ def create_simulation_dir_l(ctx: BuildContext) -> None:
                 fout.write(ln)
 
     _run_pdb4amber_or_copy(rec_clean, rec_amber)
-    ter_atoms: List[int] = []
+    ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
             if ln.startswith("TER"):
                 try:
-                    ter_atoms.append(int(ln[6:11].strip()))
+                    chain = _field(ln, 21, 22)
+                    resid = int(_field(ln, 22, 26))
+                    ter_residues.append((chain, resid))
                 except Exception:
                     pass
 
@@ -1419,7 +1437,7 @@ def create_simulation_dir_l(ctx: BuildContext) -> None:
         sdr_dist=sdr_dist,
         start_off_set=1,
         use_ter_markers=True,
-        ter_atoms=set(ter_atoms),
+        ter_residues=set(ter_residues),
     )
 
     logger.debug(f"[simprep:l] simulation directory created → {dest_dir}")

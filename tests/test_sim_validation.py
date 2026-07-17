@@ -204,6 +204,45 @@ def test_stable_boresch_distance_can_filter_to_protein_residues(
     assert record["criteria"]["protein_residue_ids"] == [20]
 
 
+def test_stable_boresch_distance_prioritizes_interaction_priority(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "stable_residue_priority.pdb"
+    lines = [
+        _atom_line(1, "CA", "ALA", "A", 10, 0.0, 0.0, 0.0, "C"),
+        _atom_line(2, "CA", "SER", "A", 20, 20.0, 0.0, 0.0, "C"),
+        _atom_line(3, "C1", "LIG", "A", 300, 4.0, 0.0, 0.0, "C"),
+        _atom_line(4, "C2", "LIG", "A", 300, 24.0, 0.0, 0.0, "C"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    u = mda.Universe(str(pdb))
+    coords = np.repeat(u.atoms.positions[None, :, :], 2, axis=0)
+    coords[0, 2, :] = np.array([4.0, 0.0, 0.0])
+    coords[1, 2, :] = np.array([4.8, 0.0, 0.0])
+    coords[0, 3, :] = np.array([24.0, 0.0, 0.0])
+    coords[1, 3, :] = np.array([24.1, 0.0, 0.0])
+    u.load_new(coords, order="fac")
+    validator = _make_validator(u, tmp_path)
+
+    record = validator.find_stable_boresch_distance(
+        tail_fraction=1.0,
+        min_distance=3.0,
+        max_distance=7.0,
+        ligand_atom_names=["C1", "C2"],
+        protein_residue_priorities={10: 0, 20: 2},
+    )
+
+    assert record["protein"]["mask"] == ":10@CA"
+    assert record["ligand"]["name"] == "C1"
+    assert record["rank_score"]["protein_interaction_priority"] == 0
+    assert record["criteria"]["protein_residue_priorities"] == [
+        {"resid": 10, "priority": 0},
+        {"resid": 20, "priority": 2},
+    ]
+
+
 def test_stable_boresch_distance_rejects_collinear_first_anchor(
     tmp_path: Path,
 ) -> None:

@@ -33,6 +33,26 @@ PROLIF_OCCUPANCY_THRESHOLD = 0.30
 PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS = frozenset(
     {"hydrophobic", "vdwcontact", "vdwinteraction", "vdwinteractions"}
 )
+PROLIF_SALT_BRIDGE_INTERACTIONS = frozenset(
+    {
+        "anionic",
+        "cationic",
+        "ionic",
+        "ionicinteraction",
+        "ionicinteractions",
+        "saltbridge",
+        "saltbridges",
+    }
+)
+PROLIF_HBOND_INTERACTIONS = frozenset(
+    {
+        "hbacceptor",
+        "hbdonor",
+        "hbond",
+        "hbondacceptor",
+        "hbonddonor",
+    }
+)
 PROLIF_ARTIFACT_FILENAMES = {
     "timeseries_csv_gz": "prolif_interactions_timeseries.csv.gz",
     "barcode_png": "prolif_interactions_barcode.png",
@@ -66,6 +86,7 @@ def _paths(root: Path) -> dict[str, Path]:
         "build_files": eq / "q_build_files",
         "prot_renum": prot_renum,
         "full_pdb": eq / "full.pdb",
+        "anchors_json": eq / "anchors.json",
     }
 
 
@@ -99,6 +120,68 @@ def _prolif_interactions_current(path: Path) -> bool:
     except Exception:
         return False
     return schema_version >= PROLIF_INTERACTIONS_SCHEMA_VERSION
+
+
+_ANCHOR_MASK_RE = re.compile(r"^:?(?P<resid>-?\d+)@(?P<atom>[^,\s]+)$")
+
+
+def _parse_anchor_mask(mask: str) -> tuple[int, str]:
+    match = _ANCHOR_MASK_RE.match(str(mask).strip())
+    if match is None:
+        raise ValueError(f"Invalid prepared anchor mask in equil/anchors.json: {mask!r}")
+    return int(match.group("resid")), match.group("atom")
+
+
+def _load_equil_anchor_masks(equil_dir: Path) -> list[str]:
+    anchors_path = Path(equil_dir) / "anchors.json"
+    if not anchors_path.is_file():
+        raise FileNotFoundError(f"Missing required prepared anchor file: {anchors_path}")
+    try:
+        data = json.loads(anchors_path.read_text())
+    except Exception as exc:
+        raise ValueError(f"Could not read prepared anchor file {anchors_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Prepared anchor file {anchors_path} must contain a JSON object.")
+    masks: list[str] = []
+    for key in ("P1", "P2", "P3"):
+        value = str(data.get(key, "") or "").strip()
+        if not value:
+            raise ValueError(f"Prepared anchor file {anchors_path} is missing {key}.")
+        _parse_anchor_mask(value)
+        masks.append(value)
+    return masks
+
+
+def _load_protein_renum(path: Path) -> pd.DataFrame:
+    if not Path(path).is_file():
+        raise FileNotFoundError(f"Missing required protein renumbering file: {path}")
+    return pd.read_csv(
+        path,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+
+
+def _equil_anchor_masks_to_original_resids(
+    masks: Sequence[str],
+    protein_renum_path: Path,
+) -> list[str]:
+    renum = _load_protein_renum(protein_renum_path)
+    out: list[str] = []
+    for mask in masks:
+        resid, atom = _parse_anchor_mask(mask)
+        # Prepared equil systems include the leading DUM residue, so protein
+        # anchor masks are one residue higher than protein_renum.txt new_resid.
+        rows = renum[renum["new_resid"].astype(int) == int(resid) - 1]
+        if len(rows) != 1:
+            raise ValueError(
+                f"Could not map prepared anchor mask {mask!r} through "
+                f"{protein_renum_path}; matched {len(rows)} row(s)."
+            )
+        old_resid = int(rows.iloc[0]["old_resid"])
+        out.append(f":{old_resid}@{atom}")
+    return out
 
 
 def _trailing_analysis_start_frame(n_frames: int, tail_fraction: float) -> int:
@@ -579,6 +662,21 @@ def _prolif_interaction_allowed_for_candidates(interaction: Any) -> bool:
     return str(interaction).strip().lower() not in PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS
 
 
+def _normalized_prolif_interaction_name(interaction: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(interaction).strip().lower())
+
+
+def _prolif_interaction_priority(interaction: Any) -> int:
+    name = _normalized_prolif_interaction_name(interaction)
+    if name in PROLIF_SALT_BRIDGE_INTERACTIONS:
+        return 0
+    if name in PROLIF_HBOND_INTERACTIONS:
+        return 1
+    if _prolif_interaction_allowed_for_candidates(interaction):
+        return 2
+    return 3
+
+
 def _records_from_prolif_dataframe(
     df: pd.DataFrame,
     *,
@@ -672,6 +770,31 @@ def _persistent_prolif_residue_ids(prolif_record: dict[str, Any] | None) -> list
         if resid is not None and resid not in out:
             out.append(resid)
     return out
+
+
+def _persistent_prolif_residue_priorities(
+    prolif_record: dict[str, Any] | None,
+) -> dict[int, int]:
+    if not isinstance(prolif_record, dict) or not prolif_record.get("usable", False):
+        return {}
+    priorities: dict[int, int] = {}
+    for item in prolif_record.get("persistent_protein_residues") or []:
+        if not isinstance(item, dict):
+            continue
+        resid = _int_or_none(item.get("resid"))
+        if resid is None:
+            continue
+        best_priority = priorities.get(int(resid), 99)
+        for interaction in item.get("interactions") or []:
+            if not isinstance(interaction, dict):
+                continue
+            best_priority = min(
+                best_priority,
+                _prolif_interaction_priority(interaction.get("interaction")),
+            )
+        if best_priority != 99:
+            priorities[int(resid)] = best_priority
+    return priorities
 
 
 def _write_prolif_interactions(
@@ -912,6 +1035,7 @@ def _write_stable_boresch_distance(
         universe=universe,
     )
     persistent_residue_ids = _persistent_prolif_residue_ids(prolif_record)
+    persistent_residue_priorities = _persistent_prolif_residue_priorities(prolif_record)
     min_distance = float(getattr(sim, "min_adis", None) or 3.0)
     max_distance = float(getattr(sim, "max_adis", None) or 7.0)
     used_prolif_filter = False
@@ -924,6 +1048,7 @@ def _write_stable_boresch_distance(
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
                 protein_residue_ids=persistent_residue_ids,
+                protein_residue_priorities=persistent_residue_priorities,
             )
             used_prolif_filter = True
         except Exception as exc:
@@ -940,6 +1065,7 @@ def _write_stable_boresch_distance(
                 min_distance=min_distance,
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
+                protein_residue_priorities=persistent_residue_priorities,
             )
     else:
         stable_record = sim_val.find_stable_boresch_distance(
@@ -947,6 +1073,7 @@ def _write_stable_boresch_distance(
             min_distance=min_distance,
             max_distance=max_distance,
             ligand_atom_names=ligand_candidate_names,
+            protein_residue_priorities=persistent_residue_priorities,
         )
     stable_record["mode"] = mode
     stable_record["usable"] = True
@@ -959,6 +1086,10 @@ def _write_stable_boresch_distance(
             else None
         ),
         "persistent_residue_ids": [int(x) for x in persistent_residue_ids],
+        "persistent_residue_priorities": [
+            {"resid": int(resid), "priority": int(priority)}
+            for resid, priority in sorted(persistent_residue_priorities.items())
+        ],
         "used_residue_filter": used_prolif_filter,
         "fallback_reason": fallback_reason,
     }
@@ -1266,11 +1397,7 @@ def equil_analysis_handler(
         else:
             try:
                 u_static = mda.Universe(str(p["rep_pdb"]))
-                anchor_masks = [
-                    str(getattr(sim, "p1", "") or "").strip(),
-                    str(getattr(sim, "p2", "") or "").strip(),
-                    str(getattr(sim, "p3", "") or "").strip(),
-                ]
+                anchor_masks = _load_equil_anchor_masks(p["equil_dir"])
                 stable_val = _stable_distance_validator(
                     universe=u_static,
                     residue_name=residue_name,
@@ -1327,11 +1454,10 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
             )
         u = mda.Universe(str(p["full_pdb"]), [str(t) for t in trajs])
-        anchor_masks = [
-            str(getattr(sim, "p1", "") or "").strip(),
-            str(getattr(sim, "p2", "") or "").strip(),
-            str(getattr(sim, "p3", "") or "").strip(),
-        ]
+        anchor_masks = _equil_anchor_masks_to_original_resids(
+            _load_equil_anchor_masks(p["equil_dir"]),
+            p["prot_renum"],
+        )
         sim_val = SimValidator(
             u,
             ligand=residue_name,

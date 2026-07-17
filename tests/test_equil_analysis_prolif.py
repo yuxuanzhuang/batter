@@ -6,12 +6,39 @@ import pandas as pd
 
 from batter.exec.handlers.equil_analysis import (
     PROLIF_ARTIFACT_FILENAMES,
+    _equil_anchor_masks_to_original_resids,
+    _load_equil_anchor_masks,
     _persistent_prolif_residue_ids,
+    _persistent_prolif_residue_priorities,
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
     _write_prolif_lignetwork_html,
     _write_prolif_artifacts,
 )
+
+
+def test_equil_anchor_masks_are_loaded_from_prepared_anchors_json(tmp_path: Path) -> None:
+    (tmp_path / "anchors.json").write_text(
+        '{"P1": ":79@CA", "P2": ":84@CA", "P3": ":117@CA"}\n'
+    )
+
+    assert _load_equil_anchor_masks(tmp_path) == [":79@CA", ":84@CA", ":117@CA"]
+
+
+def test_equil_anchor_masks_convert_to_original_resids_with_dum_offset(
+    tmp_path: Path,
+) -> None:
+    renum = tmp_path / "protein_renum.txt"
+    renum.write_text(
+        "LEU B 387 LEU 78\n"
+        "VAL B 392 VAL 83\n"
+        "PHE B 425 PHE 116\n"
+    )
+
+    assert _equil_anchor_masks_to_original_resids(
+        [":79@CA", ":84@CA", ":117@CA"],
+        renum,
+    ) == [":387@CA", ":392@CA", ":425@CA"]
 
 
 def test_prolif_dataframe_records_persistent_protein_residues() -> None:
@@ -67,6 +94,35 @@ def test_prolif_dataframe_records_persistent_protein_residues() -> None:
     assert _persistent_prolif_residue_ids(
         {"usable": True, "persistent_protein_residues": persistent}
     ) == [42]
+
+
+def test_persistent_prolif_residue_priorities_rank_salt_bridge_first() -> None:
+    prolif_record = {
+        "usable": True,
+        "persistent_protein_residues": [
+            {
+                "resid": 10,
+                "interactions": [
+                    {"interaction": "HBAcceptor"},
+                    {"interaction": "PiStacking"},
+                ],
+            },
+            {
+                "resid": 20,
+                "interactions": [{"interaction": "Anionic"}],
+            },
+            {
+                "resid": 30,
+                "interactions": [{"interaction": "PiStacking"}],
+            },
+        ],
+    }
+
+    assert _persistent_prolif_residue_priorities(prolif_record) == {
+        10: 1,
+        20: 0,
+        30: 2,
+    }
 
 
 def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> None:

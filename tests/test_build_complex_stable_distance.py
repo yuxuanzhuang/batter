@@ -7,6 +7,7 @@ import numpy as np
 import MDAnalysis as mda
 import pandas as pd
 
+from batter.analysis.sim_validation import STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
 from batter._internal.ops.build_complex import (
     _apply_stable_boresch_distance_preference,
     _load_stable_boresch_distance,
@@ -157,7 +158,7 @@ def test_stable_boresch_loader_ignores_stale_and_unusable_records(
     assert _load_stable_boresch_distance(equil_dir) is None
 
     current = {
-        "schema_version": 4,
+        "schema_version": STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
         "usable": True,
         "protein": {"resid": 10, "name": "CA"},
         "ligand": {"name": "C1"},
