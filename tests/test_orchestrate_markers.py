@@ -127,7 +127,13 @@ def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_pat
     prolif_path.write_text(json.dumps({"schema_version": 3, "usable": True}) + "\n")
 
     stable_path.write_text(
-        json.dumps({"schema_version": 4, "usable": False, "reason": "no pair"})
+        json.dumps(
+            {
+                "schema_version": markers._STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+                "usable": False,
+                "reason": "no pair",
+            }
+        )
         + "\n"
     )
     assert markers.is_done(auto_anchor_system, "equil_analysis") is True

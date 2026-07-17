@@ -843,8 +843,8 @@ exit 0
         text=True,
     )
 
-    assert "Running segment 1 -> md-01.out for 2000000 steps (4000.000000 ps)" in result.stdout
-    assert (work / "run_steps.txt").read_text().strip() == "2000000"
+    assert "Running segment 1 -> md-01.out for 4000000 steps (4000.000000 ps)" in result.stdout
+    assert (work / "run_steps.txt").read_text().strip() == "4000000"
 
 
 def test_run_local_subtracts_initial_restart_time_for_production_progress(tmp_path: Path) -> None:
@@ -949,4 +949,4 @@ exit 0
 
     assert "Current completed production time: 2000 ps / 4000.000000 ps" in result.stdout
     assert (work / "production-start.ps").read_text().strip() == "8.0000000E+01"
-    assert (work / "run_steps.txt").read_text().strip() == "1000000"
+    assert (work / "run_steps.txt").read_text().strip() == "2000000"

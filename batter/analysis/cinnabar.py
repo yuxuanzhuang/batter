@@ -483,13 +483,14 @@ def _x_convergence_record(
     f_delta = abs(f_val - final)
     b_delta = abs(b_val - final)
     fb_delta = abs(f_val - b_val)
+    tol_eps = max(1.0e-12, abs(float(tolerance)) * 1.0e-12)
     converged = (
         np.isfinite(final)
         and np.isfinite(f_val)
         and np.isfinite(b_val)
-        and f_delta <= tolerance
-        and b_delta <= tolerance
-        and fb_delta <= tolerance
+        and f_delta <= tolerance + tol_eps
+        and b_delta <= tolerance + tol_eps
+        and fb_delta <= tolerance + tol_eps
     )
 
     base.update(

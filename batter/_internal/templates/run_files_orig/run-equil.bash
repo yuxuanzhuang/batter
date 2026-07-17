@@ -92,7 +92,7 @@ reset_minimization_after_failed_pre_equil() {
         return 0
     fi
     if [[ -s mini.rst7 || -s mini2.rst7 || -s eqnvt.rst7 ]]; then
-        echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7."
+        echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization instead of reusing mini.rst7/mini2.rst7; rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7."
         rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out eqnvt.rst7 eqnvt.out eqnvt.nc
     fi
 }
