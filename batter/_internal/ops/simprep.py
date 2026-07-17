@@ -9,15 +9,14 @@ import shutil
 import re
 import random
 
-from batter.param import ligand
 from batter.utils.builder_utils import get_buffer_z
 from loguru import logger
 
 import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
-import parmed as pmd
 
+from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.helpers import (
@@ -37,12 +36,8 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
-from gufe import SmallMoleculeComponent
-from kartograf.atom_aligner import align_mol_shape
-from kartograf.atom_mapper import KartografAtomMapper
-from lomap import LomapAtomMapper
-
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
+ABFE_DIFF_BULK_COPY_SEPARATION = 10.0
 
 
 # ---------------------- small utils ----------------------
@@ -53,8 +48,29 @@ def _rel_symlink(target: Path, link_path: Path) -> None:
         link_path.unlink()
     rel = os.path.relpath(target, start=link_path.parent)
     link_path.symlink_to(rel)
+
+
+def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path) -> None:
+    if shutil.which("pdb4amber"):
+        run_with_log(f"pdb4amber -i {input_pdb} -o {output_pdb} -y")
+        return
+    logger.warning(
+        "pdb4amber was not found; copying {} to {} without additional cleanup.",
+        input_pdb,
+        output_pdb,
+    )
+    shutil.copy2(input_pdb, output_pdb)
+
+
 def _read_nonblank_lines(p: Path) -> List[str]:
     return [ln.rstrip("\n") for ln in p.read_text().splitlines() if ln.strip()]
+
+
+def _heavy_or_all_center_of_mass(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    heavy = atoms.select_atoms("not name H*")
+    if heavy.n_atoms:
+        return heavy.center_of_mass()
+    return atoms.center_of_mass()
 
 
 def _safe_resid(resid: int) -> int:
@@ -82,6 +98,96 @@ def _fmt_atom_line(
         f"{x:8.3f}{y:8.3f}{z:8.3f}"
         f"{0.00:6.2f}{0.00:6.2f}"
     )
+
+
+LigandBlock = List[Tuple[str, str, int, str, float, float, float]]
+
+
+def _read_first_ligand_template_block(pdb_path: Path, lig: str) -> LigandBlock:
+    """Read the first ligand residue from a template PDB.
+
+    Prefer records already named like ``lig``. If the template is a ligand-only
+    PDB with a generic residue name, use its first atom-containing residue.
+    """
+    atom_records: LigandBlock = []
+    matched_records: LigandBlock = []
+    first_key: tuple[str, int, str] | None = None
+    match_key: tuple[str, int, str] | None = None
+
+    for ln in pdb_path.read_text().splitlines():
+        if not _is_atom_line(ln):
+            continue
+        resname = _field(ln, 17, 21)
+        chain = _field(ln, 21, 22)
+        resid = int(_field(ln, 22, 26) or 0)
+        name = _field(ln, 12, 16)
+        x = float(_field(ln, 30, 38) or 0.0)
+        y = float(_field(ln, 38, 46) or 0.0)
+        z = float(_field(ln, 46, 54) or 0.0)
+        record = (name, resname, resid, chain, x, y, z)
+        atom_records.append(record)
+        if resname == lig:
+            if match_key is None:
+                match_key = (chain, resid, resname)
+            if (chain, resid, resname) == match_key:
+                matched_records.append(record)
+        if first_key is None:
+            first_key = (chain, resid, resname)
+
+    if matched_records:
+        return matched_records
+    if first_key is None:
+        raise ValueError(f"No atom records found in ligand template PDB: {pdb_path}")
+
+    chain0, resid0, resname0 = first_key
+    return [
+        record
+        for record in atom_records
+        if record[1] == resname0 and record[2] == resid0 and record[3] == chain0
+    ]
+
+
+def _coords_from_ligand_block(block: LigandBlock) -> np.ndarray:
+    return np.asarray([(x, y, z) for *_rest, x, y, z in block], dtype=float)
+
+
+def _split_ligand_residue_blocks(block: LigandBlock) -> list[LigandBlock]:
+    """Split a ligand atom block into residue-contiguous ligand copies."""
+    out: list[LigandBlock] = []
+    current: LigandBlock = []
+    current_key: tuple[str, int, str] | None = None
+    for record in block:
+        _name, resname, resid, chain, *_coords = record
+        key = (chain, resid, resname)
+        if current and key != current_key:
+            out.append(current)
+            current = []
+        current.append(record)
+        current_key = key
+    if current:
+        out.append(current)
+    return out
+
+
+def _validated_extra_ligand_template(
+    source_pdb: Path | None,
+    *,
+    lig: str,
+    bound_ligand_block: LigandBlock,
+) -> LigandBlock | None:
+    if source_pdb is None:
+        return None
+
+    template = _read_first_ligand_template_block(source_pdb, lig)
+    bound_names = [name for name, *_ in bound_ligand_block]
+    template_names = [name for name, *_ in template]
+    if bound_names != template_names:
+        raise ValueError(
+            "Shifted ligand template atom names do not match the bound ligand "
+            f"for {lig}. Source={source_pdb}; bound names={bound_names}; "
+            f"template names={template_names}."
+        )
+    return template
 
 
 def _append_ligand_to_build(build_pdb: Path, lig_pdb: Path, *, resname: str) -> None:
@@ -342,6 +448,9 @@ def _kartograf_mapper_kwargs(
     additional_mapping_filter_functions = []
     if use_element_filter:
         additional_mapping_filter_functions.append(filter_element_changes)
+    from batter.rbfe import filter_chirality_flips
+
+    additional_mapping_filter_functions.append(filter_chirality_flips)
     if use_attached_h_filter:
         additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
     kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions
@@ -352,6 +461,8 @@ def _build_current_kartograf_atom_mapper_for_simprep_x(
     kartograf_options: Any | None = None,
 ):
     """Return the Kartograf mapper currently used by RBFE simprep x-component."""
+    from kartograf.atom_mapper import KartografAtomMapper
+
     return KartografAtomMapper(
         **_kartograf_mapper_kwargs(
             kartograf_options,
@@ -610,7 +721,12 @@ def write_build_from_aligned(
     sdr_dist: float = 0.0,
     start_off_set: int = 0,
     use_ter_markers: bool = False,
-    ter_atoms: Optional[Set[int]] = None,
+    ter_residues: Optional[Set[Tuple[str, int]]] = None,
+    extra_ligand_source_pdb: Path | None = None,
+    extra_ligand_source_pdbs: Sequence[Path | None] | None = None,
+    extra_ligand_offsets: Sequence[Tuple[float, float, float] | None] | None = None,
+    extra_ligand_target_indices: Sequence[int] | None = None,
+    extra_ligand_duplicate_coordinates: bool = False,
 ) -> int:
     """
     Write build.pdb and build-dry.pdb from an aligned system PDB file,
@@ -618,7 +734,7 @@ def write_build_from_aligned(
 
     Returns the last receptor residue id.
     """
-    ter_atoms = ter_atoms or set()
+    ter_residues = ter_residues or set()
 
     # ---- read aligned system
     lines = [ln for ln in aligned_pdb.read_text().splitlines() if ln.strip()]
@@ -681,6 +797,48 @@ def write_build_from_aligned(
         else:
             oth_block.append((name, resname, resid - start_off_set, chain, x, y, z))
 
+    lig_residue_blocks = _split_ligand_residue_blocks(lig_block)
+    bound_ligand_block = lig_residue_blocks[0] if lig_residue_blocks else lig_block
+
+    extra_ligand_template = _validated_extra_ligand_template(
+        extra_ligand_source_pdb,
+        lig=lig,
+        bound_ligand_block=bound_ligand_block,
+    )
+    if (
+        extra_ligand_source_pdbs is not None
+        and len(extra_ligand_source_pdbs) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_source_pdbs must have the same length as "
+            "extra_ligand_shift."
+        )
+    if (
+        extra_ligand_offsets is not None
+        and len(extra_ligand_offsets) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_offsets must have the same length as extra_ligand_shift."
+        )
+    if (
+        extra_ligand_target_indices is not None
+        and len(extra_ligand_target_indices) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_target_indices must have the same length as "
+            "extra_ligand_shift."
+        )
+    per_copy_templates: list[LigandBlock | None] | None = None
+    if extra_ligand_source_pdbs is not None:
+        per_copy_templates = [
+            _validated_extra_ligand_template(
+                source_pdb,
+                lig=lig,
+                bound_ligand_block=bound_ligand_block,
+            )
+            for source_pdb in extra_ligand_source_pdbs
+        ]
+
     # ---- write build.pdb
     out_build = window_dir / "build.pdb"
     out_build.parent.mkdir(parents=True, exist_ok=True)
@@ -699,24 +857,38 @@ def write_build_from_aligned(
 
         # Receptor (+dum_count)
         prev_chain = None
-        for name, resname, resid, chain, x, y, z in recep_block:
+        previous_write_was_ter = False
+        for idx, (name, resname, resid, chain, x, y, z) in enumerate(recep_block):
             if (
                 prev_chain is not None
                 and chain != prev_chain
                 and resname not in om
                 and resname != "WAT"
+                and not previous_write_was_ter
             ):
                 fout.write("TER\n")
+                previous_write_was_ter = True
             prev_chain = chain
             fout.write(
                 _fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z)
                 + "\n"
             )
+            previous_write_was_ter = False
             serial += 1
             if use_ter_markers:
-                leg_idx = resid + 2 - dum_count
-                if leg_idx in (ter_atoms or set()):
+                original_residue_key = (chain, resid + start_off_set)
+                next_residue_key = None
+                if idx + 1 < len(recep_block):
+                    _next_name, _next_resname, next_resid, next_chain, *_ = (
+                        recep_block[idx + 1]
+                    )
+                    next_residue_key = (next_chain, next_resid)
+                if (
+                    original_residue_key in ter_residues
+                    and (chain, resid) != next_residue_key
+                ):
                     fout.write("TER\n")
+                    previous_write_was_ter = True
         fout.write("TER\n")
 
         # Ligand at lig_resid
@@ -730,20 +902,81 @@ def write_build_from_aligned(
 
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
+        duplicated_extra_coords: np.ndarray | None = None
         for i, shift in enumerate(extra_ligand_shift, start=1):
-            
             shift_sdr_dist = sdr_dist if shift else 0.0
-            for name, _, __, chain, x, y, z in lig_block:
+            if extra_ligand_target_indices is not None:
+                target_idx = int(extra_ligand_target_indices[i - 1])
+                try:
+                    target_block = lig_residue_blocks[target_idx]
+                except IndexError as exc:
+                    raise ValueError(
+                        f"extra_ligand_target_indices[{i - 1}]={target_idx} "
+                        f"does not exist; found {len(lig_residue_blocks)} ligand "
+                        "residue block(s)."
+                    ) from exc
+            else:
+                target_block = bound_ligand_block
+            source_block = (
+                per_copy_templates[i - 1]
+                if per_copy_templates is not None
+                else extra_ligand_template
+            ) or target_block
+            if (
+                extra_ligand_offsets is not None
+                and extra_ligand_offsets[i - 1] is not None
+            ):
+                offset = np.asarray(extra_ligand_offsets[i - 1], dtype=float)
+            else:
+                target_center = _coords_from_ligand_block(target_block).mean(axis=0)
+                offset = np.asarray(
+                    [
+                        x_max
+                        + (i - 1) * ABFE_DIFF_BULK_COPY_SEPARATION
+                        - float(target_center[0]),
+                        y_max - float(target_center[1]),
+                        float(shift_sdr_dist),
+                    ],
+                    dtype=float,
+                )
+            target_coords = _coords_from_ligand_block(target_block) + offset
+            source_coords = _coords_from_ligand_block(source_block)
+            if duplicated_extra_coords is not None:
+                if source_coords.shape != duplicated_extra_coords.shape:
+                    raise ValueError(
+                        "Duplicated ligand source and cached coordinates differ: "
+                        f"source={source_coords.shape[0]}, "
+                        f"cached={duplicated_extra_coords.shape[0]}."
+                    )
+                output_coords = duplicated_extra_coords
+            elif source_coords.shape != target_coords.shape:
+                raise ValueError(
+                    "Shifted ligand source and target atom counts differ: "
+                    f"source={source_coords.shape[0]}, target={target_coords.shape[0]}."
+                )
+            else:
+                translation = target_coords.mean(axis=0) - source_coords.mean(axis=0)
+                output_coords = source_coords + translation
+                if extra_ligand_duplicate_coordinates:
+                    duplicated_extra_coords = output_coords.copy()
+            chain = lig_block[0][3] if lig_block else "S"
+            base_resid = (
+                lig_block[-1][2] + dum_count
+                if lig_block
+                else recep_last_resid
+            )
+            for atom_idx, (name, _, __, _chain, x, y, z) in enumerate(source_block):
+                px, py, pz = output_coords[atom_idx]
                 fout.write(
                     _fmt_atom_line(
                         serial,
                         name,
                         lig,
                         chain,
-                        resid + i,
-                        x + x_max,
-                        y + y_max,
-                        z + float(shift_sdr_dist),
+                        base_resid + i,
+                        float(px),
+                        float(py),
+                        float(pz),
                     )
                     + "\n"
                 )
@@ -899,6 +1132,112 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
 
 
 # ---------------------- create_simulation_dir: Z ----------------------
+def _write_pre_fe_equil_reference_pdb(
+    *,
+    sys_root: Path,
+    ligand: str,
+    dest_pdb: Path,
+) -> bool:
+    """Write a water-free PDB from the pre-equilibrated SDR z-1 system."""
+    pre_fe = sys_root / "simulations" / ligand / "pre_fe" / "z" / "z-1"
+    ref_pdb = pre_fe / "full.pdb"
+    ref_coord = pre_fe / "eq_output.pdb"
+    if not ref_pdb.exists() or not ref_coord.exists():
+        return False
+
+    try:
+        u_ref = mda.Universe(ref_pdb.as_posix(), ref_coord.as_posix())
+        ion_names = " ".join(sorted(ION_NAMES))
+        try:
+            sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
+        except Exception:
+            sel = u_ref.select_atoms("not resname WAT DUM")
+        if sel.n_atoms == 0:
+            raise ValueError("pre_fe_equil reference selection is empty")
+        dest_pdb.parent.mkdir(parents=True, exist_ok=True)
+        sel.write(dest_pdb.as_posix())
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to build pre_fe_equil reference PDB from {ref_pdb} "
+            f"and {ref_coord}: {exc}"
+        ) from exc
+
+    logger.info(
+        f"[ABFE_diff] Using pre_fe_equil z-1 coordinates as d-component "
+        f"reference: {ref_coord}"
+    )
+    return True
+
+
+def _copy_abfe_diff_pre_fe_reference_parts(
+    *,
+    sys_root: Path,
+    ligand: str,
+    dest_dir: Path,
+) -> None:
+    """Stage pre-fe topology pieces for x-style ABFE_diff d construction."""
+    pre_fe = sys_root / "simulations" / ligand / "pre_fe" / "z" / "z-1"
+    required = [
+        (pre_fe / "vac.prmtop", dest_dir / "ref_vac.prmtop"),
+        (pre_fe / "vac.pdb", dest_dir / "ref_vac.pdb"),
+        (pre_fe / "other_parts.prmtop", dest_dir / "other_parts.prmtop"),
+        (pre_fe / "other_parts.pdb", dest_dir / "other_parts.pdb"),
+        (pre_fe / "build_amber_renum.txt", dest_dir / "build_amber_renum.txt"),
+    ]
+    optional = [
+        (pre_fe / "full.prmtop", dest_dir / "ref_full.prmtop"),
+        (pre_fe / "full.pdb", dest_dir / "ref_full.pdb"),
+        (pre_fe / "eq_output.pdb", dest_dir / "ref_eq_output.pdb"),
+        (pre_fe / "other_parts.inpcrd", dest_dir / "other_parts.inpcrd"),
+        (pre_fe / "vac.inpcrd", dest_dir / "ref_vac.inpcrd"),
+    ]
+
+    missing = [str(src) for src, _ in required if not src.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "[ABFE_diff] d component requires completed pre_fe z-1 topology "
+            "pieces before x-style topology construction. Missing: "
+            + ", ".join(missing)
+        )
+
+    for src, dst in required + optional:
+        _copy_if_exists(src, dst)
+
+    ref_full = dest_dir / "ref_full.pdb"
+    ref_coord = dest_dir / "ref_eq_output.pdb"
+    ref_vac = dest_dir / "ref_vac.pdb"
+    other_parts = dest_dir / "other_parts.pdb"
+    if ref_full.exists() and ref_coord.exists():
+        try:
+            u_ref = mda.Universe(ref_full.as_posix(), ref_coord.as_posix())
+            u_vac = mda.Universe(ref_vac.as_posix())
+            if u_ref.atoms.n_atoms < u_vac.atoms.n_atoms:
+                raise ValueError(
+                    f"reference atom count {u_ref.atoms.n_atoms} < vac atom count {u_vac.atoms.n_atoms}"
+                )
+            u_vac.atoms.positions = u_ref.atoms.positions[: u_vac.atoms.n_atoms]
+            u_vac.dimensions = u_ref.dimensions
+            u_vac.atoms.write(ref_vac.as_posix())
+
+            if other_parts.exists():
+                u_other = mda.Universe(other_parts.as_posix())
+                start = u_vac.atoms.n_atoms
+                stop = start + u_other.atoms.n_atoms
+                if u_ref.atoms.n_atoms < stop:
+                    raise ValueError(
+                        f"reference atom count {u_ref.atoms.n_atoms} < vac+other atom count {stop}"
+                    )
+                u_other.atoms.positions = u_ref.atoms.positions[start:stop]
+                u_other.dimensions = u_ref.dimensions
+                u_other.atoms.write(other_parts.as_posix())
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to update ABFE_diff d pre_fe topology-piece coordinates "
+                f"from {ref_full} and {ref_coord}: {exc}"
+            ) from exc
+
+
+@register_create_simulation("d")
 @register_create_simulation("z")
 def create_simulation_dir_z(ctx: BuildContext) -> None:
     """
@@ -955,18 +1294,51 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
             if len(ln) >= 22 and ln[17:20] != "WAT":
                 fout.write(ln)
 
-    run_with_log(f"pdb4amber -i {rec_clean} -o {rec_amber} -y")
-    ter_atoms: List[int] = []
+    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
             if ln.startswith("TER"):
                 try:
-                    ter_atoms.append(int(ln[6:11].strip()))
+                    chain = _field(ln, 21, 22)
+                    resid = int(_field(ln, 22, 26))
+                    ter_residues.append((chain, resid))
                 except Exception:
                     pass
 
     # open sdr_info to read SDR distance
     sdr_dist, abs_z, buffer_z_left = map(float, open(dest_dir / "sdr_info.txt").read().split())
+
+    using_pre_fe_reference = False
+    if comp == "d" and sim.dec_method == "sdr":
+        using_pre_fe_reference = _write_pre_fe_equil_reference_pdb(
+            sys_root=sys_root,
+            ligand=ligand,
+            dest_pdb=dest_dir / "build-ini.pdb",
+        )
+        if not using_pre_fe_reference:
+            raise FileNotFoundError(
+                "[ABFE_diff] d component requires completed pre_fe z-1 "
+                f"equilibration output before adding the charge-balancing bulk ligand. "
+                f"Expected {sys_root / 'simulations' / ligand / 'pre_fe' / 'z' / 'z-1' / 'full.pdb'} "
+                f"and {sys_root / 'simulations' / ligand / 'pre_fe' / 'z' / 'z-1' / 'eq_output.pdb'}."
+            )
+        _copy_abfe_diff_pre_fe_reference_parts(
+            sys_root=sys_root,
+            ligand=ligand,
+            dest_dir=dest_dir,
+        )
+
+    if comp == "d" and sim.dec_method == "sdr":
+        extra_ligand_shift = []
+        extra_ligand_offsets = None
+        extra_ligand_source_pdbs = None
+        extra_ligand_target_indices = None
+    else:
+        extra_ligand_shift = [True]
+        extra_ligand_offsets = None
+        extra_ligand_source_pdbs = None
+        extra_ligand_target_indices = None
 
     # write build files for z
     write_build_from_aligned(
@@ -977,14 +1349,98 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         other_mol=ctx.sim.other_mol,
         lipid_mol=ctx.sim.lipid_mol,
         ion_mol=ION_NAMES,
-        extra_ligand_shift=[True],  # SDR copy
+        extra_ligand_shift=extra_ligand_shift,  # SDR copy/copies
         sdr_dist=sdr_dist,
         start_off_set=1,  # equil offset
         use_ter_markers=True,
-        ter_atoms=set(ter_atoms),
+        ter_residues=set(ter_residues),
+        extra_ligand_source_pdb=None,
+        extra_ligand_source_pdbs=extra_ligand_source_pdbs,
+        extra_ligand_offsets=extra_ligand_offsets,
+        extra_ligand_target_indices=extra_ligand_target_indices,
     )
 
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
+
+
+@register_create_simulation("l")
+def create_simulation_dir_l(ctx: BuildContext) -> None:
+    """
+    Create the initial simulation directory for the ligand conformational
+    restraint component. This is a normal complex with one bound ligand copy.
+    """
+    ligand = ctx.ligand
+    mol = ctx.residue_name
+
+    sys_root = ctx.system_root
+    build_dir = ctx.build_dir
+    amber_dir = ctx.amber_dir
+    dest_dir = ctx.equil_dir
+    ff_dir = sys_root / "simulations" / ligand / "params"
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _rel_symlink(amber_dir, dest_dir / "amber_files")
+
+    for p in build_dir.glob("vac_ligand*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    for s, d in [
+        (build_dir / f"{mol}.pdb", dest_dir / f"{mol}.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / "build-ini.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / f"fe-{mol}.pdb"),
+        (build_dir / f"anchors-{ligand}.txt", dest_dir / f"anchors-{ligand}.txt"),
+        (build_dir / "sdr_info.txt", dest_dir / "sdr_info.txt"),
+        (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
+        (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
+        (build_dir / "rec_file.pdb", dest_dir / "rec_file.pdb"),
+    ]:
+        _copy_if_exists(s, d)
+
+    for p in ff_dir.glob(f"{mol}.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+    for p in build_dir.glob("dum.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    rec_clean = dest_dir / "rec_file-clean.pdb"
+    rec_amber = dest_dir / "rec_amber.pdb"
+    with (dest_dir / "rec_file.pdb").open() as fin, rec_clean.open("w") as fout:
+        for ln in fin:
+            if len(ln) >= 22 and ln[17:20] != "WAT":
+                fout.write(ln)
+
+    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    ter_residues: List[Tuple[str, int]] = []
+    with rec_amber.open() as f:
+        for ln in f:
+            if ln.startswith("TER"):
+                try:
+                    chain = _field(ln, 21, 22)
+                    resid = int(_field(ln, 22, 26))
+                    ter_residues.append((chain, resid))
+                except Exception:
+                    pass
+
+    sdr_dist, _abs_z, _buffer_z_left = map(
+        float, open(dest_dir / "sdr_info.txt").read().split()
+    )
+
+    write_build_from_aligned(
+        lig=mol,
+        window_dir=dest_dir,
+        build_dir=build_dir,
+        aligned_pdb=dest_dir / "build-ini.pdb",
+        other_mol=ctx.sim.other_mol,
+        lipid_mol=ctx.sim.lipid_mol,
+        ion_mol=ION_NAMES,
+        extra_ligand_shift=[],
+        sdr_dist=sdr_dist,
+        start_off_set=1,
+        use_ter_markers=True,
+        ter_residues=set(ter_residues),
+    )
+
+    logger.debug(f"[simprep:l] simulation directory created → {dest_dir}")
 
 
 @register_create_simulation("x")
@@ -992,6 +1448,11 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     """
     RBFE (x-component) simulation-dir builder.
     """
+    from gufe import SmallMoleculeComponent
+    from kartograf.atom_aligner import align_mol_shape
+    from lomap import LomapAtomMapper
+
+    pmd = import_parmed()
     extra = ctx.extra or {}
     lig_ref = extra.get("ligand_ref")
     lig_alt = extra.get("ligand_alt")
@@ -1010,6 +1471,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     amber_dir = ctx.amber_dir
     dest_dir = ctx.equil_dir
     sim = ctx.sim
+    septop = str(getattr(sim, "fe_type", "") or "").lower() == "relative_septop"
     buffer_z = sim.buffer_z
     ion_def = sim.ion_def
 
@@ -1020,8 +1482,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     protein_align = sim.protein_align
     ref_equil_dir = sys_root / "simulations" / str(lig_ref) / "equil"
     alt_equil_dir = sys_root / "simulations" / str(lig_alt) / "equil"
-    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
-    alt_pre_fe = sys_root / "simulations" / str(lig_alt) / "fe" / "z" / "z-1"
+    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "pre_fe" / "z" / "z-1"
+    alt_pre_fe = sys_root / "simulations" / str(lig_alt) / "pre_fe" / "z" / "z-1"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1156,8 +1618,13 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
-    if not atomMap:
+    if not atomMap and not septop:
         raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
+    if not atomMap:
+        logger.debug(
+            "[simprep:x] no atom mapping found for septop; using receptor-aligned "
+            "ligand poses directly"
+        )
 
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
@@ -1224,8 +1691,11 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
-    mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
-    dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
+    if septop:
+        dum_l.position = _heavy_or_all_center_of_mass(ref_res_atoms)
+    else:
+        mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
+        dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
@@ -1234,47 +1704,53 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms :]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
-    # use reference ligand, steer alt ligand to the atom mapped position.
-    rdmol_ref_work = Chem.Mol(rdmol_ref)
-    ref_pos = u_lig.residues[0].atoms.positions
-    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
-
-    _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-    _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-    rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
-
-    rdmol_alt_site = force_mapped_coords_and_minimize(
-        rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
-    )
-    # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
     alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
-    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
-    with alter_site_pdb.open("w") as f:
-        f.write(pdb_block_m)
 
-    ref_pos = u_lig.residues[1].atoms.positions
-    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
-    
-    _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-    _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-    rdmol_alt_solvent = align_mol_shape(
-        _mol_alt_solvent, ref_mol=_mol_ref_solvent
-    )._rdkit
+    if septop:
+        u_alter_lig_pocket.atoms.write(alter_site_pdb.as_posix())
+        u_alter_lig.atoms.write(alter_solvent_pdb.as_posix())
+    else:
+        # use reference ligand, steer alt ligand to the atom mapped position.
+        rdmol_ref_work = Chem.Mol(rdmol_ref)
+        ref_pos = u_lig.residues[0].atoms.positions
+        rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
 
-    rdmol_alt_solvent = force_mapped_coords_and_minimize(
-        rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
-    )
+        _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
-    # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
-    with alter_solvent_pdb.open("w") as f:
-        f.write(pdb_block_m)
+        rdmol_alt_site = force_mapped_coords_and_minimize(
+            rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
+        )
+        # save mol_alt_aligned as PDB
+        pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
+        with alter_site_pdb.open("w") as f:
+            f.write(pdb_block_m)
+
+        ref_pos = u_lig.residues[1].atoms.positions
+        rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
+
+        _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_solvent = align_mol_shape(
+            _mol_alt_solvent, ref_mol=_mol_ref_solvent
+        )._rdkit
+
+        rdmol_alt_solvent = force_mapped_coords_and_minimize(
+            rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
+        )
+
+        # save mol_alt_aligned as PDB
+        pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
+        with alter_solvent_pdb.open("w") as f:
+            f.write(pdb_block_m)
 
     u_alt_site = mda.Universe(alter_site_pdb.as_posix())
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
+    u_alt.atoms.write(alter_merged_pdb.as_posix())
 
     if not used_prepared_mapping:
         try:

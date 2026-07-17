@@ -184,10 +184,13 @@ def resolve_signature_conflict(
 
 
 def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]:
-    name = (protocol or "abfe").lower()
+    name = (protocol or "abfe").lower().replace("-", "_")
     mapping: Dict[str, tuple[Type[SystemBuilder], str]] = {
         "abfe": (MABFEBuilder, "MABFE"),
+        "abfe_diff": (MABFEBuilder, "MABFE"),
+        "ligand_rest": (MABFEBuilder, "MABFE"),
         "rbfe": (MABFEBuilder, "MABFE"),
+        "rbfe_septop": (MABFEBuilder, "MABFE"),
         "md": (MABFEBuilder, "MABFE"),
         "asfe": (MASFEBuilder, "MASFE"),
     }

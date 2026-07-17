@@ -35,7 +35,7 @@ Runs equilibrium stage
   nmd = 1000,
   nmc = 1000,
   mcwatmask = ":g1i",
-  mcligshift = 40,
+  mcligshift = 10,
   mcresstr = "WAT",
  /
  &pmd

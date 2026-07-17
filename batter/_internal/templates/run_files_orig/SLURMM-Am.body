@@ -20,7 +20,39 @@ RETRY_COUNT=$(cat "$ATTEMPT_FILE")
 echo "Current attempt: $RETRY_COUNT"
 
 # Define the maximum number of attempts.
-MAX_ATTEMPTS=10
+MAX_ATTEMPTS=5
+
+is_titan_xp_retry_exempt_output() {
+    local out_file=$1
+    local basename=${out_file##*/}
+
+    case "$basename" in
+        eqnpt_eq.out|md-*.out) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+failure_outputs_have_titan_xp() {
+    local retry_count=${1:-}
+    local out_file archive_dir
+    while IFS= read -r -d '' out_file; do
+        if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
+            echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+            return 0
+        fi
+    done < <(find . -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
+
+    for archive_dir in WRONG_FAIL/*_job_attempt_${retry_count}; do
+        [[ -d "$archive_dir" ]] || continue
+        while IFS= read -r -d '' out_file; do
+            if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
+                echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+                return 0
+            fi
+        done < <(find "$archive_dir" -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
+    done
+    return 1
+}
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
@@ -31,6 +63,12 @@ if [ $error_code -eq 0 ]; then
     echo "Simulation completed successfully on attempt $RETRY_COUNT."
 else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+    if failure_outputs_have_titan_xp "$RETRY_COUNT"; then
+        echo "FAILED" > ATTEMPT_FAILED
+        echo "Retrying attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
+        exit 0
+    fi
 
     if [ "$RETRY_COUNT" -lt "$MAX_ATTEMPTS" ]; then
         echo "FAILED" > ATTEMPT_FAILED

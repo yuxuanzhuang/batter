@@ -10,10 +10,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, List
 import json
+import os
 import shutil
+import shlex
+import sys
 
 from loguru import logger
 
+from batter._internal.parmed_compat import bundled_parmed_path
 from batter.systemprep import (
     get_buffer_z,
     get_ligand_candidates,
@@ -151,9 +155,32 @@ def run_parmed_hmr_if_enabled(sim_hmr: str | bool, amber_dir: Path, window_dir: 
         logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
         return
     shutil.copy2(parmed_hmr, window_dir / "parmed-hmr.in")
+    parmed_exe = shutil.which("parmed")
+    env = None
+    if parmed_exe:
+        command = f"{shlex.quote(parmed_exe)} -O -n -i parmed-hmr.in > parmed-hmr.log"
+    else:
+        bundled = bundled_parmed_path()
+        existing_pythonpath = os.environ.get("PYTHONPATH")
+        env = {
+            "PYTHONPATH": (
+                str(bundled)
+                if not existing_pythonpath
+                else f"{bundled}{os.pathsep}{existing_pythonpath}"
+            )
+        }
+        logger.warning(
+            "[box] parmed executable not found; using bundled ParmEd Python entrypoint for HMR."
+        )
+        command = (
+            f"{shlex.quote(sys.executable)} -c "
+            f"{shlex.quote('from parmed.scripts import clapp; clapp()')} "
+            "-O -n -i parmed-hmr.in > parmed-hmr.log"
+        )
     run_with_log(
-        "parmed -O -n -i parmed-hmr.in > parmed-hmr.log",
+        command,
         working_dir=window_dir,
+        env=env,
     )
 
 

@@ -29,7 +29,19 @@ fi
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
+    local errexit_was_on=0
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    SIM_COMMAND_STATUS=0
+    set +e
     eval "$@"
+    SIM_COMMAND_STATUS=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    else
+        set +e
+    fi
 }
 
 # Build an MPI launch prefix that works for mpirun or srun.
@@ -51,11 +63,50 @@ if [[ -f FINISHED ]]; then
     report_progress
     exit 0
 fi
+rm -f FAILED
 
 prior_failed=$(consume_prior_failure_marker)
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
+}
+
+write_noshake_minimization_input() {
+    local src=$1
+    local dst=$2
+    awk '
+        /^[[:space:]]*ntf[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        /^[[:space:]]*ntc[[:space:]]*=/ { sub(/=[[:space:]]*[0-9]+,/, "= 1,") }
+        { print }
+    ' "$src" > "$dst"
+}
+
+minimization_failed_for_noshake_retry() {
+    local out_file=$1
+    local rst_file=$2
+    local status=${SIM_COMMAND_STATUS:-0}
+
+    if [[ $status =~ ^[0-9]+$ && $status -ne 0 ]]; then
+        return 0
+    fi
+    if [[ -f "$log_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$log_file"; then
+        return 0
+    fi
+    if [[ -f "$out_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$out_file"; then
+        return 0
+    fi
+    if [[ ! -s "$rst_file" ]]; then
+        return 0
+    fi
+    if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+        return 0
+    fi
+    return 1
+}
+
+run_rbfe_seed_minimization_cuda() {
+    local mdin=$1
+    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP_MERGED -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
 }
 
 archive_existing_log_file "$log_file"
@@ -66,29 +117,29 @@ report_progress
 
 if [[ $only_eq -eq 1 ]]; then
     if ! should_skip_eq_step "RBFE minimization seed" "mini.in.rst7"; then
-        print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        mini_input="mini.in"
+        noshake_mini_input="mini_noshake.in"
+        run_rbfe_seed_minimization_cuda "$mini_input"
+        if minimization_failed_for_noshake_retry "mini.in.out" "mini.in.rst7"; then
+            echo "[WARN] RBFE minimization with ntc=2 failed; retrying with ntc=1."
+            archive_failed_job_files "$retry" "$log_file" mini.in.rst7
+            rm -f "$log_file" mini.in.rst7 mini.in.nc mini.in.out
+            write_noshake_minimization_input "$mini_input" "$noshake_mini_input"
+            mini_input="$noshake_mini_input"
+            run_rbfe_seed_minimization_cuda "$mini_input"
+        fi
+        check_sim_failure "RBFE minimization seed" "$log_file" mini.in.rst7
         if ! check_min_energy "mini.in.out" -1000; then
-            echo "Minimization not passed with cuda; try CPU"
-            rm -f "$log_file"
-            rm -f mini.in.rst7 mini.in.nc mini.in.out
-            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            else
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            fi
-            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
-            if ! check_min_energy "mini.in.out" -1000; then
-                echo "Minimization with CPU also failed for window $i, exiting."
-                rm -f mini.in.rst7 mini.in.nc mini.in.out
-                mark_failed_and_exit
-            fi
+            echo "[WARN] CUDA RBFE minimization energy did not pass threshold; continuing from mini.in.rst7 without CPU minimization."
         fi
     fi
     # run one long equilbration with dynamically changed lambda value
+    seed_eq_ran=0
     if ! should_skip_eq_step "RBFE equilibration seed" "eq.rst7"; then
         require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to RBFE equilibration seed."
         print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+        seed_eq_ran=1
     fi
 
     # lambda values for EACH EQ frame
@@ -98,7 +149,8 @@ if [[ $only_eq -eq 1 ]]; then
     lambda_set_list=(LAMBDA_SET_LIST)
 
     # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
-    if [[ $overwrite -ne 0 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
+    if [[ $overwrite -ne 0 || $seed_eq_ran -eq 1 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
+        rm -f eq.rst7.[0-9]*
         $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
@@ -148,7 +200,7 @@ EOF
             "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
         
         cd "$win_folder"
-        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
         cd ../COMPONENT-1
     done
@@ -195,7 +247,7 @@ start_ps=$(production_start_ps "$production_start_marker" "$production_initial_r
 select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry"
 rst_in="$SELECTED_MD_RESTART"
 require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
-restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+restart_ps=$(production_restart_ps)
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
@@ -213,7 +265,7 @@ win_00=../COMPONENT00
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
-if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
+if can_skip_short_final_tail "$total_ps" "$current_ps" "$remaining_ps"; then
     remaining_steps=0
     current_ps="$total_ps"
 fi
@@ -225,16 +277,16 @@ if (( remaining_steps > 0 )); then
     fi
     run_ps=$(awk -v s="$run_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-    # first_run if no md-*.out exists yet
     first_run=0
-    if [[ $(latest_md_index "md-*.out") -lt 0 ]]; then
+    if [[ "$rst_in" == "$production_initial_rst" ]]; then
         first_run=1
     fi
 
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    cmass_file=$(printf "cmass-%02d.txt" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
-    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" > "$mdin_current"
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" "$retry" "$start_ps" "$cmass_file" > "$mdin_current"
 
     # Preflight: must be able to write restart output in this directory
     : > .write_test.$$ 2>/dev/null || {
@@ -255,10 +307,10 @@ if (( remaining_steps > 0 )); then
 
     # Run MD: always write restart to md-current.rst7
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the rolling restart.
-    restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    restart_ps=$(production_restart_ps)
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
@@ -268,7 +320,8 @@ if (( remaining_steps > 0 )); then
     last_rst="md-current.rst7"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
+    require_nonempty_file_or_attempt_fail "$last_rst" "[ERROR] Production is marked complete but restart $last_rst is missing."
     print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
 parm $PRMTOP
 trajin ${last_rst}

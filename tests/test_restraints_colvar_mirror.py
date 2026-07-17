@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import types
 
+import numpy as np
+
 
 def _load_internal_module(module_name: str):
     repo_root = Path(__file__).resolve().parents[1]
@@ -25,6 +27,411 @@ def _load_internal_module(module_name: str):
 
 
 restraints = _load_internal_module("batter._internal.ops.restraints")
+
+
+class _FakeAtoms(list):
+    @property
+    def n_atoms(self) -> int:
+        return len(self)
+
+
+class _FakeAtom:
+    def __init__(self, name: str, position: tuple[float, float, float]):
+        self.name = name
+        self.position = np.asarray(position, dtype=float)
+        self.element = "C"
+        self.type = "C"
+
+
+class _FakeResidue:
+    def __init__(self, atoms: list[_FakeAtom]):
+        self.atoms = _FakeAtoms(atoms)
+
+
+def _write_four_atom_pdb(path: Path, coords: list[tuple[float, float, float]]) -> None:
+    lines = []
+    for idx, (x, y, z) in enumerate(coords, start=1):
+        lines.append(
+            f"HETATM{idx:5d}  C{idx:<2d} LIG A   1    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C\n"
+        )
+    lines.append("END\n")
+    path.write_text("".join(lines))
+
+
+def test_load_common_core_indices_uses_alt_to_ref_mapping_direction(
+    tmp_path: Path,
+) -> None:
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"1": 10, "4": 12, "7": 13}))
+
+    ref_indices, alt_indices = restraints._load_common_core_indices(mapping)
+
+    assert ref_indices == [10, 12, 13]
+    assert alt_indices == [1, 4, 7]
+
+
+def test_load_common_core_indices_supports_scmask_format(tmp_path: Path) -> None:
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(
+        json.dumps(
+            {
+                "scmk1_cc_solvent_indices": [9, "3", 5],
+                "scmk2_cc_solvent_indices": ["8", 2],
+            }
+        )
+    )
+
+    ref_indices, alt_indices = restraints._load_common_core_indices(mapping)
+
+    assert ref_indices == [3, 5, 9]
+    assert alt_indices == [2, 8]
+
+
+def test_common_core_boresch_preference_requires_more_than_three_atoms() -> None:
+    assert restraints._common_core_boresch_preference_names(
+        ["A1", "A2", "A3"],
+        label="alternate",
+    ) == []
+
+    assert restraints._common_core_boresch_preference_names(
+        ["A1", "A2", "A2", "", "A3", "A4"],
+        label="alternate",
+    ) == ["A1", "A2", "A3", "A4"]
+
+
+def test_common_core_boresch_preference_threshold_controls_selection() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, 0.0, 0.0)),
+        _FakeAtom("P2", (0.0, -4.0, 0.0)),
+        _FakeAtom("P3", (4.0, -4.0, 0.0)),
+    ]
+    residue = _FakeResidue(
+        [
+            _FakeAtom("R1", (1.0, 0.0, 0.0)),
+            _FakeAtom("R2", (2.0, 0.0, 0.0)),
+            _FakeAtom("R3", (1.0, 1.0, 0.0)),
+            _FakeAtom("R4", (1.0, 0.0, 1.0)),
+            _FakeAtom("R5", (3.0, 2.0, 1.0)),
+        ]
+    )
+
+    below_threshold = restraints._common_core_boresch_preference_names(
+        ["R1", "R2", "R3"],
+        label="reference",
+    )
+    assert below_threshold == []
+
+    above_threshold = restraints._common_core_boresch_preference_names(
+        ["R1", "R2", "R3", "R4"],
+        label="reference",
+    )
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        residue,
+        receptor_atoms=receptor_atoms,
+        label="reference",
+        preferred_atom_names=above_threshold,
+        preferred_first_names=above_threshold,
+    )
+
+    assert set(names) <= set(above_threshold)
+
+
+def test_septop_ref_boresch_ignores_abfe_ligand_anchors() -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (2.0, 0.0, 0.0)),
+            _FakeAtom("R4", (1.0, 1.0, 0.0)),
+            _FakeAtom("R5", (1.0, 0.0, 1.0)),
+        ]
+    )
+
+    names = restraints._resolve_ref_boresch_atom_names(
+        ref,
+        anchor_names=["R1", "R2", "R3"],
+    )
+
+    coords = {atom.name: atom.position for atom in ref.atoms}
+    assert len(names) == 3
+    assert names != ["R1", "R2", "R3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
+
+
+def test_septop_alt_boresch_ignores_atom_mapping(tmp_path: Path) -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    alt = _FakeResidue(
+        [
+            _FakeAtom("A0", (9.0, 9.0, 9.0)),
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"1": 0, "2": 1, "3": 2}))
+
+    names = restraints._resolve_alt_boresch_atom_names(
+        ref_residue=ref,
+        alt_residue=alt,
+        ref_names=["R1", "R2", "R3"],
+        mapping_path=mapping,
+    )
+
+    coords = {atom.name: atom.position for atom in alt.atoms}
+    assert len(names) == 3
+    assert names != ["A1", "A2", "A3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
+
+
+def test_septop_alt_boresch_empty_mapping_selects_independent_frame(
+    tmp_path: Path,
+) -> None:
+    ref = _FakeResidue(
+        [
+            _FakeAtom("R1", (0.0, 0.0, 0.0)),
+            _FakeAtom("R2", (1.0, 0.0, 0.0)),
+            _FakeAtom("R3", (0.0, 1.0, 0.0)),
+        ]
+    )
+    alt = _FakeResidue(
+        [
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (2.0, 0.0, 0.0)),
+            _FakeAtom("A4", (1.0, 1.0, 0.0)),
+            _FakeAtom("A5", (1.0, 0.0, 1.0)),
+        ]
+    )
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}")
+
+    names = restraints._resolve_alt_boresch_atom_names(
+        ref_residue=ref,
+        alt_residue=alt,
+        ref_names=["R1", "R2", "R3"],
+        mapping_path=mapping,
+    )
+
+    coords = {atom.name: atom.position for atom in alt.atoms}
+    assert len(names) == 3
+    assert names != ["A1", "A2", "A3"]
+    area2 = np.linalg.norm(
+        np.cross(
+            coords[names[1]] - coords[names[0]],
+            coords[names[2]] - coords[names[0]],
+        )
+    )
+    assert area2 > 0.25
+
+
+def test_septop_boresch_selection_rejects_endpoint_torsions() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (49.458, 34.401, 64.572)),
+        _FakeAtom("P2", (42.774, 32.383, 64.365)),
+        _FakeAtom("P3", (35.111, 39.926, 64.300)),
+    ]
+    alt = _FakeResidue(
+        [
+            _FakeAtom("O1", (47.744, 45.981, 68.011)),
+            _FakeAtom("C1", (46.423, 46.027, 67.494)),
+            _FakeAtom("C3", (46.882, 44.481, 65.612)),
+            _FakeAtom("C8", (43.478, 41.915, 66.788)),
+            _FakeAtom("C10", (42.996, 39.390, 69.743)),
+            _FakeAtom("C12", (44.414, 38.838, 70.098)),
+        ]
+    )
+    atoms_by_name = {atom.name: atom for atom in alt.atoms}
+
+    bad_values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name["C8"], atoms_by_name["O1"], atoms_by_name["C12"]],
+    )
+    assert bad_values is not None
+    _, bad_torsion_margin = restraints._boresch_frame_margins(bad_values)
+    assert bad_torsion_margin < restraints.BORESCH_MIN_TORSION_MARGIN_DEG
+
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        alt,
+        receptor_atoms=receptor_atoms,
+        label="alternate",
+    )
+    values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name[name] for name in names],
+    )
+    assert values is not None
+    angle_margin, torsion_margin = restraints._boresch_frame_margins(values)
+
+    assert names != ["C8", "O1", "C12"]
+    assert angle_margin >= restraints.BORESCH_MIN_ANGLE_MARGIN_DEG
+    assert torsion_margin >= restraints.BORESCH_MIN_TORSION_MARGIN_DEG
+
+
+def test_boresch_selection_relaxes_local_geometry_before_first_three() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, -3.0, 1.0)),
+        _FakeAtom("P2", (0.0, -4.0, 0.0)),
+        _FakeAtom("P3", (4.0, -4.0, 0.0)),
+    ]
+    ligand = _FakeResidue(
+        [
+            _FakeAtom("A1", (0.0, 0.0, 0.0)),
+            _FakeAtom("A2", (1.0, 0.0, 0.0)),
+            _FakeAtom("A3", (2.0, 0.0, 0.0)),
+            _FakeAtom("A4", (1.0, 0.05, 0.0)),
+            _FakeAtom("A5", (1.0, 0.0, 0.05)),
+        ]
+    )
+
+    names = restraints._frame_safe_boresch_atom_names_from_residue(
+        ligand,
+        receptor_atoms=receptor_atoms,
+        label="alternate",
+    )
+
+    atoms_by_name = {atom.name: atom for atom in ligand.atoms}
+    values = restraints._boresch_frame_values(
+        receptor_atoms,
+        [atoms_by_name[name] for name in names],
+    )
+
+    assert names != ["A1", "A2", "A3"]
+    assert values is not None
+
+
+def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
+    input_pdb = tmp_path / "input_pose.pdb"
+    fallback_pdb = tmp_path / "l00" / "LIG.pdb"
+    fallback_pdb.parent.mkdir()
+    _write_four_atom_pdb(
+        input_pdb,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, 1.0),
+        ],
+    )
+    _write_four_atom_pdb(
+        fallback_pdb,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, -1.0),
+        ],
+    )
+
+    store_dir = tmp_path / "artifacts" / "ligand_params" / "LIG"
+    store_dir.mkdir(parents=True)
+    (store_dir / "metadata.json").write_text(
+        json.dumps({"input_path": input_pdb.as_posix()})
+    )
+    (tmp_path / "artifacts" / "ligand_params" / "index.json").write_text(
+        json.dumps({"ligands": [{"ligand": "LigandA", "store_dir": store_dir.as_posix()}]})
+    )
+
+    ctx = types.SimpleNamespace(
+        system_root=tmp_path,
+        ligand="LigandA",
+        residue_name="LIG",
+    )
+
+    values, source = restraints._reference_dihedral_values_from_input(
+        ctx,
+        fallback_pdb.parent,
+        [(1, 2, 3, 4)],
+    )
+
+    expected = restraints._dihedral_degrees(
+        restraints._load_reference_positions(input_pdb),
+        (1, 2, 3, 4),
+    )
+    assert source == input_pdb
+    assert abs(values[0] - expected) < 1e-6
+
+
+def test_ligand_dihedral_reference_prefers_staged_input_over_cached_metadata(
+    tmp_path: Path,
+) -> None:
+    staged_input = tmp_path / "staged_pose.pdb"
+    cached_input = tmp_path / "cached_pose.pdb"
+    _write_four_atom_pdb(
+        staged_input,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, 1.0),
+        ],
+    )
+    _write_four_atom_pdb(
+        cached_input,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, -1.0),
+        ],
+    )
+
+    store_dir = tmp_path / "artifacts" / "ligand_params" / "SHARED_HASH"
+    store_dir.mkdir(parents=True)
+    (store_dir / "metadata.json").write_text(
+        json.dumps({"input_path": cached_input.as_posix()})
+    )
+    (tmp_path / "artifacts" / "ligand_params" / "index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {
+                        "ligand": "LigandA",
+                        "store_dir": store_dir.as_posix(),
+                        "input_path": staged_input.as_posix(),
+                    }
+                ]
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        system_root=tmp_path,
+        ligand="LigandA",
+        residue_name="LIG",
+    )
+
+    values, source = restraints._reference_dihedral_values_from_input(
+        ctx,
+        tmp_path / "window",
+        [(1, 2, 3, 4)],
+    )
+
+    expected = restraints._dihedral_degrees(
+        restraints._load_reference_positions(staged_input),
+        (1, 2, 3, 4),
+    )
+    assert source == staged_input
+    assert abs(values[0] - expected) < 1e-6
 
 
 def test_colvar_block_to_rst_translates_com_distance() -> None:
@@ -138,6 +545,150 @@ def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
     assert (windows_dir / "cv.in").read_text() == "cv_file\n"
     assert "&colvar" not in (windows_dir / "cv.in").read_text()
     assert not (windows_dir / "disang.rest").read_text().strip()
+
+
+def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "d00"
+    windows_dir.mkdir()
+    build_dir = tmp_path / "d_build_files"
+    build_dir.mkdir()
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir()
+    (equil_dir / "extra_conf_restraints.json").write_text(
+        json.dumps(
+            {
+                "blocks": [
+                    "&colvar\n"
+                    " cv_type = 'DISTANCE'\n"
+                    " cv_ni = 2, cv_i = 1,2\n"
+                    " anchor_position = 0.0, 0.0, 3.0, 3.3\n"
+                    " anchor_strength = 10.0, 10.0\n"
+                    "/\n"
+                ]
+            }
+        )
+    )
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":10@C1",
+                "L2": ":10@C2",
+                "L3": ":10@O1",
+                "lig_res": "10",
+            }
+        )
+    )
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  CA  ALA A   4       2.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C1  LIG A  10       1.000   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C2  LIG A  10       1.500   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      7  O1  LIG A  10       1.000   1.500   0.000  1.00  0.00           O\n",
+                "ATOM      8  H1  LIG A  10       1.000   1.000   0.500  1.00  0.00           H\n",
+                "ATOM      9  C1  LIG A  11      20.000  20.000   0.000  1.00  0.00           C\n",
+                "END\n",
+            ]
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        working_dir=tmp_path,
+        window_dir=windows_dir,
+        equil_dir=equil_dir,
+        comp="d",
+        residue_name="LIG",
+        sim=types.SimpleNamespace(lig_distance_force=7.5, dec_method="dd"),
+        extra={"extra_conformation_restraints": "unused.json"},
+        win=0,
+    )
+
+    restraints._build_restraints_d(None, ctx)
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert cv_text.count("&colvar") == 12
+    assert "EXTRA_CONFORMATIONAL_REST" not in cv_text
+    assert "cv_type = 'DISTANCE'" in cv_text
+    assert "cv_type = 'COM_DISTANCE'" not in cv_text
+    assert "cv_i = 1,5," in cv_text
+    assert "cv_i = 1,6," in cv_text
+    assert "cv_i = 1,7," in cv_text
+    assert "cv_i = 5,6," in cv_text
+    assert "cv_i = 5,7," in cv_text
+    assert "cv_i = 6,7," in cv_text
+    assert ",8," not in cv_text
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert "ABFE_diff local_frame bound-pose restraints" in disang_text
+    assert "#Lig_TR" not in disang_text
+    assert "EXTRA_CONFORMATIONAL_REST" not in disang_text
+    assert disang_text.count("&rst") == cv_text.count("&colvar")
+    assert "iat=1,5," in disang_text
+    assert "iat=1,6," in disang_text
+    assert "iat=1,7," in disang_text
+    assert "iat=5,6," in disang_text
+    assert "igr2=" not in disang_text
+    assert "rk2=7.5, rk3=7.5" in disang_text
+
+    metadata = json.loads((windows_dir / "abfe_diff_pose_restraints.json").read_text())
+    assert metadata["mode"] == "local_frame"
+    assert metadata["ligand_heavy_atom_serials"] == [5, 6, 7]
+    assert metadata["ligand_pose_atom_serials"] == [5, 6, 7]
+    assert metadata["anchor_atom_serials"] == [1, 2, 3]
+    assert len(metadata["restraints"]) == 12
+    assert sum(1 for item in metadata["restraints"] if item["kind"] == "external_pose") == 9
+    assert sum(1 for item in metadata["restraints"] if item["kind"] == "ligand_internal") == 3
+
+
+def test_build_restraints_d_can_use_dense_pose_restraints(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "d00"
+    windows_dir.mkdir()
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  CA  ALA A   4       2.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C1  LIG A  10       1.000   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C2  LIG A  10       1.500   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      7  O1  LIG A  10       1.000   1.500   0.000  1.00  0.00           O\n",
+                "END\n",
+            ]
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        window_dir=windows_dir,
+        comp="d",
+        residue_name="LIG",
+        sim=types.SimpleNamespace(
+            lig_distance_force=7.5,
+            abfe_diff_pose_restraint_type="dense",
+        ),
+        extra={},
+        win=0,
+    )
+
+    restraints._build_restraints_d(None, ctx)
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert cv_text.count("&colvar") == 12
+    assert "cv_i = 1,5," in cv_text
+    assert "cv_i = 4,7," in cv_text
+    assert "cv_i = 5,6," not in cv_text
+
+    metadata = json.loads((windows_dir / "abfe_diff_pose_restraints.json").read_text())
+    assert metadata["mode"] == "dense"
+    assert sorted(metadata["anchor_atom_serials"]) == [1, 2, 3, 4]
+    assert len(metadata["restraints"]) == 12
+    assert all(item["kind"] == "external_pose" for item in metadata["restraints"])
 
 
 def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None:

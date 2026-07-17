@@ -7,10 +7,13 @@ from typing import Optional
 from batter.pipeline.pipeline import Pipeline
 from batter.config.simulation import SimulationConfig
 from batter.pipeline.factory import (
+    make_abfe_diff_pipeline,
     make_abfe_pipeline,
     make_asfe_pipeline,
+    make_ligand_rest_pipeline,
     make_md_pipeline,
     make_rbfe_pipeline,
+    make_rbfe_septop_pipeline,
 )
 from batter.pipeline.payloads import SystemParams
 
@@ -22,13 +25,14 @@ def select_pipeline(
     *,
     sys_params: Optional[SystemParams | dict] = None,
     partition: str | None = None,
+    store_debug_files: bool = False,
 ) -> Pipeline:
     """Return the protocol-specific pipeline for a run.
 
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"abfe_diff"``, ``"ligand_rest"``, ``"rbfe"``, ``"rbfe_septop"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -46,13 +50,15 @@ def select_pipeline(
     ValueError
         If the protocol name is not recognised.
     """
-    name = (protocol or "abfe").lower()
+    name = (protocol or "abfe").lower().replace("-", "_")
     params_model = (
         sys_params
         if isinstance(sys_params, SystemParams)
         else SystemParams.model_validate(sys_params or {})
     )
-    extra = {"partition": partition} if partition else {}
+    extra = {"store_debug_files": bool(store_debug_files)}
+    if partition:
+        extra["partition"] = partition
 
     if name == "abfe":
         return make_abfe_pipeline(
@@ -61,8 +67,22 @@ def select_pipeline(
             only_fe_preparation=only_fe_prep,
             extra=extra,
         )
+    if name == "abfe_diff":
+        return make_abfe_diff_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
     if name == "asfe":
         return make_asfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
+    if name == "ligand_rest":
+        return make_ligand_rest_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,
@@ -77,6 +97,13 @@ def select_pipeline(
         )
     if name == "rbfe":
         return make_rbfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
+    if name == "rbfe_septop":
+        return make_rbfe_septop_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,

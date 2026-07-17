@@ -9,8 +9,6 @@ from abc import ABC, abstractmethod
 from loguru import logger
 
 from batter.config.simulation import SimulationConfig, MEMBRANE_EXEMPT_COMPONENTS
-from batter._internal.ops import io as io_ops
-from batter._internal.ops import simprep as sim_ops
 from batter._internal.builders.interfaces import BuildContext
 
 
@@ -152,6 +150,8 @@ class BaseBuilder(ABC):
 
         # 1) complex (anchors) at win == -1 only
         if self.ctx.win == -1:
+            from batter._internal.ops import io as io_ops
+
             io_ops.reset_dir(self.build_dir)
             anchor_ok = self._build_complex()
             if not anchor_ok:
@@ -163,6 +163,8 @@ class BaseBuilder(ABC):
         if self.ctx.win == -1:
             self._create_simulation_dir()
         else:
+            from batter._internal.ops import simprep as sim_ops
+
             sim_ops.copy_simulation_dir(
                 source=self.ctx.working_dir / f"{self.ctx.comp}-1",
                 dest=self.window_dir,

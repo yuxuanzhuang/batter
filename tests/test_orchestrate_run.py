@@ -48,9 +48,32 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "edit rbfe_network.json" in note
     assert "reloads its pairs field" in note
     assert "fall back to the configured atom mapper" in note
-    assert "Identical duplicate ligands and full-map edges are omitted" in note
+    assert "Identical duplicate ligands are omitted" in note
+    assert "Full-map edges are retained" in note
     assert "run.only_rbfe_network" in note
     assert "--full-rbfe" in note
+
+
+def test_preflight_required_python_packages_reports_missing_prolif(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_find_spec(module_name: str):
+        if module_name == "prolif":
+            return None
+        return object()
+
+    monkeypatch.setattr(run_mod.importlib_util, "find_spec", fake_find_spec)
+
+    with pytest.raises(RuntimeError, match="prolif"):
+        run_mod._preflight_required_python_packages()
+
+
+def test_preflight_required_python_packages_passes_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_mod.importlib_util, "find_spec", lambda _name: object())
+
+    run_mod._preflight_required_python_packages()
 
 
 @pytest.mark.parametrize("has_results", [False])
@@ -177,10 +200,11 @@ def test_extract_ligand_metadata_records_both_rbfe_endpoints(tmp_path: Path) -> 
     assert original_path == "/inputs/ref.sdf~/inputs/alt.sdf"
 
 
-def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
+def test_save_fe_records_does_not_duplicate_rbfe_network_plot(tmp_path: Path) -> None:
     run_dir = tmp_path / "run1"
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "rbfe_network.json").write_text('{"pairs": []}')
     (config_dir / "rbfe_network.png").write_text("png")
     (config_dir / "rbfe_network.html").write_text("<html></html>")
 
@@ -220,9 +244,19 @@ def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
 
     assert not failures
     out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.png"
-    assert out.exists()
+    assert not out.exists()
     html_out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.html"
-    assert html_out.exists()
+    assert not html_out.exists()
+    assert (
+        run_dir / "results" / "run1" / "rbfe_network.json"
+    ).read_text() == '{"pairs": []}'
+    assert (run_dir / "results" / "run1" / "rbfe_network.png").read_text() == "png"
+    assert (
+        run_dir / "results" / "run1" / "rbfe_network.html"
+    ).read_text() == "<html></html>"
+    assert (config_dir / "rbfe_network.json").exists()
+    assert (config_dir / "rbfe_network.png").exists()
+    assert (config_dir / "rbfe_network.html").exists()
 
 
 def test_build_rbfe_network_plan_writes_planned_html(
@@ -239,12 +273,14 @@ def test_build_rbfe_network_plan_writes_planned_html(
     cfg = RBFENetworkArgs(
         mapping_file=mapping_file,
         atom_mapping_file=atom_mapping_file,
+        minimal_mapping_atom=4,
     )
     seen: dict[str, object] = {}
 
     def _fake_mapping_artifacts(**kwargs):
         overrides = kwargs["atom_mapping_overrides"]
         seen["manual_A_B"] = overrides.get_b_to_a("A", "B")
+        seen["minimal_mapping_atom"] = kwargs["minimal_mapping_atom"]
         return {
             "A~B": {
                 "image_data_uri": "data:image/png;base64,ZmFrZQ==",
@@ -272,7 +308,9 @@ def test_build_rbfe_network_plan_writes_planned_html(
     assert payload["pairs"] == [["A", "B"], ["A", "C"]]
     assert payload["atom_mapping_file"] == str(atom_mapping_file)
     assert payload["n_atom_mapping_overrides"] == 1
+    assert payload["minimal_mapping_atom"] == 4
     assert seen["manual_A_B"] == {0: 1, 2: 3}
+    assert seen["minimal_mapping_atom"] == 4
     html_path = tmp_path / "rbfe_network.html"
     assert html_path.exists()
     html_text = html_path.read_text()
@@ -302,8 +340,22 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
         out_path=html_path,
         metadata={"both_directions": True},
         edge_assets={
-            "A~B": {"mapping_score_rmsd": 0.91, "mapping_rmsd": 0.18},
-            "B~A": {"mapping_score_rmsd": 0.89, "mapping_rmsd": 0.21},
+            "A~B": {
+                "mapping_score_rmsd": 0.91,
+                "mapping_rmsd": 0.18,
+                "pocket_shape_score": 0.84,
+                "pocket_grid_score": 0.81,
+                "pocket_grid_containment": 0.93,
+                "pocket_grid_jaccard": 0.59,
+            },
+            "B~A": {
+                "mapping_score_rmsd": 0.89,
+                "mapping_rmsd": 0.21,
+                "pocket_shape_score": 0.82,
+                "pocket_grid_score": 0.79,
+                "pocket_grid_containment": 0.91,
+                "pocket_grid_jaccard": 0.57,
+            },
             "B~C": {"mapping_score_ratio_mapped_atoms": 0.72},
         },
     )
@@ -317,6 +369,11 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
     assert "connectivity_score" in html_text
     assert "edge-metric-select" in html_text
     assert "edgeMetricDefinitions" in html_text
+    assert "Pocket similarity" in html_text
+    assert "pocket_shape_score" in html_text
+    assert 'const defaultEdgeMetric = "pocket_shape_score"' in html_text
+    assert '"pocket_shape_score": 0.83' in html_text
+    assert "Pocket containment" in html_text
     assert "Kartograf RMSD score" in html_text
     assert "mapping_score_rmsd" in html_text
     assert '"mapping_score_rmsd": 0.9' in html_text
@@ -365,6 +422,95 @@ def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(
     assert payload["add_atom_mapping_edges"] is True
     assert payload["added_atom_mapping_edges"] == [["B", "C"]]
     assert seen["pairs"] == [["A", "B"], ["B", "C"]]
+
+
+def test_build_rbfe_network_plan_defaults_septop_to_pocket_shape_scorer(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    seen: dict[str, object] = {}
+
+    def _fake_konnektor_pairs(*args, **kwargs):
+        seen["network_scorer"] = kwargs["network_scorer"]
+        seen["protocol"] = kwargs["protocol"]
+        return [("A", "B")]
+
+    def _fake_mapping_artifacts(**kwargs):
+        return {}
+
+    monkeypatch.setattr("batter.rbfe.konnektor_pairs", _fake_konnektor_pairs)
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {"A": str(tmp_path / "A.sdf"), "B": str(tmp_path / "B.sdf")},
+        RBFENetworkArgs(mapping="default"),
+        tmp_path,
+        protocol="rbfe_septop",
+    )
+
+    assert payload["pairs"] == [["A", "B"]]
+    assert payload["network_scorer"] == "pocket_shape"
+    assert seen["network_scorer"] == "auto"
+    assert seen["protocol"] == "rbfe_septop"
+
+
+def test_build_rbfe_network_plan_orients_generated_edges_by_larger_volume(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+
+    def _fake_konnektor_pairs(*args, **kwargs):
+        return [("A", "B")]
+
+    def _fake_orient_pairs(pairs, ligand_files):
+        assert list(pairs) == [("A", "B")]
+        assert set(ligand_files) == {"A", "B"}
+        return [("B", "A")], [
+            {
+                "input_pair": ["A", "B"],
+                "pair": ["B", "A"],
+                "reference": "B",
+                "target": "A",
+                "flipped": True,
+                "input_reference_volume_voxels": 100,
+                "input_target_volume_voxels": 180,
+                "reference_volume_voxels": 180,
+                "target_volume_voxels": 100,
+                "reason": "larger_reference_volume",
+            }
+        ]
+
+    monkeypatch.setattr("batter.rbfe.konnektor_pairs", _fake_konnektor_pairs)
+    monkeypatch.setattr(
+        "batter.rbfe.orient_pairs_by_ligand_volume",
+        _fake_orient_pairs,
+    )
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        lambda **kwargs: {},
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {"A": str(tmp_path / "A.sdf"), "B": str(tmp_path / "B.sdf")},
+        RBFENetworkArgs(mapping="konnektor"),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["B", "A"]]
+    assert payload["direction_policy"] == "larger_volume"
+    assert payload["direction_policy_applied"] is True
+    assert payload["direction_decisions"][0]["flipped"] is True
 
 
 def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
@@ -445,7 +591,7 @@ def test_build_rbfe_network_plan_all_identical_ligands_writes_empty_network(
     assert json.loads((tmp_path / "rbfe_network.json").read_text())["pairs"] == []
 
 
-def test_build_rbfe_network_plan_skips_full_map_edges(
+def test_build_rbfe_network_plan_keeps_full_map_edges(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -457,7 +603,9 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
         lambda path: Path(path).stem,
     )
     mapping_file = tmp_path / "mapping.json"
-    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+    mapping_file.write_text(
+        json.dumps({"pairs": [["A", "B"], ["A", "C"], ["B", "C"]]})
+    )
     seen: dict[str, object] = {}
 
     def _fake_mapping_artifacts(**kwargs):
@@ -478,6 +626,12 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
                 "n_ref_atoms": 6,
                 "n_alt_atoms": 7,
             },
+            "B~C": {
+                "full_atom_mapping": False,
+                "n_mapped": 4,
+                "n_ref_atoms": 8,
+                "n_alt_atoms": 7,
+            },
         }
 
     monkeypatch.setattr(
@@ -496,19 +650,119 @@ def test_build_rbfe_network_plan_skips_full_map_edges(
         tmp_path,
     )
 
-    assert seen["pairs"] == [["A", "B"], ["A", "C"]]
-    assert payload["pairs"] == [["A", "C"]]
-    assert payload["skipped_full_atom_map_edges"] == [
-        {
-            "pair": ["A", "B"],
-            "n_mapped": 6,
-            "n_ref_atoms": 8,
-            "n_alt_atoms": 8,
-            "n_ref_heavy_atoms": 6,
-            "n_alt_heavy_atoms": 6,
-            "reason": "full_heavy_atom_mapping",
+    assert seen["pairs"] == [["A", "B"], ["A", "C"], ["B", "C"]]
+    assert payload["pairs"] == [["A", "B"], ["A", "C"], ["B", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
+    assert "skipped_full_atom_map_edges" not in payload
+
+
+def test_build_rbfe_network_plan_keeps_full_map_edges_for_septop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+
+    def _fake_mapping_artifacts(**kwargs):
+        assert kwargs["protocol"] == "rbfe_septop"
+        return {
+            "A~B": {
+                "full_atom_mapping": True,
+                "full_heavy_atom_mapping": True,
+                "n_mapped": 12,
+            },
+            "A~C": {
+                "full_atom_mapping": False,
+                "n_mapped": 4,
+            },
         }
-    ]
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+        protocol="rbfe_septop",
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
+    assert "skipped_full_atom_map_edges" not in payload
+
+
+def test_build_rbfe_network_plan_rejects_orphan_ligand(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+
+    with pytest.raises(ValueError, match="C"):
+        run_mod._build_rbfe_network_plan(
+            ["A", "B", "C"],
+            {
+                "A": str(tmp_path / "A.sdf"),
+                "B": str(tmp_path / "B.sdf"),
+                "C": str(tmp_path / "C.sdf"),
+            },
+            RBFENetworkArgs(mapping_file=mapping_file),
+            tmp_path,
+        )
+
+
+def test_build_rbfe_network_plan_keeps_ligand_connected_by_full_map_edge(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    monkeypatch.setattr(
+        "batter.rbfe.ligand_identity_key",
+        lambda path: Path(path).stem,
+    )
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+
+    def _fake_mapping_artifacts(**kwargs):
+        return {
+            "A~B": {"full_atom_mapping": False, "n_mapped": 4},
+            "A~C": {"full_heavy_atom_mapping": True, "n_mapped": 6},
+        }
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["full_atom_map_edge_filter"] == "disabled"
 
 
 def test_build_rbfe_network_plan_treats_reverse_atom_mapping_edge_as_planned(
@@ -553,7 +807,7 @@ def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_d
 
     monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
     mapping_file = tmp_path / "mapping.json"
-    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
     atom_mapping_file = tmp_path / "atom_mapping.json"
     atom_mapping_file.write_text(json.dumps({"B~C": {"0": 1}}))
 
@@ -576,7 +830,7 @@ def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_d
         tmp_path,
     )
 
-    assert payload["pairs"] == [["A", "B"]]
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
     assert payload["add_atom_mapping_edges"] is False
     assert payload["unused_atom_mapping_overrides"] == [["B", "C"]]
 
@@ -591,17 +845,19 @@ def test_rbfe_preflight_requires_atom_mapping_file(tmp_path: Path) -> None:
         run_mod._preflight_rbfe_mapping_files(rc, tmp_path / "run")
 
 
-def test_rbfe_preflight_requires_network_file_when_prepare_marker_exists(
+def test_rbfe_preflight_removes_stale_prepare_marker_without_network(
     tmp_path: Path,
 ) -> None:
     run_dir = tmp_path / "run"
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True)
-    (config_dir / "prepare_rbfe.ok").write_text("ok\n")
+    marker = config_dir / "prepare_rbfe.ok"
+    marker.write_text("ok\n")
     rc = SimpleNamespace(protocol="rbfe", rbfe=None)
 
-    with pytest.raises(FileNotFoundError, match="rbfe_network.json"):
-        run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+    run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+
+    assert not marker.exists()
 
 
 def test_rbfe_network_pair_guard_rejects_empty_network(tmp_path: Path) -> None:
@@ -625,7 +881,7 @@ def test_prepare_rbfe_handler_writes_parent_stage_marker(
 
     called: dict[str, object] = {}
 
-    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
         called["ligands"] = list(ligands)
         called["lig_map"] = dict(lig_map)
         called["config_dir"] = config_dir
@@ -675,6 +931,49 @@ def test_rbfe_pipeline_prepares_network_before_equil() -> None:
     ]
     assert pipeline.dependencies("prepare_rbfe") == ["param_ligands"]
     assert pipeline.dependencies("prepare_equil") == ["prepare_rbfe"]
+
+
+def test_abfe_diff_pipeline_uses_pre_fe_equil_before_final_fe() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "abfe_diff",
+        _make_sim_cfg(),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" in names
+    assert "pre_fe_equil" in names
+    assert names.index("pre_fe_equil") < names.index("prepare_fe")
+    assert pipeline.dependencies("pre_fe_equil") == ["pre_prepare_fe"]
+    assert pipeline.dependencies("prepare_fe") == ["pre_fe_equil"]
+
+
+def test_ligand_rest_pipeline_uses_normal_single_ligand_fe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "ligand-rest",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "ligand_rest",
+                "components": ["l"],
+                "component_lambdas": {"l": [0.0, 1.0]},
+                "dic_n_steps": {"l": 100_000},
+                "lig_dihcf_force": 10.0,
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
 
 
 def test_save_fe_records_copies_rbfe_mapping_artifacts(
@@ -761,7 +1060,7 @@ def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
     }
     called: dict[str, object] = {}
 
-    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
         called["ligands"] = list(ligands)
         called["lig_map"] = dict(lig_map)
         called["config_dir"] = config_dir
@@ -780,6 +1079,35 @@ def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
     assert called["ligands"] == ["B", "C"]
     assert set(called["lig_map"]) == {"B", "C"}
     assert called["config_dir"] == tmp_path
+    assert out["pairs"] == [["B", "C"]]
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_uses_pairs_when_ligands_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {
+        "pairs": [["A", "B"], ["A", "C"]],
+        "mapping": "default",
+    }
+    called: dict[str, object] = {}
+
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
+        called["ligands"] = list(ligands)
+        called["lig_map"] = dict(lig_map)
+        return {"ligands": ["B", "C"], "pairs": [["B", "C"]], "mapping": "default"}
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _fake_build)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+
+    assert called["ligands"] == ["B", "C"]
+    assert set(called["lig_map"]) == {"B", "C"}
     assert out["pairs"] == [["B", "C"]]
 
 
@@ -892,6 +1220,10 @@ def test_resolve_signature_conflict_raises_on_mismatch(tmp_path: Path) -> None:
 def test_select_system_builder_validates_system_type() -> None:
     builder = rs.select_system_builder("abfe", system_type=None)
     assert builder is not None
+    abfe_diff_builder = rs.select_system_builder("ABFE-diff", system_type=None)
+    assert abfe_diff_builder is not None
+    ligand_rest_builder = rs.select_system_builder("ligand-rest", system_type=None)
+    assert ligand_rest_builder is not None
     with pytest.raises(ValueError):
         rs.select_system_builder("abfe", system_type="MASFE")
 
@@ -967,11 +1299,11 @@ def test_run_phase_with_failure_policy_retries_once_then_prunes(
         run_calls.append(kwargs.get("on_failure") or "")
         return False
 
-    def fake_partition(children, phase_name):
+    def fake_partition(children, phase_name, **kwargs):
         status_calls["count"] += 1
         return ([], [child])
 
-    def fake_handle(children, phase_name, mode):
+    def fake_handle(children, phase_name, mode, **kwargs):
         handle_calls.append(mode)
         if mode == "retry":
             return [child]

@@ -125,8 +125,11 @@ Anchor Atoms
 * ligand-bound MD uses the first real ligand pose to select receptor anchors;
 * apo-only MD uses the protein-only heuristic.
 
-Provide explicit anchors only when you want to pin a known binding site or
-override the heuristic:
+If you know the receptor interaction that should define the anchor frame, you
+can provide one selection and BATTER will treat it as P1 while choosing P2/P3
+automatically. Prefer the binding-site Cα of a residue associated with a
+conserved ligand interaction, such as the residue forming a salt bridge. Provide
+three selections only when you need fully manual P1/P2/P3 geometry:
 
 .. code-block:: yaml
 
@@ -138,7 +141,8 @@ override the heuristic:
 
 The resolved selections are written to
 ``executions/<run_id>/all-ligands/manifest.json`` under ``anchors`` and
-``anchor_atom_selections``.
+``anchor_atom_selections``. Prepared-system masks are written per ligand to
+``equil/anchors.json``.
 
 Running the Workflow
 --------------------

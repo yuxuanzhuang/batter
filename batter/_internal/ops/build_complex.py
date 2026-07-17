@@ -64,6 +64,623 @@ def _atom_is_hydrogen(atom) -> bool:
     return name.startswith("H") or (len(name) > 1 and name[0].isdigit() and name[1] == "H")
 
 
+def _executable_available(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
+def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path, *, working_dir: Path) -> None:
+    if _executable_available("pdb4amber"):
+        run_with_log(
+            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
+            working_dir=working_dir,
+        )
+        return
+    logger.warning(
+        "pdb4amber was not found; copying {} to {} without additional cleanup.",
+        input_pdb,
+        output_pdb,
+    )
+    shutil.copy2(input_pdb, output_pdb)
+
+
+def _empty_atomgroup(u: mda.Universe):
+    return u.atoms[[]]
+
+
+def _write_atomgroup_pdb(ag, path: Path) -> None:
+    if ag.n_atoms == 0:
+        path.write_text("END\n")
+        return
+    ag.write(str(path))
+
+
+def _unique_atomgroup(u: mda.Universe, *groups):
+    atom_indices: list[int] = []
+    for group in groups:
+        if group is not None and group.n_atoms:
+            atom_indices.extend(int(idx) for idx in group.ix)
+    if not atom_indices:
+        return _empty_atomgroup(u)
+    return u.atoms[np.asarray(sorted(set(atom_indices)), dtype=int)]
+
+
+def _center_of_atoms(ag, *, mass_weighted: bool = True) -> np.ndarray:
+    if ag.n_atoms == 0:
+        raise ValueError("Cannot compute center of an empty atom selection.")
+    positions = np.asarray(ag.positions, dtype=float)
+    if not mass_weighted:
+        return positions.mean(axis=0)
+    try:
+        masses = np.asarray(ag.masses, dtype=float)
+        if np.all(np.isfinite(masses)) and float(masses.sum()) > 0.0:
+            return np.average(positions, axis=0, weights=masses)
+    except Exception:
+        pass
+    return positions.mean(axis=0)
+
+
+def _angle_degrees(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    v1 = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    v2 = np.asarray(c, dtype=float) - np.asarray(b, dtype=float)
+    n1 = float(np.linalg.norm(v1))
+    n2 = float(np.linalg.norm(v2))
+    if n1 == 0.0 or n2 == 0.0:
+        return float("nan")
+    cosang = float(np.dot(v1, v2) / (n1 * n2))
+    cosang = max(-1.0, min(1.0, cosang))
+    return float(np.degrees(np.arccos(cosang)))
+
+
+def _kabsch_transform(mobile: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mobile_center = mobile.mean(axis=0)
+    reference_center = reference.mean(axis=0)
+    mobile_c = mobile - mobile_center
+    reference_c = reference - reference_center
+    covariance = mobile_c.T @ reference_c
+    u, _s, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1
+        rotation = vt.T @ u.T
+    translation = reference_center - mobile_center @ rotation
+    return rotation, translation
+
+
+def _resname_group(u: mda.Universe, names: Sequence[str]):
+    names_set = {str(name) for name in names if str(name)}
+    if not names_set:
+        return _empty_atomgroup(u)
+    mask = np.asarray([str(resname) in names_set for resname in u.atoms.resnames])
+    return u.atoms[mask]
+
+
+def _python_split_rec_file(
+    *,
+    workdir: Path,
+    mol: str,
+    solv_shell: float,
+    other_mol: Sequence[str],
+    lipid_mol: Sequence[str],
+    keep_all_waters: bool = False,
+) -> None:
+    """Python fallback for split-ini.tcl when VMD is unavailable."""
+    rec_file = workdir / "rec_file.pdb"
+    u = mda.Universe(str(rec_file))
+    core_sel = f"(protein or resname ACE NMA NME NHE or resname {mol})"
+    dum = u.select_atoms("resname DUM")
+    prot = u.select_atoms(f"(protein or resname ACE NMA NME NHE) and not resname {mol}")
+    lipid = _resname_group(u, lipid_mol)
+    lig = u.select_atoms(f"resname {mol}")
+
+    if other_mol:
+        other_names = " ".join(str(name) for name in other_mol)
+        othrs = u.select_atoms(
+            f"resname {other_names} and not water and same residue as "
+            f"(around {float(solv_shell):.6g} {core_sel})"
+        )
+    else:
+        othrs = _empty_atomgroup(u)
+
+    near_terms = [core_sel]
+    if other_mol:
+        near_terms.append(f"resname {' '.join(str(name) for name in other_mol)}")
+    if lipid_mol:
+        near_terms.append(f"resname {' '.join(str(name) for name in lipid_mol)}")
+    near_sel = "(" + " or ".join(near_terms) + ")"
+    if keep_all_waters:
+        wat = u.select_atoms("water")
+    else:
+        wat = u.select_atoms(
+            f"water and same residue as (around {float(solv_shell):.6g} {near_sel})"
+        )
+    if wat.n_atoms:
+        wat.residues.resnames = "WAT"
+
+    if keep_all_waters:
+        ion = u.select_atoms("resname Na+ Cl- K+")
+    else:
+        ion = u.select_atoms(
+            "resname Na+ Cl- K+ and same residue as "
+            "(around 5 (protein or resname ACE NMA NME NHE))"
+        )
+
+    _write_atomgroup_pdb(dum, workdir / "dummy.pdb")
+    _write_atomgroup_pdb(prot, workdir / "protein.pdb")
+    _write_atomgroup_pdb(ion, workdir / "others.pdb")
+    if othrs.n_atoms:
+        combined = _unique_atomgroup(u, ion, othrs)
+        _write_atomgroup_pdb(combined, workdir / "others.pdb")
+    _write_atomgroup_pdb(lipid, workdir / "lipids.pdb")
+    _write_atomgroup_pdb(wat, workdir / "crystalwat.pdb")
+    _write_atomgroup_pdb(lig, workdir / f"{mol}.pdb")
+
+
+def _python_measure_fit(
+    *,
+    workdir: Path,
+    reference_pdb: str = "aligned-nc.pdb",
+    mobile_pdb: str = "complex.pdb",
+    output_pdb: str = "aligned.pdb",
+) -> None:
+    """Python fallback for measure-fit.tcl when VMD is unavailable."""
+    ref = mda.Universe(str(workdir / reference_pdb))
+    mob = mda.Universe(str(workdir / mobile_pdb))
+    ref_sel = ref.select_atoms("protein and backbone")
+    mob_sel = mob.select_atoms("protein and backbone")
+    if ref_sel.n_atoms == 0 or mob_sel.n_atoms == 0:
+        raise RuntimeError("Cannot align complex: empty protein backbone selection.")
+    if ref_sel.n_atoms != mob_sel.n_atoms:
+        n = min(ref_sel.n_atoms, mob_sel.n_atoms)
+        logger.warning(
+            "Backbone atom counts differ during Python fit (reference={}, mobile={}); "
+            "using first {} atoms.",
+            ref_sel.n_atoms,
+            mob_sel.n_atoms,
+            n,
+        )
+        ref_pos = ref_sel.positions[:n]
+        mob_pos = mob_sel.positions[:n]
+    else:
+        ref_pos = ref_sel.positions
+        mob_pos = mob_sel.positions
+    rotation, translation = _kabsch_transform(np.asarray(mob_pos), np.asarray(ref_pos))
+    mob.atoms.positions = np.asarray(mob.atoms.positions) @ rotation + translation
+    mob.atoms.write(str(workdir / output_pdb))
+
+
+def _translate_pdb_to_reference_frame(
+    *,
+    target_pdb: Path,
+    reference_pdb: Path,
+    selection: str = "protein and name CA",
+) -> np.ndarray | None:
+    """Translate a generated PDB back to the reference coordinate frame."""
+    if not target_pdb.exists() or not reference_pdb.exists():
+        return None
+
+    target = mda.Universe(str(target_pdb))
+    reference = mda.Universe(str(reference_pdb))
+    target_sel = target.select_atoms(selection)
+    reference_sel = reference.select_atoms(selection)
+    if target_sel.n_atoms == 0 or reference_sel.n_atoms == 0:
+        logger.debug(
+            "Could not restore {} to reference frame: empty selection {!r}.",
+            target_pdb.name,
+            selection,
+        )
+        return None
+    if target_sel.n_atoms != reference_sel.n_atoms:
+        logger.debug(
+            "Could not restore {} to reference frame: selection {!r} has {} target "
+            "atoms and {} reference atoms.",
+            target_pdb.name,
+            selection,
+            target_sel.n_atoms,
+            reference_sel.n_atoms,
+        )
+        return None
+
+    translation = np.median(reference_sel.positions - target_sel.positions, axis=0)
+    if not np.all(np.isfinite(translation)):
+        return None
+    if float(np.linalg.norm(translation)) <= 1.0e-4:
+        return translation
+
+    target.atoms.positions = target.atoms.positions + translation
+    target.atoms.write(str(target_pdb))
+    logger.debug(
+        "Translated {} back to reference frame by [{:.3f}, {:.3f}, {:.3f}] Å.",
+        target_pdb.name,
+        float(translation[0]),
+        float(translation[1]),
+        float(translation[2]),
+    )
+    return translation
+
+
+def _translate_pdb_by_vector(target_pdb: Path, translation: Sequence[float]) -> None:
+    if not target_pdb.exists():
+        return
+    vector = np.asarray(translation, dtype=float)
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        return
+    if float(np.linalg.norm(vector)) <= 1.0e-4:
+        return
+    target = mda.Universe(str(target_pdb))
+    target.atoms.positions = target.atoms.positions + vector
+    target.atoms.write(str(target_pdb))
+
+
+def _write_python_prep_script_marker(workdir: Path) -> None:
+    (workdir / "prep.tcl").write_text(
+        "# VMD unavailable; BATTER used Python fallback for prep-ini.tcl.\n"
+    )
+
+
+def _ligand_atom_by_name(u: mda.Universe, mol: str, atom_name: str):
+    return u.select_atoms(f"resname {mol} and name {atom_name}")
+
+
+def _receptor_atom_by_resid_name(u: mda.Universe, mol: str, resid: str, atom_name: str):
+    return u.select_atoms(f"(not resname {mol}) and resid {resid} and name {atom_name}")
+
+
+def _atom_from_anchor_mask(
+    u: mda.Universe,
+    mask: str,
+    *,
+    mol: str,
+    ligand: bool,
+):
+    match = re.match(r"^:(-?\d+)@(.+)$", str(mask).strip())
+    if match is None:
+        return None
+    resid = match.group(1)
+    atom_name = match.group(2).strip()
+    if ligand:
+        selections = [
+            f"resname {mol} and resid {resid} and name {atom_name}",
+            f"resid {resid} and name {atom_name}",
+        ]
+    else:
+        selections = [
+            f"(not resname {mol}) and resid {resid} and name {atom_name}",
+            f"protein and resid {resid} and name {atom_name}",
+            f"resid {resid} and name {atom_name}",
+        ]
+    for selection in selections:
+        atoms = u.select_atoms(selection)
+        if atoms.n_atoms == 1:
+            return atoms[0]
+    return None
+
+
+def _ligand_residue_for_boresch_guard(
+    u: mda.Universe,
+    *,
+    mol: str,
+    lig_resid: str,
+):
+    lig_resid = str(lig_resid or "").strip()
+    if lig_resid:
+        atoms = u.select_atoms(f"resname {mol} and resid {lig_resid}")
+    else:
+        atoms = u.select_atoms(f"resname {mol}")
+    if atoms.n_atoms == 0:
+        atoms = u.select_atoms(f"resname {mol}")
+    if atoms.n_atoms == 0:
+        return None
+    return atoms.residues[0]
+
+
+def _guard_abfe_boresch_ligand_anchor_names(
+    *,
+    fe_pdb: Path,
+    mol: str,
+    ligand_label: str,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_resid: str,
+    selected_names: Sequence[str],
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
+    """Avoid endpoint angle/torsion Boresch ligand-anchor triplets for ABFE."""
+    try:
+        from batter._internal.ops.restraints import (
+            _boresch_frame_margins,
+            _boresch_frame_values,
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not import Boresch frame guard for {}; "
+            "keeping ligand anchors {}: {}",
+            ligand_label,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    try:
+        u = mda.Universe(str(fe_pdb))
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not load {} for Boresch frame guard; "
+            "keeping ligand anchors {}: {}",
+            fe_pdb,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    receptor_atoms = []
+    for mask in (P1, P2, P3):
+        atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
+        if atom is None:
+            logger.warning(
+                "[build_complex_z] Could not resolve receptor anchor {} in {}; "
+                "keeping ligand anchors {}.",
+                mask,
+                fe_pdb.name,
+                list(selected_names[:3]),
+            )
+            return list(selected_names[:3])
+        receptor_atoms.append(atom)
+
+    residue = _ligand_residue_for_boresch_guard(u, mol=mol, lig_resid=lig_resid)
+    if residue is None:
+        logger.warning(
+            "[build_complex_z] Could not resolve ligand residue {}:{} in {}; "
+            "keeping ligand anchors {}.",
+            mol,
+            lig_resid,
+            fe_pdb.name,
+            list(selected_names[:3]),
+        )
+        return list(selected_names[:3])
+
+    try:
+        guarded_names = _frame_safe_boresch_atom_names_from_residue(
+            residue,
+            receptor_atoms=receptor_atoms,
+            label=f"ABFE {ligand_label}",
+            preferred_first_names=preferred_first_names,
+        )[:3]
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not select guarded ABFE Boresch anchors for {}; "
+            "keeping ligand anchors {}: {}",
+            ligand_label,
+            list(selected_names[:3]),
+            exc,
+        )
+        return list(selected_names[:3])
+
+    residue_atoms_by_name = {
+        str(atom.name).strip(): atom for atom in residue.atoms
+    }
+    ligand_atoms = [
+        residue_atoms_by_name.get(str(name).strip()) for name in guarded_names
+    ]
+    if any(atom is None for atom in ligand_atoms):
+        logger.warning(
+            "[build_complex_z] Guarded ABFE Boresch anchors {} were not all found in {}; "
+            "keeping ligand anchors {}.",
+            guarded_names,
+            fe_pdb.name,
+            list(selected_names[:3]),
+        )
+        return list(selected_names[:3])
+
+    values = _boresch_frame_values(receptor_atoms, ligand_atoms)
+    margins = _boresch_frame_margins(values or ())
+    if list(selected_names[:3]) != guarded_names:
+        logger.debug(
+            "[build_complex_z] Replaced ABFE Boresch ligand anchors for {}: {} -> {} "
+            "(angle margin {:.1f} deg, torsion margin {:.1f} deg).",
+            ligand_label,
+            list(selected_names[:3]),
+            guarded_names,
+            margins[0],
+            margins[1],
+        )
+    return guarded_names
+
+
+def _pick_ligand_anchor_names(
+    *,
+    u: mda.Universe,
+    mol: str,
+    ligand_names: Sequence[str],
+    p1_resid: str,
+    p1_atom: str,
+    p2_resid: str,
+    p2_atom: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    min_adis: float,
+    max_adis: float,
+) -> list[str]:
+    p1 = _receptor_atom_by_resid_name(u, mol, p1_resid, p1_atom)
+    p2 = _receptor_atom_by_resid_name(u, mol, p2_resid, p2_atom)
+    if p1.n_atoms == 0 or p2.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+    p1_center = _center_of_atoms(p1)
+    p2_center = _center_of_atoms(p2)
+    target = p1_center + np.asarray([l1_x, l1_y, l1_z], dtype=float)
+
+    candidates: dict[str, np.ndarray] = {}
+    for name in ligand_names:
+        atoms = _ligand_atom_by_name(u, mol, str(name))
+        if atoms.n_atoms == 0:
+            continue
+        center = _center_of_atoms(atoms)
+        dist = float(np.linalg.norm(center - target))
+        if dist >= float(l1_range):
+            continue
+        angle = _angle_degrees(p2_center, p1_center, center)
+        if np.isfinite(angle):
+            candidates[str(name)] = center
+
+    aa1: str | None = None
+    for tolerance in (15.0, 70.0):
+        best_diff = float("inf")
+        for name, center in candidates.items():
+            angle = _angle_degrees(p2_center, p1_center, center)
+            if not np.isfinite(angle) or abs(angle - 90.0) > tolerance:
+                continue
+            diff = float(np.linalg.norm(center - target))
+            if diff < best_diff:
+                best_diff = diff
+                aa1 = name
+        if aa1 is not None:
+            break
+    if aa1 is None:
+        raise RuntimeError("anchor not found")
+
+    aa1_center = candidates[aa1]
+    aa2: str | None = None
+    best_angle_diff = float("inf")
+    for name, center in candidates.items():
+        if name == aa1:
+            continue
+        distance = float(np.linalg.norm(center - aa1_center))
+        if not (float(min_adis) < distance < float(max_adis)):
+            continue
+        angle = _angle_degrees(p1_center, aa1_center, center)
+        if not np.isfinite(angle):
+            continue
+        angle_diff = abs(angle - 90.0)
+        if angle_diff < best_angle_diff:
+            best_angle_diff = angle_diff
+            aa2 = name
+    if aa2 is None:
+        raise RuntimeError("anchor not found")
+
+    aa2_center = candidates[aa2]
+    aa3: str | None = None
+    best_angle_diff = float("inf")
+    for name, center in candidates.items():
+        if name in {aa1, aa2}:
+            continue
+        distance = float(np.linalg.norm(center - aa2_center))
+        if not (float(min_adis) < distance < float(max_adis)):
+            continue
+        angle = _angle_degrees(aa1_center, aa2_center, center)
+        if not np.isfinite(angle):
+            continue
+        angle_diff = abs(angle - 90.0)
+        if angle_diff < best_angle_diff:
+            best_angle_diff = angle_diff
+            aa3 = name
+    if aa3 is None:
+        raise RuntimeError("anchor not found")
+    return [aa1, aa2, aa3]
+
+
+def _python_prep_complex(
+    *,
+    workdir: Path,
+    mol: str,
+    p1_atom: str,
+    p1_vmd: str,
+    p2_atom: str,
+    p2_vmd: str,
+    first_resid: str,
+    last_resid: str,
+    stage: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    min_adis: float,
+    max_adis: float,
+    sdr_dist: float,
+    ligand_names: Sequence[str],
+    other_mol: Sequence[str],
+    lipid_mol: Sequence[str],
+) -> None:
+    """Python fallback for prep-ini.tcl when VMD is unavailable."""
+    _write_python_prep_script_marker(workdir)
+    u = mda.Universe(str(workdir / "aligned_amber.pdb"))
+    receptor_backbone = u.select_atoms(
+        f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+    )
+    if receptor_backbone.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+
+    core = u.select_atoms(
+        f"resid {first_resid} to {last_resid} and not water and not resname {mol} and not name H*"
+    )
+    lig = u.select_atoms(f"resname {mol}")
+    water = u.select_atoms("resname WAT")
+    others = _resname_group(u, other_mol)
+    lipids = _resname_group(u, lipid_mol)
+    ions = u.select_atoms("resname Na+ Cl- K+")
+    all_atoms = _unique_atomgroup(u, core, lig, others, water, lipids, ions)
+    shift = -_center_of_atoms(receptor_backbone)
+    all_atoms.positions = all_atoms.positions + shift
+    filini = workdir / f"{stage}-{mol}-ini.pdb"
+    filpdb = workdir / f"{stage}-{mol}.pdb"
+    _write_atomgroup_pdb(all_atoms, filini)
+    shutil.copy2(filini, filpdb)
+
+    prep_u = mda.Universe(str(filpdb))
+    lig = prep_u.select_atoms(f"resname {mol}")
+    if lig.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+    lig.chainIDs = "S"
+    lig.residues.resids = 1
+    _write_atomgroup_pdb(lig, workdir / f"{mol}.pdb")
+    lig_noh = lig.select_atoms("not name H*")
+    _write_atomgroup_pdb(lig_noh, workdir / f"{mol}-noh.pdb")
+    prep_u.atoms.write(str(filpdb))
+
+    anchors = _pick_ligand_anchor_names(
+        u=prep_u,
+        mol=mol,
+        ligand_names=ligand_names,
+        p1_resid=p1_vmd,
+        p1_atom=p1_atom,
+        p2_resid=p2_vmd,
+        p2_atom=p2_atom,
+        l1_x=float(l1_x),
+        l1_y=float(l1_y),
+        l1_z=float(l1_z),
+        l1_range=float(l1_range),
+        min_adis=float(min_adis),
+        max_adis=float(max_adis),
+    )
+    (workdir / "anchors.txt").write_text(" ".join(anchors) + "\n")
+
+    dum = mda.Universe(str(workdir / "dum.pdb"))
+    dum_atoms = dum.atoms
+    dummy_center = _center_of_atoms(dum_atoms)
+    receptor_center = _center_of_atoms(
+        prep_u.select_atoms(
+            f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+        )
+    )
+    dum_atoms.positions = dum_atoms.positions + (receptor_center - dummy_center)
+    _write_atomgroup_pdb(dum_atoms, workdir / "dum1.pdb")
+
+    if float(sdr_dist) != 0.0:
+        dum2 = mda.Universe(str(workdir / "dum.pdb"))
+        dum2_atoms = dum2.atoms
+        shifted_ligand_center = _center_of_atoms(lig_noh) + np.asarray(
+            [0.0, 0.0, float(sdr_dist)],
+            dtype=float,
+        )
+        dum2_atoms.positions = dum2_atoms.positions + (
+            shifted_ligand_center - _center_of_atoms(dum2_atoms)
+        )
+        dum2_atoms.residues.resids = 2
+        _write_atomgroup_pdb(dum2_atoms, workdir / "dum2.pdb")
+
+
 def _sdf_heavy_atom_ordinals(sdf_file: str | Path) -> tuple[int | None, dict[int, int]]:
     """Build a heavy-atom ordinal map for an SDF molecule.
 
@@ -248,6 +865,327 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
     except FileNotFoundError:
         pass
     shutil.copy2(src, dst)
+
+
+_STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 5
+
+
+def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
+    if not extra:
+        return False
+    anchors = extra.get("user_anchor_atoms") or ()
+    return any(str(anchor).strip() for anchor in anchors)
+
+
+def _load_stable_boresch_distance(equil_dir: Path) -> dict | None:
+    path = equil_dir / _STABLE_BORESCH_DISTANCE_JSON
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Ignoring unreadable stable Boresch distance {}: {}",
+            path,
+            exc,
+        )
+        return None
+    if not isinstance(data, dict):
+        logger.warning(
+            "[build_complex_z] Ignoring malformed stable Boresch distance {}", path
+        )
+        return None
+    try:
+        schema_version = int(data.get("schema_version", 0))
+    except Exception:
+        schema_version = 0
+    if schema_version < _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION:
+        logger.warning(
+            "[build_complex_z] Ignoring stale stable Boresch distance {} "
+            "(schema_version={}, expected >= {}).",
+            path,
+            schema_version,
+            _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+        )
+        return None
+    if data.get("usable") is False:
+        logger.debug(
+            "[build_complex_z] Stable Boresch distance {} is marked unusable: {}",
+            path,
+            data.get("reason", "no reason recorded"),
+        )
+        return None
+    return data
+
+
+def _stable_boresch_distance_candidates(stable_record: dict) -> list[dict]:
+    ranked = stable_record.get("ranked_pairs")
+    if isinstance(ranked, list):
+        candidates = [item for item in ranked if isinstance(item, dict)]
+        if candidates:
+            return candidates
+    return [stable_record]
+
+
+def _renumber_stable_protein_residue(
+    *,
+    renum_data: pd.DataFrame | None,
+    stable_resid: int,
+    stable_resname: str,
+    stable_chain: str,
+) -> int:
+    if renum_data is None:
+        return int(stable_resid)
+
+    matches = renum_data.query("old_resid == @stable_resid")
+    if matches.empty:
+        return int(stable_resid)
+
+    chain = str(stable_chain).strip()
+    if chain:
+        chain_matches = matches.query("old_chain == @chain")
+        if not chain_matches.empty:
+            matches = chain_matches
+
+    resname = str(stable_resname).strip()
+    if resname:
+        resname_matches = matches.query(
+            "old_resname == @resname or new_resname == @resname"
+        )
+        if not resname_matches.empty:
+            matches = resname_matches
+
+    # +1 matches the receptor numbering written into equil-<mol>.pdb because
+    # the dummy atom occupies residue 1 in the VMD prep system.
+    return int(matches["new_resid"].values[0]) + 1
+
+
+def _apply_stable_boresch_distance_preference(
+    *,
+    u: mda.Universe,
+    mol: str,
+    stable_record: dict,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_name_str: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    renum_data: pd.DataFrame | None = None,
+) -> dict | None:
+    protein = stable_record.get("protein") or {}
+    ligand = stable_record.get("ligand") or {}
+    if not isinstance(protein, dict) or not isinstance(ligand, dict):
+        return None
+
+    try:
+        stable_original_resid = int(protein["resid"])
+        stable_resname = str(protein.get("resname", "")).strip()
+        stable_protein_name = str(protein["name"]).strip()
+        stable_ligand_name = str(ligand["name"]).strip()
+    except Exception:
+        logger.warning(
+            "[build_complex_z] Stable Boresch distance JSON lacks atom metadata."
+        )
+        return None
+    if not stable_protein_name or not stable_ligand_name:
+        return None
+
+    stable_chain = str(protein.get("segid") or protein.get("chainID") or "").strip()
+    stable_resid = _renumber_stable_protein_residue(
+        renum_data=renum_data,
+        stable_resid=stable_original_resid,
+        stable_resname=stable_resname,
+        stable_chain=stable_chain,
+    )
+
+    candidate_names = [name for name in lig_name_str.split() if name]
+    if stable_ligand_name not in candidate_names:
+        logger.warning(
+            "[build_complex_z] Stable ligand atom {} is not in the current Boresch "
+            "candidate set {}; keeping default ligand-anchor search.",
+            stable_ligand_name,
+            " ".join(candidate_names),
+        )
+        return None
+
+    selection = (
+        f"(not resname {mol}) and resid {stable_resid} and name {stable_protein_name}"
+    )
+    stable_protein = u.select_atoms(selection)
+    if stable_protein.n_atoms != 1:
+        stable_protein = u.select_atoms(
+            f"protein and resid {stable_resid} and name {stable_protein_name}"
+        )
+    if stable_protein.n_atoms != 1:
+        logger.warning(
+            "[build_complex_z] Stable protein atom selection {} matched {} atom(s); "
+            "keeping default receptor P1.",
+            selection,
+            stable_protein.n_atoms,
+        )
+        return None
+
+    atom = stable_protein[0]
+    stable_P1 = f":{int(atom.resid)}@{atom.name}"
+    if stable_P1 in {P2, P3}:
+        logger.warning(
+            "[build_complex_z] Stable protein atom {} duplicates P2/P3; "
+            "keeping default receptor anchors.",
+            stable_P1,
+        )
+        return None
+
+    vector = stable_record.get("vector") or {}
+    try:
+        vector_mean = [float(x) for x in vector.get("mean", [])]
+        if len(vector_mean) != 3:
+            raise ValueError
+        l1_x_new, l1_y_new, l1_z_new = vector_mean
+    except Exception:
+        l1_x_new, l1_y_new, l1_z_new = float(l1_x), float(l1_y), float(l1_z)
+
+    try:
+        distance_std = float((stable_record.get("distance") or {}).get("std", 0.0))
+    except Exception:
+        distance_std = 0.0
+    l1_range_new = max(float(l1_range), 2.0 + 3.0 * max(distance_std, 0.0))
+
+    preferred_names = [stable_ligand_name] + [
+        name for name in candidate_names if name != stable_ligand_name
+    ]
+    return {
+        "P1": stable_P1,
+        "stable_original_P1": f":{stable_original_resid}@{stable_protein_name}",
+        "p1_resid": str(int(atom.resid)),
+        "p1_atom": str(atom.name),
+        "p1_vmd": str(int(atom.resid)),
+        "lig_name_str": " ".join(preferred_names),
+        "l1_x": l1_x_new,
+        "l1_y": l1_y_new,
+        "l1_z": l1_z_new,
+        "l1_range": l1_range_new,
+        "stable_ligand_name": stable_ligand_name,
+    }
+
+
+def _stable_preference_has_safe_boresch_frame(
+    *,
+    u: mda.Universe,
+    mol: str,
+    preference: dict,
+    P2: str,
+    P3: str,
+) -> bool:
+    try:
+        from batter._internal.ops.restraints import (
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not import Boresch frame guard while checking "
+            "stable pair {}: {}",
+            preference.get("stable_ligand_name"),
+            exc,
+        )
+        return True
+
+    receptor_atoms = []
+    for mask in (preference["P1"], P2, P3):
+        atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
+        if atom is None:
+            logger.debug(
+                "[build_complex_z] Stable-pair receptor anchor {} could not be "
+                "resolved for full-frame check.",
+                mask,
+            )
+            return False
+        receptor_atoms.append(atom)
+
+    residue = _ligand_residue_for_boresch_guard(u, mol=mol, lig_resid="")
+    if residue is None:
+        logger.debug(
+            "[build_complex_z] Ligand residue {} could not be resolved for "
+            "stable-pair full-frame check.",
+            mol,
+        )
+        return False
+
+    try:
+        _frame_safe_boresch_atom_names_from_residue(
+            residue,
+            receptor_atoms=receptor_atoms,
+            label="ABFE stable-pair precheck",
+            preferred_first_names=[preference["stable_ligand_name"]],
+            require_preferred_first=True,
+        )
+    except Exception as exc:
+        logger.debug(
+            "[build_complex_z] Stable pair P1={} L1={} did not pass the "
+            "full-frame Boresch guard: {}",
+            preference.get("P1"),
+            preference.get("stable_ligand_name"),
+            exc,
+        )
+        return False
+    return True
+
+
+def _select_stable_boresch_distance_preference(
+    *,
+    u: mda.Universe,
+    mol: str,
+    stable_record: dict,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_name_str: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    renum_data: pd.DataFrame | None = None,
+) -> dict | None:
+    candidates = _stable_boresch_distance_candidates(stable_record)
+    for rank, candidate in enumerate(candidates, start=1):
+        preference = _apply_stable_boresch_distance_preference(
+            u=u,
+            mol=mol,
+            stable_record=candidate,
+            P1=P1,
+            P2=P2,
+            P3=P3,
+            lig_name_str=lig_name_str,
+            l1_x=l1_x,
+            l1_y=l1_y,
+            l1_z=l1_z,
+            l1_range=l1_range,
+            renum_data=renum_data,
+        )
+        if preference is None:
+            continue
+        if not _stable_preference_has_safe_boresch_frame(
+            u=u,
+            mol=mol,
+            preference=preference,
+            P2=P2,
+            P3=P3,
+        ):
+            continue
+        preference["stable_rank"] = rank
+        preference["stable_candidate_count"] = len(candidates)
+        return preference
+
+    if candidates:
+        logger.debug(
+            "[build_complex_z] None of {} stable protein-ligand pair candidate(s) "
+            "satisfied the full-frame Boresch guard; using default anchors.",
+            len(candidates),
+        )
+    return None
 
 
 def _unit_vector(vec: np.ndarray) -> np.ndarray | None:
@@ -621,7 +1559,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             min_adis=float(min_adis),
             max_adis=float(max_adis),
         )
-        logger.info(
+        logger.debug(
             "[build_complex] Placed apo dummy ligand '{}' at the anchor reference "
             "and will use {} as ligand anchor(s).",
             ligand,
@@ -736,6 +1674,8 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     return True
 
 
+@register_build_complex("d")
+@register_build_complex("l")
 @register_build_complex("z")
 def build_complex_z(ctx) -> bool:
     """
@@ -762,6 +1702,13 @@ def build_complex_z(ctx) -> bool:
 
     workdir = ctx.build_dir
     workdir.mkdir(parents=True, exist_ok=True)
+    vmd_available = _executable_available(vmd)
+    if not vmd_available:
+        logger.warning(
+            "VMD executable {!r} was not found; using Python fallbacks for build-complex "
+            "split/fit/prep steps.",
+            vmd,
+        )
     child_root = ctx.working_dir  # .../simulations/<LIG>/fe/...
     sys_root = ctx.system_root  # .../work/<system>
     equil_dir = (
@@ -783,12 +1730,35 @@ def build_complex_z(ctx) -> bool:
         else:
             raise FileNotFoundError(f"Missing required file: {src}")
 
+    def _copy_first_existing(candidates: Sequence[Path], dst_name: str):
+        for src in candidates:
+            if src.exists():
+                shutil.copy2(src, _p(dst_name))
+                return src
+        raise FileNotFoundError(
+            "Missing required file; tried: "
+            + ", ".join(str(src) for src in candidates)
+        )
+
     # 1) copy artifacts from equil
-    _copy(equil_dir / "q_build_files" / f"{ligand}.pdb", f"{ligand}.pdb")
+    _copy_first_existing(
+        (
+            equil_dir / "q_build_files" / f"{ligand}.pdb",
+            equil_dir / f"{ligand}.pdb",
+            equil_dir / f"{mol}.pdb",
+        ),
+        f"{ligand}.pdb",
+    )
     _copy(equil_dir / "representative.rst7", "representative.rst7")
     _copy(equil_dir / "representative.pdb", "aligned-nc.pdb")
     _copy(equil_dir / "build_amber_renum.txt", "build_amber_renum.txt")
-    _copy(equil_dir / "q_build_files" / "protein_renum.txt", "protein_renum.txt")
+    _copy_first_existing(
+        (
+            equil_dir / "q_build_files" / "protein_renum.txt",
+            equil_dir / "protein_renum.txt",
+        ),
+        "protein_renum.txt",
+    )
 
     for p in equil_dir.glob("full*.prmtop"):
         shutil.copy2(p, _p(p.name))
@@ -858,6 +1828,12 @@ def build_complex_z(ctx) -> bool:
     lipid_mol_vmd = " ".join(lipid_mol) if lipid_mol else "XXX"
     with open(_p("split-ini.tcl"), "rt") as fin, open(_p("split.tcl"), "wt") as fout:
         for line in fin:
+            if membrane_builder and line.startswith("set wat "):
+                fout.write('set wat [atomselect 0 "water"]\n')
+                continue
+            if membrane_builder and line.startswith("set ion "):
+                fout.write('set ion [atomselect 0 "resname \'Na+\' \'Cl-\' \'K+\'"]\n')
+                continue
             fout.write(
                 line.replace("SHLL", f"{solv_shell:4.2f}")
                 .replace("OTHRS", str(other_mol_vmd))
@@ -865,7 +1841,17 @@ def build_complex_z(ctx) -> bool:
                 .replace("mmm", mol)
                 .replace("MMM", mol)
             )
-    run_with_log(f"{vmd} -dispdev text -e split.tcl", shell=False, working_dir=workdir)
+    if vmd_available:
+        run_with_log(f"{vmd} -dispdev text -e split.tcl", shell=False, working_dir=workdir)
+    else:
+        _python_split_rec_file(
+            workdir=workdir,
+            mol=mol,
+            solv_shell=float(solv_shell),
+            other_mol=other_mol,
+            lipid_mol=lipid_mol,
+            keep_all_waters=bool(membrane_builder),
+        )
 
     # 6) merge -> complex.pdb (strip headers/CRYST1/CONECT/END)
     pieces = [
@@ -902,6 +1888,12 @@ def build_complex_z(ctx) -> bool:
     p2_resid = P2.split("@")[0][1:]
     p2_atom = P2.split("@")[1]
     p2_vmd = p2_resid
+    renum_data = pd.read_csv(
+        _p("protein_renum.txt"),
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
 
     # 8) SDR distance
     if buffer_z <= 20:
@@ -919,16 +1911,24 @@ def build_complex_z(ctx) -> bool:
     logger.debug(f"[build_complex_z] SDR distance: {sdr_dist:.2f} Å, abs_z: {abs_z:.2f} Å, buffer_z_left: {buffer_z_left:.2f} Å")
 
     # 9) align & pdb4amber
-    run_with_log(
-        f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=workdir
-    )
+    if vmd_available:
+        run_with_log(
+            f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=workdir
+        )
+    else:
+        _python_measure_fit(workdir=workdir)
     with open(_p("aligned.pdb")) as fin, open(_p("aligned-clean.pdb"), "wt") as fout:
         for ln in fin:
             if len(ln.split()) > 3:
                 fout.write(ln)
-    run_with_log(
-        f"pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y", working_dir=workdir
-    )
+    if membrane_builder:
+        shutil.copy2(_p("aligned-clean.pdb"), _p("aligned_amber.pdb"))
+    else:
+        _run_pdb4amber_or_copy(
+            _p("aligned-clean.pdb"),
+            _p("aligned_amber.pdb"),
+            working_dir=workdir,
+        )
     u = mda.Universe(str(_p("aligned_amber.pdb")))
 
     # optional lipid resid fix post-amber
@@ -949,44 +1949,80 @@ def build_complex_z(ctx) -> bool:
         ligand_label=ligand,
         stage="fe-z",
     )
+    default_anchor_state = {
+        "P1": P1,
+        "p1_resid": p1_resid,
+        "p1_atom": p1_atom,
+        "p1_vmd": p1_vmd,
+        "lig_name_str": lig_name_str,
+        "l1_x": l1_x,
+        "l1_y": l1_y,
+        "l1_z": l1_z,
+        "l1_range": l1_range,
+    }
+    stable_preference_applied = False
+    stable_preference = None
+
+    extra = dict(ctx.extra or {})
+    if _user_anchor_atoms_were_provided(extra):
+        logger.debug(
+            "[build_complex_z] Explicit create.anchor_atoms were provided; "
+            "stable equilibration distance will not modify receptor anchors."
+        )
+    else:
+        stable_record = _load_stable_boresch_distance(equil_dir)
+        if stable_record is not None:
+            stable_preference = _select_stable_boresch_distance_preference(
+                u=u,
+                mol=mol,
+                stable_record=stable_record,
+                P1=P1,
+                P2=P2,
+                P3=P3,
+                lig_name_str=lig_name_str,
+                l1_x=float(l1_x),
+                l1_y=float(l1_y),
+                l1_z=float(l1_z),
+                l1_range=float(l1_range),
+                renum_data=renum_data,
+            )
+            if stable_preference is not None:
+                P1 = stable_preference["P1"]
+                p1_resid = stable_preference["p1_resid"]
+                p1_atom = stable_preference["p1_atom"]
+                p1_vmd = stable_preference["p1_vmd"]
+                lig_name_str = stable_preference["lig_name_str"]
+                l1_x = stable_preference["l1_x"]
+                l1_y = stable_preference["l1_y"]
+                l1_z = stable_preference["l1_z"]
+                l1_range = stable_preference["l1_range"]
+                stable_preference_applied = True
+                logger.debug(
+                    "[build_complex_z] Using stable equilibration distance to prefer "
+                    "P1={} (from {}) and ligand L1 candidate {} for {} "
+                    "(rank {}/{}).",
+                    P1,
+                    stable_preference["stable_original_P1"],
+                    stable_preference["stable_ligand_name"],
+                    ligand,
+                    stable_preference.get("stable_rank", 1),
+                    stable_preference.get("stable_candidate_count", 1),
+                )
 
     # 11) prep.tcl
-    with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
-        for line in fin:
-            fout.write(
-                line.replace("MMM", mol)
-                .replace("mmm", mol)
-                .replace("NN", p1_atom)
-                .replace("N2A", p2_atom)
-                .replace("P1A", p1_vmd)
-                .replace("P2A", p2_vmd)
-                .replace("FIRST", "2")
-                .replace("LAST", str(rec_res))
-                .replace("STAGE", "fe")
-                .replace("XDIS", f"{l1_x:4.2f}")
-                .replace("YDIS", f"{l1_y:4.2f}")
-                .replace("ZDIS", f"{l1_z:4.2f}")
-                .replace("RANG", f"{l1_range:4.2f}")
-                .replace("DMAX", f"{max_adis:4.2f}")
-                .replace("DMIN", f"{min_adis:4.2f}")
-                .replace("SDRD", f"{sdr_dist:4.2f}")
-                .replace("LIGSITE", "0")  # no FB for ligand now
-                .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
-                .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
-                .replace("LIGANDNAME", lig_name_str)
-            )
-    try:
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=workdir,
-        )
-    except RuntimeError:
-        logger.debug(
-            f"[build_complex] Default candidates failed; retry with ALL ligand atoms for anchors in {ligand}"
-        )
-        lig_name_str = " ".join(str(x) for x in lig_names)
+    def _restore_anchor_state(state: dict) -> None:
+        nonlocal P1, p1_resid, p1_atom, p1_vmd, lig_name_str, l1_x, l1_y, l1_z, l1_range
+        P1 = state["P1"]
+        p1_resid = state["p1_resid"]
+        p1_atom = state["p1_atom"]
+        p1_vmd = state["p1_vmd"]
+        lig_name_str = state["lig_name_str"]
+        l1_x = state["l1_x"]
+        l1_y = state["l1_y"]
+        l1_z = state["l1_z"]
+        l1_range = state["l1_range"]
+
+    def _write_prep(ligand_name_str: str) -> None:
         with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
             for line in fin:
                 fout.write(
@@ -1009,14 +2045,76 @@ def build_complex_z(ctx) -> bool:
                     .replace("LIGSITE", "0")  # no FB for ligand now
                     .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
                     .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
-                    .replace("LIGANDNAME", lig_name_str)
+                    .replace("LIGANDNAME", ligand_name_str)
                 )
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=workdir,
+
+    def _run_prep(ligand_name_str: str) -> None:
+        _write_prep(ligand_name_str)
+        if vmd_available:
+            run_with_log(
+                f"{vmd} -dispdev text -e prep.tcl",
+                error_match="anchor not found",
+                shell=False,
+                working_dir=workdir,
+            )
+        else:
+            _python_prep_complex(
+                workdir=workdir,
+                mol=mol,
+                p1_atom=p1_atom,
+                p1_vmd=p1_vmd,
+                p2_atom=p2_atom,
+                p2_vmd=p2_vmd,
+                first_resid="2",
+                last_resid=str(rec_res),
+                stage="fe",
+                l1_x=float(l1_x),
+                l1_y=float(l1_y),
+                l1_z=float(l1_z),
+                l1_range=float(l1_range),
+                min_adis=float(min_adis),
+                max_adis=float(max_adis),
+                sdr_dist=float(sdr_dist),
+                ligand_names=str(ligand_name_str).split(),
+                other_mol=other_mol,
+                lipid_mol=lipid_mol,
+            )
+
+    try:
+        _run_prep(lig_name_str)
+    except RuntimeError:
+        logger.debug(
+            "[build_complex_z] Candidate ligand anchors failed for {}; "
+            "retrying with all ligand atoms.",
+            ligand,
         )
+        all_lig_name_str = " ".join(str(x) for x in lig_names)
+        try:
+            _run_prep(all_lig_name_str)
+            lig_name_str = all_lig_name_str
+        except RuntimeError:
+            if not stable_preference_applied:
+                raise
+            logger.debug(
+                "[build_complex_z] Stable-distance preferred geometry failed for {}; "
+                "retrying original receptor anchor geometry.",
+                ligand,
+            )
+            _restore_anchor_state(default_anchor_state)
+            try:
+                _run_prep(lig_name_str)
+            except RuntimeError:
+                all_lig_name_str = " ".join(str(x) for x in lig_names)
+                _run_prep(all_lig_name_str)
+                lig_name_str = all_lig_name_str
+
+    prep_translation = _translate_pdb_to_reference_frame(
+        target_pdb=_p(f"fe-{mol}.pdb"),
+        reference_pdb=_p("aligned_amber.pdb"),
+    )
+    if prep_translation is not None:
+        _translate_pdb_by_vector(_p(f"{mol}.pdb"), prep_translation)
+        _translate_pdb_by_vector(_p(f"{mol}-noh.pdb"), prep_translation)
 
     # 12) anchors.txt -> validate, rename with ligand tag, write header into fe-<mol>.pdb
     anchors_txt = _p("anchors.txt")
@@ -1036,15 +2134,31 @@ def build_complex_z(ctx) -> bool:
         return False
 
     lig_resid = str(int(recep_last) + 2)
-    with tagged.open() as f:
-        a = f.readline().split()
-        L1 = f":{lig_resid}@{a[0]}"
-        L2 = f":{lig_resid}@{a[1]}"
-        L3 = f":{lig_resid}@{a[2]}"
-
     fe_pdb = _p(f"fe-{mol}.pdb")
     if not fe_pdb.exists():
         raise FileNotFoundError(f"Missing {fe_pdb}")
+    with tagged.open() as f:
+        a = f.readline().split()
+    a = _guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol=mol,
+        ligand_label=ligand,
+        P1=P1,
+        P2=P2,
+        P3=P3,
+        lig_resid=lig_resid,
+        selected_names=a,
+        preferred_first_names=(
+            [stable_preference["stable_ligand_name"]]
+            if stable_preference_applied and stable_preference is not None
+            else []
+        ),
+    )
+    tagged.write_text(" ".join(a[:3]) + "\n")
+    L1 = f":{lig_resid}@{a[0]}"
+    L2 = f":{lig_resid}@{a[1]}"
+    L3 = f":{lig_resid}@{a[2]}"
+
     lines = fe_pdb.read_text().splitlines(True)
     with fe_pdb.open("wt") as fout:
         fout.write(

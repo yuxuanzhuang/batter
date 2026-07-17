@@ -24,6 +24,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
     hmr = str(ctx.sim.hmr).lower() == "yes"
+    source_root = Path(__file__).resolve().parents[3]
 
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
@@ -46,6 +47,13 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("STAGE", stage)
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
+                .replace("__BATTER_SOURCE_ROOT__", str(source_root))
+                .replace("__BATTER_LIGAND_RESNAME__", repr(str(ctx.residue_name)))
+                .replace("__BATTER_LIGAND_LABEL__", repr(str(ctx.ligand)))
+                .replace(
+                    "__BATTER_RING_FIX_MODE__",
+                    repr(str(getattr(sim, "ring_penetration_fix_mode", "auto"))),
+                )
         )
 
         text = rewrite_prmtop_reference(text, hmr=hmr)
@@ -92,14 +100,21 @@ def write_fe_run_file(
     hmr = str(ctx.sim.hmr).lower() == "yes"
     n_windows = len(lambdas)
     lambda_string = ' '.join([f"{l:.4f}" for l in lambdas])
-    eq_sim_lambdas = np.linspace(0.0, 1.0, num=5)
+    if comp == "l" or (
+        comp == "d" and getattr(ctx.sim, "fe_type", None) == "uno_rest_diff"
+    ):
+        eq_sim_lambdas = np.asarray(lambdas, dtype=float)
+    else:
+        eq_sim_lambdas = np.linspace(0.0, 1.0, num=5)
     lambda_sim_string = ' '.join([f"{l:.4f}" for l in eq_sim_lambdas])
 
     # templates (fail clearly if missing)
     tpl_check = src_dir / "check_run.bash"
     if comp == "m":
         tpl_local = src_dir / "run-local-vacuum.bash"
-    elif comp == "x":
+    elif comp == "x" or (
+        comp == "d" and getattr(ctx.sim, "fe_type", None) == "uno_rest_diff"
+    ):
         tpl_local = src_dir / "run-local-rbfe.bash"
     else:
         tpl_local = src_dir / "run-local.bash"

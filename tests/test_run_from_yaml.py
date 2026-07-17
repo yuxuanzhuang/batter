@@ -266,6 +266,9 @@ fe_sim:
     monkeypatch.setattr(
         run_mod, "_materialize_extra_conf_restraints", lambda *a, **k: None
     )
+    monkeypatch.setattr(
+        run_mod, "_preflight_required_python_packages", lambda: None
+    )
 
     with pytest.raises(Sentinel):
         run_from_yaml(run_yaml)

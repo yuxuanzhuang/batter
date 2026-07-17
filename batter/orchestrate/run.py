@@ -12,6 +12,7 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib import util as importlib_util
 import json
 import smtplib
 import shutil
@@ -36,6 +37,7 @@ from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository
 
 from batter.exec.slurm_mgr import SlurmJobManager
+from batter._internal.ops.cleanup import cleanup_fe_equil_after_success
 
 from batter.orchestrate.backend import register_local_handlers
 from batter.orchestrate.ligands import (
@@ -43,6 +45,7 @@ from batter.orchestrate.ligands import (
     resolve_ligand_map,
 )
 from batter.orchestrate.markers import (
+    components_for_phase,
     handle_phase_failures,
     partition_children_by_status,
     run_phase_skipping_done,
@@ -82,6 +85,42 @@ _PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
     "analyze": frozenset({"analyze"}),
 }
 
+_REQUIRED_PYTHON_MODULES: tuple[tuple[str, str], ...] = (
+    ("MDAnalysis", "MDAnalysis"),
+    ("pandas", "pandas"),
+    ("pydantic", "pydantic"),
+    ("click", "click"),
+    ("loguru", "loguru"),
+    ("yaml", "pyyaml"),
+    ("numpy", "numpy"),
+    ("scipy", "scipy"),
+    ("matplotlib", "matplotlib"),
+    ("networkx", "networkx"),
+    ("prolif", "prolif"),
+)
+
+
+def _preflight_required_python_packages() -> None:
+    """Fail early when required BATTER runtime packages are unavailable."""
+    missing = [
+        (module_name, package_name)
+        for module_name, package_name in _REQUIRED_PYTHON_MODULES
+        if importlib_util.find_spec(module_name) is None
+    ]
+    if not missing:
+        return
+
+    detail = ", ".join(
+        f"{module_name} (install package: {package_name})"
+        for module_name, package_name in missing
+    )
+    install_hint = " ".join(sorted({package for _, package in missing}))
+    raise RuntimeError(
+        "Missing required BATTER Python package(s): "
+        f"{detail}. Install them in the active environment, e.g. "
+        f"`pip install {install_hint}` or reinstall BATTER with its dependencies."
+    )
+
 
 def _options_dict(value: Any) -> Dict[str, Any]:
     if value is None:
@@ -102,15 +141,93 @@ def _rbfe_mapper_options(rbfe_cfg) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def _is_rbfe_protocol(protocol: str | None) -> bool:
+    return (protocol or "").lower().replace("-", "_") in {"rbfe", "rbfe_septop"}
+
+
 def _require_file(path: Path, label: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"Missing {label}: {path}")
     return path
 
 
+def _load_json_mapping(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _ligand_pdb_exists(stage_dir: Path, ligand: str) -> bool:
+    return any(
+        (stage_dir / f"{candidate}.pdb").exists()
+        for candidate in (ligand, ligand.upper())
+    )
+
+
+def _system_prep_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    stage_dir = run_dir / "all-ligands"
+    manifest = _load_json_mapping(stage_dir / "manifest.json")
+    manifest_ligands = manifest.get("ligands") if manifest else None
+    present = set(manifest_ligands) if isinstance(manifest_ligands, dict) else set()
+    missing: List[str] = []
+    for name in lig_map:
+        if name not in present and name.upper() not in present:
+            missing.append(name)
+            continue
+        if not _ligand_pdb_exists(stage_dir, name):
+            missing.append(name)
+    return missing
+
+
+def _param_index_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    index = _load_json_mapping(run_dir / "artifacts" / "ligand_params" / "index.json")
+    entries = index.get("ligands") if index else None
+    present = {
+        str(entry.get("ligand"))
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("ligand")
+    }
+    return [name for name in lig_map if name not in present]
+
+
+def _rbfe_network_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
+    network = _load_json_mapping(run_dir / "artifacts" / "config" / "rbfe_network.json")
+    ligands = network.get("ligands") if network else None
+    present = {str(name) for name in ligands or []}
+    return [name for name in lig_map if name not in present]
+
+
+def _parent_phase_done_for_ligands(
+    system: SimSystem,
+    phase_name: str,
+    lig_map: Dict[str, Path],
+) -> bool:
+    if not is_done(system, phase_name):
+        return False
+
+    missing: List[str] = []
+    if phase_name in {"system_prep", "system_prep_asfe"}:
+        missing = _system_prep_missing_ligands(system.root, lig_map)
+    elif phase_name == "param_ligands":
+        missing = _param_index_missing_ligands(system.root, lig_map)
+    elif phase_name == "prepare_rbfe":
+        missing = _rbfe_network_missing_ligands(system.root, lig_map)
+
+    if missing:
+        logger.info(
+            "[{}] existing artifacts are missing ligand(s): {}; rerunning phase.",
+            phase_name,
+            ", ".join(missing),
+        )
+        return False
+    return True
+
+
 def _preflight_rbfe_mapping_files(rc: RunConfig, run_dir: Path) -> None:
     """Fail early on missing RBFE mapping files before execution steps start."""
-    if rc.protocol != "rbfe":
+    if not _is_rbfe_protocol(rc.protocol):
         return
 
     rbfe_cfg = getattr(rc, "rbfe", None)
@@ -123,8 +240,13 @@ def _preflight_rbfe_mapping_files(rc: RunConfig, run_dir: Path) -> None:
     config_dir = Path(run_dir) / "artifacts" / "config"
     rbfe_network_path = config_dir / "rbfe_network.json"
     prepare_marker = config_dir / "prepare_rbfe.ok"
-    if prepare_marker.exists():
-        _require_file(rbfe_network_path, "prepared RBFE network file")
+    if prepare_marker.exists() and not rbfe_network_path.exists():
+        logger.warning(
+            "Found stale prepare_rbfe marker without rbfe_network.json at {}; "
+            "removing marker so the RBFE network can be regenerated.",
+            prepare_marker,
+        )
+        prepare_marker.unlink(missing_ok=True)
 
 
 def _require_rbfe_network_file(config_dir: Path) -> Path:
@@ -143,7 +265,7 @@ def _require_rbfe_network_has_pairs(config_dir: Path) -> None:
     if not payload.get("pairs"):
         raise RuntimeError(
             "Prepared RBFE network contains no ligand pairs after removing identical "
-            "ligands and full-atom-map edges."
+            "duplicate ligands."
         )
 
 
@@ -159,8 +281,8 @@ def _rbfe_network_review_note(run_dir: Path) -> str:
         "You may edit rbfe_network.json before continuing; BATTER reloads its "
         "pairs field for RBFE transformation setup. Newly added pairs without "
         "prepared mapping artifacts fall back to the configured atom mapper.\n"
-        "Identical duplicate ligands and full-map edges are omitted from "
-        "pairs and recorded in the JSON skip metadata when detected.\n"
+        "Identical duplicate ligands are omitted from pairs and recorded in "
+        "the JSON skip metadata when detected. Full-map edges are retained.\n"
         "If the network looks correct, set run.only_rbfe_network: false or rerun "
         "with --full-rbfe to continue."
     )
@@ -171,8 +293,8 @@ def _log_rbfe_network_review_note(run_dir: Path) -> None:
 
 
 def _validate_only_rbfe_network(rc: RunConfig) -> None:
-    if bool(getattr(rc.run, "only_rbfe_network", False)) and rc.protocol != "rbfe":
-        raise ValueError("run.only_rbfe_network is only valid when protocol='rbfe'.")
+    if bool(getattr(rc.run, "only_rbfe_network", False)) and not _is_rbfe_protocol(rc.protocol):
+        raise ValueError("run.only_rbfe_network is only valid for RBFE protocols.")
 
 
 def _slurm_registry_path(run_dir: Path) -> Path:
@@ -351,6 +473,7 @@ def _run_phase_with_failure_policy(
     mode = (on_failure or "").lower()
     current_children = children
     used_retry = False
+    components = components_for_phase(phase)
 
     while True:
         finished = run_phase_skipping_done(
@@ -371,7 +494,9 @@ def _run_phase_with_failure_policy(
                 )
                 return current_children, True
 
-        _ok, bad = partition_children_by_status(current_children, phase_name)
+        _ok, bad = partition_children_by_status(
+            current_children, phase_name, components=components
+        )
         if not bad:
             return current_children, False
 
@@ -381,14 +506,14 @@ def _run_phase_with_failure_policy(
                 f"[{phase_name}] Retrying {len(bad)} ligand(s) once in this run: {names}"
             )
             current_children = handle_phase_failures(
-                current_children, phase_name, "retry"
+                current_children, phase_name, "retry", components=components
             )
             used_retry = True
             continue
 
         final_mode = "prune" if mode == "retry" else on_failure
         current_children = handle_phase_failures(
-            current_children, phase_name, final_mode
+            current_children, phase_name, final_mode, components=components
         )
         return current_children, False
 
@@ -398,13 +523,15 @@ def _build_rbfe_network_plan(
     lig_map: Dict[str, str],
     rbfe_cfg,
     config_dir: Path,
+    *,
+    protocol: str | None = None,
 ) -> dict:
     """
     Resolve and persist the RBFE ligand network before equilibration.
 
     This phase deduplicates identical ligands, resolves explicit or generated
-    transformation pairs, prepares per-edge atom-mapping artifacts, filters
-    full-coverage mappings, and writes ``rbfe_network.json`` plus the
+    transformation pairs, prepares per-edge atom-mapping artifacts, records
+    mapping coverage metadata, and writes ``rbfe_network.json`` plus the
     interactive ``rbfe_network.html`` review page under ``config_dir``.
     """
     from batter.rbfe import (
@@ -413,8 +540,12 @@ def _build_rbfe_network_plan(
         load_mapping_file,
         load_atom_mapping_file,
         konnektor_pairs,
+        draw_explicit_konnektor_network,
+        resolve_network_scorer_name,
+        orient_pairs_by_ligand_volume,
         write_planned_mapping_artifacts,
         deduplicate_identical_ligands,
+        validate_rbfe_network_ligand_coverage,
     )
     try:
         import konnektor
@@ -509,6 +640,22 @@ def _build_rbfe_network_plan(
         return remapped_pairs, remapped, dropped
 
     atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf").lower()
+    network_scorer = str(getattr(rbfe_cfg, "network_scorer", "auto") or "auto").lower()
+    resolved_network_scorer = resolve_network_scorer_name(
+        network_scorer,
+        protocol=protocol,
+    )
+    direction_policy = (
+        str(getattr(rbfe_cfg, "direction_policy", "larger_volume") or "larger_volume")
+        .strip()
+        .lower()
+        .replace("-", "_")
+    )
+    if direction_policy not in {"larger_volume", "preserve"}:
+        raise ValueError(
+            "rbfe.direction_policy must be one of: larger_volume, preserve"
+        )
+    minimal_mapping_atom = getattr(rbfe_cfg, "minimal_mapping_atom", 3)
     mapper_options = _rbfe_mapper_options(rbfe_cfg)
     atom_mapping_overrides = None
     atom_mapping_file = getattr(rbfe_cfg, "atom_mapping_file", None)
@@ -541,6 +688,8 @@ def _build_rbfe_network_plan(
                 kartograf_options=mapper_options["kartograf"],
                 lomap_options=mapper_options["lomap"],
                 atom_mapping_overrides=atom_mapping_overrides,
+                network_scorer=network_scorer,
+                protocol=protocol,
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -557,6 +706,8 @@ def _build_rbfe_network_plan(
                     kartograf_options=mapper_options["kartograf"],
                     lomap_options=mapper_options["lomap"],
                     atom_mapping_overrides=atom_mapping_overrides,
+                    network_scorer=network_scorer,
+                    protocol=protocol,
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -575,7 +726,49 @@ def _build_rbfe_network_plan(
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
             pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
+
+    mapping_source["direction_policy"] = direction_policy
+    mapping_source["direction_policy_applied"] = False
+    if rbfe_cfg.mapping_file:
+        mapping_source["direction_policy_reason"] = "mapping_file_preserves_direction"
+    elif direction_policy == "larger_volume" and network.pairs:
+        ligand_files_for_direction = {
+            name: Path(lig_map[name])
+            for name in available
+            if name in lig_map
+        }
+        oriented_pairs, direction_decisions = orient_pairs_by_ligand_volume(
+            network.pairs,
+            ligand_files_for_direction,
+        )
+        mapping_source["direction_policy_applied"] = True
+        if direction_decisions:
+            mapping_source["direction_decisions"] = direction_decisions
+        if tuple(oriented_pairs) != tuple(network.pairs):
+            network = RBFENetwork.from_ligands(
+                available,
+                mapping_fn=lambda _: oriented_pairs,
+            )
+            pairs = list(network.pairs)
+            try:
+                draw_explicit_konnektor_network(
+                    pairs,
+                    ligand_files_for_direction,
+                    config_dir / "rbfe_network.png",
+                    atom_mapper=atom_mapper,
+                    kartograf_options=mapper_options["kartograf"],
+                    lomap_options=mapper_options["lomap"],
+                    atom_mapping_overrides=atom_mapping_overrides,
+                    network_scorer=network_scorer,
+                    protocol=protocol,
+                )
+            except Exception as exc:
+                logger.debug(f"Could not redraw oriented RBFE network plot: {exc}")
     mapping_source["atom_mapper"] = atom_mapper
+    mapping_source["network_scorer"] = resolved_network_scorer
+    mapping_source["minimal_mapping_atom"] = minimal_mapping_atom
+    if network_scorer != "auto":
+        mapping_source["network_scorer_requested"] = network_scorer
     if any(mapper_options.values()):
         mapping_source["mapper_options"] = mapper_options
     selected_mapper_options = mapper_options.get(atom_mapper, {})
@@ -644,6 +837,12 @@ def _build_rbfe_network_plan(
         if unused_pairs:
             mapping_source["unused_atom_mapping_overrides"] = unused_pairs
 
+    validate_rbfe_network_ligand_coverage(
+        available,
+        list(network.pairs),
+        context="Planned RBFE network",
+    )
+
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
         bidirectional_pairs: List[List[str]] = []
@@ -671,40 +870,10 @@ def _build_rbfe_network_plan(
         lomap_options=mapper_options["lomap"],
         atom_mapper_options=selected_mapper_options,
         atom_mapping_overrides=atom_mapping_overrides,
+        protocol=protocol,
+        minimal_mapping_atom=minimal_mapping_atom,
     )
-    skipped_full_atom_map_edges: List[dict[str, Any]] = []
-    filtered_pairs: List[List[str]] = []
-    for ref, alt in payload.get("pairs", []):
-        pair_id = f"{ref}~{alt}"
-        asset = edge_assets.get(pair_id, {})
-        skip_reason = None
-        if bool(asset.get("full_atom_mapping")):
-            skip_reason = "full_atom_mapping"
-        elif bool(asset.get("full_heavy_atom_mapping")):
-            skip_reason = "full_heavy_atom_mapping"
-        if skip_reason is not None:
-            skip_record = {
-                "pair": [ref, alt],
-                "n_mapped": asset.get("n_mapped"),
-                "n_ref_atoms": asset.get("n_ref_atoms"),
-                "n_alt_atoms": asset.get("n_alt_atoms"),
-                "n_ref_heavy_atoms": asset.get("n_ref_heavy_atoms"),
-                "n_alt_heavy_atoms": asset.get("n_alt_heavy_atoms"),
-                "reason": skip_reason,
-            }
-            skipped_full_atom_map_edges.append(
-                {key: value for key, value in skip_record.items() if value is not None}
-            )
-            logger.warning(
-                "RBFE skipped edge {} because its atom map is full coverage ({}).",
-                pair_id,
-                skip_reason,
-            )
-            continue
-        filtered_pairs.append([ref, alt])
-    if skipped_full_atom_map_edges:
-        payload["pairs"] = filtered_pairs
-        mapping_source["skipped_full_atom_map_edges"] = skipped_full_atom_map_edges
+    mapping_source["full_atom_map_edge_filter"] = "disabled"
     mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
@@ -740,6 +909,7 @@ def _maybe_regenerate_rbfe_network_after_pruning(
     payload: Dict[str, Any],
     rbfe_cfg,
     config_dir: Path,
+    protocol: str | None = None,
 ) -> Dict[str, Any]:
     """Rebuild RBFE network if some planned ligands were pruned before transformations."""
     from batter.config.utils import sanitize_ligand_name
@@ -751,6 +921,16 @@ def _maybe_regenerate_rbfe_network_after_pruning(
         for x in (payload.get("ligands") or [])
         if x
     ]
+    if not planned:
+        planned = sorted(
+            {
+                sanitize_ligand_name(str(name))
+                for pair in (payload.get("pairs") or [])
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+                for name in pair
+                if name
+            }
+        )
     pruned = [name for name in planned if name not in available_set]
     if not pruned:
         return payload
@@ -768,8 +948,8 @@ def _maybe_regenerate_rbfe_network_after_pruning(
         return payload
 
     logger.warning(
-        f"Detected {len(pruned)} pruned ligand(s) before RBFE transformations ({', '.join(pruned)}). "
-        "Regenerating RBFE network on remaining ligands."
+        f"Detected {len(pruned)} unavailable ligand(s) before RBFE transformations "
+        f"({', '.join(pruned)}). Regenerating RBFE network on remaining ligands."
     )
     try:
         regenerated = _build_rbfe_network_plan(
@@ -777,6 +957,7 @@ def _maybe_regenerate_rbfe_network_after_pruning(
             {name: lig_map_sanitized[name] for name in available},
             rbfe_cfg,
             config_dir,
+            protocol=protocol,
         )
     except Exception as exc:
         logger.warning(
@@ -883,6 +1064,7 @@ def _run_from_yaml_impl(
     if on_failure:
         rc.run.on_failure = on_failure
     _validate_only_rbfe_network(rc)
+    _preflight_required_python_packages()
 
     logger.info(
     "Run configuration:\n{}",
@@ -957,21 +1139,50 @@ def _run_from_yaml_impl(
     lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
     stored_names = _load_stored_ligand_names(run_dir)
+    requested_lig_map: Dict[str, Path] = {}
+    requested_original_names: Dict[str, str] = {}
+    try:
+        requested_lig_map, requested_original_names = resolve_ligand_map(rc, yaml_dir)
+    except Exception as exc:
+        if not staged_lig_map:
+            raise
+        logger.debug(
+            "Could not resolve current ligand input; resuming from staged ligands only: {}",
+            exc,
+        )
+
     if staged_lig_map:
-        lig_map = staged_lig_map
-        lig_original_names = stored_names
+        lig_map = dict(staged_lig_map)
+        lig_original_names = dict(stored_names)
         if lig_original_names:
             logger.debug(
                 "Loaded %d original ligand names from %s",
                 len(lig_original_names),
                 _ligand_names_path(run_dir),
             )
+
+        added_ligands: List[str] = []
+        for name, lig_path in requested_lig_map.items():
+            lig_original_names[name] = requested_original_names.get(name, name)
+            if name in lig_map:
+                continue
+            lig_map[name] = lig_path
+            added_ligands.append(name)
+
         logger.info(
-            f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
+            f"Resuming with {len(staged_lig_map)} staged ligand(s) discovered under {run_dir}"
         )
+        if added_ligands:
+            logger.info(
+                "Added ligand(s) from current input to existing execution: {}",
+                ", ".join(added_ligands),
+            )
+        if lig_original_names:
+            _store_ligand_names(run_dir, lig_original_names)
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
-        lig_map, lig_original_names = resolve_ligand_map(rc, yaml_dir)
+        lig_map = requested_lig_map
+        lig_original_names = requested_original_names
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
@@ -981,6 +1192,7 @@ def _run_from_yaml_impl(
         rc.create.extra_conformation_restraints, run_dir, yaml_dir
     )
     sys_params = {
+        "protocol": rc.protocol,
         "param_outdir": str(rc.create.param_outdir),
         "system_name": rc.create.system_name,
         "protein_input": str(rc.create.protein_input),
@@ -1002,7 +1214,7 @@ def _run_from_yaml_impl(
         "extra_conformation_restraints": extra_conf_path
         or rc.create.extra_conformation_restraints,
     }
-    if rc.protocol == "rbfe":
+    if _is_rbfe_protocol(rc.protocol):
         sys_params["rbfe"] = (
             rc.rbfe.model_dump(mode="json", exclude_none=True)
             if rc.rbfe is not None
@@ -1010,7 +1222,7 @@ def _run_from_yaml_impl(
         )
 
     base_meta = {}
-    if rc.protocol == "rbfe":
+    if _is_rbfe_protocol(rc.protocol):
         base_meta["mode"] = "RBFE"
     sys_exec = SimSystem(name=rc.create.system_name, root=run_dir, meta=base_meta)
     sys_exec = builder.build(sys_exec, rc.create)
@@ -1056,6 +1268,7 @@ def _run_from_yaml_impl(
         rc.run.only_fe_preparation,
         sys_params=sys_params,
         partition=rc.run.slurm.partition if rc.run.slurm else None,
+        store_debug_files=bool(getattr(rc.run, "store_debug_files", False)),
     )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
@@ -1088,7 +1301,7 @@ def _run_from_yaml_impl(
         names = [s.name for s in parent_only.ordered_steps()]
         logger.debug(f"Executing parent-only steps at {run_dir}: {names}")
         for step in parent_only.ordered_steps():
-            if is_done(run_sys, step.name):
+            if _parent_phase_done_for_ligands(run_sys, step.name, lig_map):
                 logger.info(f"[skip] {step.name}: finished.")
                 continue
             try:
@@ -1115,7 +1328,7 @@ def _run_from_yaml_impl(
     overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
 
-    if rc.protocol == "rbfe":
+    if _is_rbfe_protocol(rc.protocol):
         rbfe_network_path = config_dir / "rbfe_network.json"
         if not rbfe_network_path.exists():
             from batter.config.run import RBFENetworkArgs
@@ -1123,7 +1336,11 @@ def _run_from_yaml_impl(
 
             rbfe_cfg = rc.rbfe or RBFENetworkArgs()
             _build_rbfe_network_plan(
-                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+                list(lig_map.keys()),
+                lig_map,
+                rbfe_cfg,
+                config_dir,
+                protocol=rc.protocol,
             )
             marker = config_dir / "prepare_rbfe.ok"
             marker.write_text("ok\n")
@@ -1356,7 +1573,11 @@ def _run_from_yaml_impl(
     phase_pre_fe_equil = _inject_mgr(
         phase_pre_fe_equil,
         "pre_fe_equil",
-        extra_payload={"phase_name": "pre_fe_equil", "extra_env": {"SKIP_WINDOW_EQ": "1"}},
+        extra_payload={
+            "components": ["z"],
+            "phase_name": "pre_fe_equil",
+            "extra_env": {"SKIP_WINDOW_EQ": "1"},
+        },
     )
     if phase_pre_fe_equil.ordered_steps():
         children, should_exit = _run_phase_with_failure_policy(
@@ -1372,13 +1593,19 @@ def _run_from_yaml_impl(
         )
         if should_exit:
             return
+        if not bool(getattr(rc.run, "store_debug_files", False)):
+            for child in children:
+                cleanup_fe_equil_after_success(
+                    child.root / "pre_fe",
+                    components=["z"],
+                )
     else:
         logger.info("[skip] pre_fe_equil: no steps in this protocol.")
 
     # --------------------
     # RBFE: build transformation systems (pairs) after pre_fe_equil
     # --------------------
-    if rc.protocol == "rbfe":
+    if _is_rbfe_protocol(rc.protocol):
         from batter.rbfe import RBFENetwork
         from batter.config.utils import sanitize_ligand_name
         from batter.config.run import RBFENetworkArgs
@@ -1397,18 +1624,22 @@ def _run_from_yaml_impl(
         else:
             rbfe_cfg = rc.rbfe or RBFENetworkArgs()
             payload = _build_rbfe_network_plan(
-                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+                list(lig_map.keys()),
+                lig_map,
+                rbfe_cfg,
+                config_dir,
+                protocol=rc.protocol,
             )
 
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-            payload = _maybe_regenerate_rbfe_network_after_pruning(
-                available_ligands=available,
-                lig_map=lig_map,
-                payload=payload,
-                rbfe_cfg=rbfe_cfg,
-                config_dir=config_dir,
-            )
+        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+        payload = _maybe_regenerate_rbfe_network_after_pruning(
+            available_ligands=available,
+            lig_map=lig_map,
+            payload=payload,
+            rbfe_cfg=rbfe_cfg,
+            config_dir=config_dir,
+            protocol=rc.protocol,
+        )
 
         pairs = payload.get("pairs") or []
         if not pairs:
@@ -1425,23 +1656,22 @@ def _run_from_yaml_impl(
                 )
             )
 
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            pruned = [
-                p
-                for p in cleaned_pairs
-                if p[0] in available_set and p[1] in available_set
-            ]
-            if not pruned:
-                raise RuntimeError(
-                    "RBFE mapping does not include any available ligands after pruning."
-                )
-            if len(pruned) != len(cleaned_pairs):
-                logger.warning(
-                    "Pruned %d RBFE pair(s) due to on_failure=%s.",
-                    len(cleaned_pairs) - len(pruned),
-                    rc.run.on_failure,
-                )
-            cleaned_pairs = pruned
+        pruned = [
+            p
+            for p in cleaned_pairs
+            if p[0] in available_set and p[1] in available_set
+        ]
+        if not pruned:
+            raise RuntimeError(
+                "RBFE mapping does not include any pairs among ligands that "
+                "completed equilibration/pre-FE preparation."
+            )
+        if len(pruned) != len(cleaned_pairs):
+            logger.warning(
+                "Pruned %d stale RBFE pair(s) referencing unavailable ligand(s).",
+                len(cleaned_pairs) - len(pruned),
+            )
+        cleaned_pairs = pruned
 
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
         atom_mapper = str(
@@ -1548,7 +1778,12 @@ def _run_from_yaml_impl(
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
-    phase_fe_equil = _inject_mgr(phase_fe_equil, "fe_equil")
+    final_components = list(getattr(sim_cfg_updated, "components", []) or [])
+    phase_fe_equil = _inject_mgr(
+        phase_fe_equil,
+        "fe_equil",
+        extra_payload={"components": final_components},
+    )
     if phase_fe_equil.ordered_steps():
         children, should_exit = _run_phase_with_failure_policy(
             phase_fe_equil,
@@ -1563,13 +1798,23 @@ def _run_from_yaml_impl(
         )
         if should_exit:
             return
+        if not bool(getattr(rc.run, "store_debug_files", False)):
+            for child in children:
+                cleanup_fe_equil_after_success(
+                    child.root / "fe",
+                    components=final_components,
+                )
     else:
         logger.info("[skip] fe_equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
-    phase_fe = _inject_mgr(phase_fe, "fe")
+    phase_fe = _inject_mgr(
+        phase_fe,
+        "fe",
+        extra_payload={"components": final_components},
+    )
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         children, should_exit = _run_phase_with_failure_policy(
@@ -1636,7 +1881,7 @@ def _run_from_yaml_impl(
     if analysis_start_step is not None:
         analysis_start_step = int(analysis_start_step)
     failures: list[tuple[str, str, str]] = []
-    if rc.protocol != "rbfe":
+    if not _is_rbfe_protocol(rc.protocol):
         for child in unbound_children:
             ligand = child.meta["ligand"]
             reason = "UNBOUND detected during equilibration"
@@ -1674,11 +1919,18 @@ def _run_from_yaml_impl(
             [f"{n} ({status}: {reason})" for n, status, reason in failures]
         )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
-    if rc.protocol == "rbfe":
+    if _is_rbfe_protocol(rc.protocol):
         try:
             from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
 
-            cinnabar_export = auto_write_rbfe_cinnabar_for_run(rc.run.output_folder, run_id)
+            cinnabar_export = auto_write_rbfe_cinnabar_for_run(
+                rc.run.output_folder,
+                run_id,
+                x_convergence_filter=sim_cfg_updated.cinnabar_x_convergence_filter,
+                x_convergence_fallback_filter=(
+                    sim_cfg_updated.cinnabar_x_convergence_fallback_filter
+                ),
+            )
             logger.info(
                 f"Wrote RBFE Cinnabar bundle for run '{run_id}' to {cinnabar_export['output_dir']}."
             )

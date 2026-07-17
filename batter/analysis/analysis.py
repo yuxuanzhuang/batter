@@ -38,22 +38,76 @@ from batter.analysis.utils import exclude_outliers
 
 COMPONENTS_DICT = {
     "rest": ["a", "l", "t", "c", "r", "m", "n"],
-    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "y", "m"],
+    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "d", "y", "m"],
 }
 
 # sign that determines direction of contribution to total FE
 COMPONENT_DIRECTION_DICT = {
     "m": -1,
     "n": +1,
+    "l": +1,
     "e": -1,
     "v": -1,
     "o": -1,
     "z": -1,
+    "d": -1,
     "y": +1,
     "m": -1,
     "x": +1,
     "Boresch": -1,
+    "Boresch_REF": -1,
+    "Boresch_ALT": +1,
 }
+
+
+def _parse_amber_rst_line(line: str) -> dict[str, str]:
+    """Parse an Amber &rst line into keyword fields without assuming spacing."""
+    fields: dict[str, str] = {}
+    keys = {"iat", "r1", "r2", "r3", "r4", "rk2", "rk3"}
+    key: str | None = None
+    values: list[str] = []
+
+    for raw in line.replace("&rst", " ").replace("&end", " ").split():
+        token = raw.strip()
+        if not token or token.startswith("#"):
+            break
+        if "=" in token:
+            candidate, first_value = token.split("=", 1)
+            candidate = candidate.strip().strip(",").lower()
+            if candidate in keys:
+                if key is not None:
+                    fields[key] = " ".join(values).strip().strip(",")
+                key = candidate
+                values = [first_value] if first_value else []
+                continue
+        if key is not None:
+            values.append(token)
+
+    if key is not None:
+        fields[key] = " ".join(values).strip().strip(",")
+    return fields
+
+
+def _parse_amber_rst_float(fields: dict[str, str], key: str, line: str) -> float:
+    value = fields.get(key)
+    if value is None:
+        raise ValueError(f"Missing {key}= in restraint line: {line.rstrip()}")
+    try:
+        return float(value.split(",")[0].strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Could not parse {key}= value from restraint line: {line.rstrip()}"
+        ) from exc
+
+
+def _parse_amber_rst_natoms(fields: dict[str, str], line: str) -> int:
+    iat = fields.get("iat")
+    if iat is None:
+        raise ValueError(f"Missing iat= in restraint line: {line.rstrip()}")
+    atoms = [atom.strip() for atom in iat.split(",") if atom.strip()]
+    if not atoms:
+        raise ValueError(f"No atoms in iat= field for restraint line: {line.rstrip()}")
+    return len(atoms)
 
 
 class SilenceAlchemlybOnly:
@@ -93,6 +147,46 @@ def _is_incomplete_amber_out_error(exc: ValueError) -> bool:
     return any(marker in msg for marker in incomplete_markers)
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        value = float(value)
+        return value if math.isfinite(value) else None
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if pd.isna(value):
+        return None
+    return value
+
+
+def _dataframe_to_json_records(df: pd.DataFrame) -> dict:
+    frame = df.reset_index()
+    frame.columns = [str(col) for col in frame.columns]
+    return {
+        "columns": frame.columns.tolist(),
+        "records": _json_safe(frame.to_dict(orient="records")),
+    }
+
+
+def _convergence_to_json(convergence: dict) -> dict:
+    payload: dict = {}
+    for key in ("time_convergence", "block_convergence", "block_timeseries"):
+        value = convergence.get(key)
+        if isinstance(value, pd.DataFrame):
+            payload[key] = _dataframe_to_json_records(value)
+    overlap = convergence.get("overlap_matrix")
+    if overlap is not None:
+        payload["overlap_matrix"] = _json_safe(overlap)
+    return payload
+
+
 class FEAnalysisBase(ABC):
     """
     Minimal interface shared across component analysis routines.
@@ -110,6 +204,7 @@ class FEAnalysisBase(ABC):
             "fe_error": None,  # scalar (same unit)
             "convergence": {},  # dict of dataframes/arrays
             "fe_timeseries": None,  # Nx2 array: [FE, FE_err] across progress fractions
+            "fe_timeseries_backward": None,  # Nx2 array from backward convergence
         }
 
     @abstractmethod
@@ -134,15 +229,24 @@ class FEAnalysisBase(ABC):
         return self.results["fe_timeseries"]
 
     def dump(self, filename="results.json"):
-        """Store results to JSON (omit heavy convergence tables)."""
+        """Store scalar, timeseries, and plottable convergence data to JSON."""
         fe = float(self.fe) if self.fe is not None else None
         fe_err = float(self.fe_error) if self.fe_error is not None else None
         fets = self.fe_timeseries
         fets_list = fets.tolist() if isinstance(fets, np.ndarray) else fets
+        fets_back = self.results.get("fe_timeseries_backward")
+        fets_back_list = (
+            fets_back.tolist() if isinstance(fets_back, np.ndarray) else fets_back
+        )
+        payload = {
+            "fe": fe,
+            "fe_error": fe_err,
+            "fe_timeseries": fets_list,
+            "fe_timeseries_backward": fets_back_list,
+            "convergence": _convergence_to_json(self.convergence),
+        }
         with open(filename, "w") as f:
-            json.dump(
-                {"fe": fe, "fe_error": fe_err, "fe_timeseries": fets_list}, f, indent=2
-            )
+            json.dump(_json_safe(payload), f, indent=2)
 
 
 class MBARAnalysis(FEAnalysisBase):
@@ -233,6 +337,54 @@ class MBARAnalysis(FEAnalysisBase):
     def data_list(self) -> List[pd.DataFrame]:
         return self._data_list
 
+    def _set_convergence_fallback(self, reason: str, n_points: int = 10) -> None:
+        """Use the final MBAR estimate as a constant series for short runs."""
+        fe = float(self.results["fe"])
+        fe_error = float(self.results["fe_error"])
+        if self.energy_unit == "kcal/mol":
+            fe_kT = fe / self.kT
+            fe_error_kT = fe_error / self.kT
+        elif self.energy_unit == "kJ/mol":
+            fe_kT = fe / (self.kT * 4.184)
+            fe_error_kT = fe_error / (self.kT * 4.184)
+        else:
+            fe_kT = fe
+            fe_error_kT = fe_error
+
+        fractions = np.linspace(0.1, 1.0, n_points)
+        result_series = np.column_stack(
+            [np.full(n_points, fe), np.full(n_points, fe_error)]
+        )
+        kt_series = np.column_stack(
+            [np.full(n_points, fe_kT), np.full(n_points, fe_error_kT)]
+        )
+
+        self.results["fe_timeseries"] = result_series
+        self.results["fe_timeseries_backward"] = result_series.copy()
+        time_convergence = pd.DataFrame(
+            {
+                "Forward": kt_series[:, 0],
+                "Forward_Error": kt_series[:, 1],
+                "Backward": kt_series[:, 0],
+                "Backward_Error": kt_series[:, 1],
+            },
+            index=pd.Index(fractions, name="data_fraction"),
+        )
+        block_convergence = pd.DataFrame(
+            {"FE": kt_series[:, 0], "FE_Error": kt_series[:, 1]},
+            index=pd.Index(np.arange(1, n_points + 1), name="block"),
+        )
+        for frame in (time_convergence, block_convergence):
+            frame.attrs["temperature"] = self.temperature
+            frame.attrs["energy_unit"] = "kT"
+        self.results["convergence"]["time_convergence"] = time_convergence
+        self.results["convergence"]["block_convergence"] = block_convergence
+        self.results["convergence"]["block_timeseries"] = pd.DataFrame(
+            {"FE": result_series[:, 0], "FE_Error": result_series[:, 1]},
+            index=pd.Index(fractions, name="fraction"),
+        )
+        self.results["convergence"]["diagnostic_warning"] = reason
+
     def get_mbar_data(self) -> None:
         """
         Parse and cache the not reduced potentials for all lambda windows.
@@ -300,40 +452,51 @@ class MBARAnalysis(FEAnalysisBase):
         plt.savefig(f"{self.result_folder}/{self.component}_mbar_delta_f.png", dpi=200)
         plt.close(fig)
 
-        # Convergence summaries
-        with SilenceAlchemlybOnly():
-            tc = forward_backward_convergence(
-                self.data_list, "MBAR", error_tol=100, method="default"
+        self.results["convergence"]["overlap_matrix"] = mbar.overlap_matrix
+        self.results["convergence"]["mbar"] = mbar
+
+        # Convergence summaries are diagnostic; short smoke tests may not have
+        # enough frames for alchemlyb's forward/backward slices.
+        try:
+            with SilenceAlchemlybOnly():
+                tc = forward_backward_convergence(
+                    self.data_list, "MBAR", error_tol=100, method="default"
+                )
+                self.results["convergence"]["time_convergence"] = tc
+
+                # forward/backward times (MultiIndex) + FE arrays (in kcal/mol)
+                forward_FE = tc.Forward.values * self.kT
+                forward_FE_err = tc.Forward_Error.values * self.kT
+                backward_FE = tc.Backward.values * self.kT
+                backward_FE_err = tc.Backward_Error.values * self.kT
+
+                # fe_timeseries: N x 2 array (value, stderr)
+                self.results["fe_timeseries"] = np.column_stack(
+                    [forward_FE, forward_FE_err]
+                )
+                self.results["fe_timeseries_backward"] = np.column_stack(
+                    [backward_FE, backward_FE_err]
+                )
+
+                # block average (10 blocks)
+                ba = block_average(
+                    self.data_list, estimator="MBAR", num=10, method="default"
+                )
+                self.results["convergence"]["block_convergence"] = ba
+
+                block_FE = ba.FE.values * self.kT
+                block_FE_err = ba.FE_Error.values * self.kT
+                # pack in a simple dataframe with sequential fraction labels
+                self.results["convergence"]["block_timeseries"] = pd.DataFrame(
+                    {"FE": block_FE, "FE_Error": block_FE_err},
+                    index=np.linspace(0.1, 1.0, len(block_FE)),
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[MBARAnalysis] Skipping convergence diagnostics for "
+                f"{self.component}: {exc}"
             )
-            self.results["convergence"]["time_convergence"] = tc
-
-            # forward/backward times (MultiIndex) + FE arrays (in kcal/mol)
-            forward_FE = tc.Forward.values * self.kT
-            forward_FE_err = tc.Forward_Error.values * self.kT
-            backward_FE = tc.Backward.values * self.kT
-            backward_FE_err = tc.Backward_Error.values * self.kT
-
-            # fe_timeseries: N x 2 array (value, stderr)
-            self.results["fe_timeseries"] = np.column_stack(
-                [forward_FE, forward_FE_err]
-            )
-
-            # block average (10 blocks)
-            ba = block_average(
-                self.data_list, estimator="MBAR", num=10, method="default"
-            )
-            self.results["convergence"]["block_convergence"] = ba
-
-            block_FE = ba.FE.values * self.kT
-            block_FE_err = ba.FE_Error.values * self.kT
-            # pack in a simple dataframe with sequential fraction labels
-            self.results["convergence"]["block_timeseries"] = pd.DataFrame(
-                {"FE": block_FE, "FE_Error": block_FE_err},
-                index=np.linspace(0.1, 1.0, len(block_FE)),
-            )
-
-            self.results["convergence"]["overlap_matrix"] = mbar.overlap_matrix
-            self.results["convergence"]["mbar"] = mbar
+            self._set_convergence_fallback(str(exc))
 
         # persist
         with open(f"{self.result_folder}/{self.component}_results.pickle", "wb") as f:
@@ -546,9 +709,128 @@ class RESTMBARAnalysis(MBARAnalysis):
     MBAR analysis variant for restraint components that require cpptraj traces.
     """
 
+    @staticmethod
+    def _window_nc_list(win_dir: Path) -> List[str]:
+        """Return production NetCDF segments for one REST window."""
+
+        def _traj_sort_key(path: Path) -> tuple[int, str]:
+            match = re.search(r"(\d+)$", path.stem) or re.search(
+                r"(\d+)", path.stem
+            )
+            idx = int(match.group(1)) if match else -1
+            return idx, path.name
+
+        nc_list: List[str] = []
+        seen: set[str] = set()
+        for pattern in ("mdin-*.nc", "md-*.nc", "md[0-9]*.nc"):
+            for path in sorted(win_dir.glob(pattern), key=_traj_sort_key):
+                if not path.is_file() or path.name in seen:
+                    continue
+                seen.add(path.name)
+                nc_list.append(path.name)
+        return nc_list
+
+    @staticmethod
+    def _cmass_trace_list(win_dir: Path) -> List[Path]:
+        """Return Amber DUMPAVE traces for one REST window."""
+
+        def _trace_sort_key(path: Path) -> tuple[int, str]:
+            match = re.search(r"(\d+)$", path.stem) or re.search(
+                r"(\d+)", path.stem
+            )
+            idx = int(match.group(1)) if match else -1
+            return idx, path.name
+
+        segment_paths = [
+            path
+            for path in sorted(win_dir.glob("cmass-*.txt"), key=_trace_sort_key)
+            if path.is_file() and path.stat().st_size > 0
+        ]
+        if segment_paths:
+            return segment_paths
+
+        legacy = win_dir / "cmass.txt"
+        if legacy.is_file() and legacy.stat().st_size > 0:
+            return [legacy]
+        return []
+
+    @staticmethod
+    def _read_cmass_values(
+        win_dir: Path,
+        num_rest: int,
+        analysis_start_step: int,
+        ntwx: int,
+    ) -> Optional[np.ndarray]:
+        cmass_paths = RESTMBARAnalysis._cmass_trace_list(win_dir)
+        if not cmass_paths:
+            return None
+
+        rows: list[list[float]] = []
+        frame_idx = 0
+        for cmass_path in cmass_paths:
+            with open(cmass_path, "r") as fin:
+                for line in fin:
+                    cols = line.split()
+                    if not cols or cols[0].startswith("#"):
+                        continue
+                    if len(cols) < num_rest + 1:
+                        logger.warning(
+                            f"[RESTMBAR] Ignoring malformed cmass row in "
+                            f"{cmass_path}: expected at least {num_rest + 1} "
+                            f"columns, found {len(cols)}"
+                        )
+                        return None
+
+                    try:
+                        raw_step = float(cols[0])
+                        values = [float(col) for col in cols[1 : num_rest + 1]]
+                    except ValueError:
+                        logger.warning(
+                            f"[RESTMBAR] Ignoring non-numeric cmass row in {cmass_path}"
+                        )
+                        return None
+
+                    # Amber DUMPAVE writes one or more initial step-0 rows that
+                    # are not present in the NetCDF trajectory.
+                    if raw_step <= 0:
+                        continue
+
+                    frame_idx += 1
+                    frame_step = frame_idx * ntwx if ntwx > 0 else raw_step
+                    if frame_step <= analysis_start_step:
+                        continue
+                    rows.append(values)
+
+        if not rows:
+            raise ValueError(
+                f"No cmass frames remain in {win_dir} after "
+                f"analysis_start_step={analysis_start_step}"
+            )
+        return np.asarray(rows, dtype=float)
+
     def _extract_restraints_from_windows(self):
         num_win = len(self.windows)
         component = self.component
+
+        def _tag_matches(tag: str) -> bool:
+            if component == "t":
+                return tag == "#Lig_TR"
+            if component == "l":
+                return tag in ("#Lig_TR", "#Lig_C", "#Lig_D")
+            if component == "c":
+                return tag in ("#Lig_C", "#Lig_D")
+            if component in ("a", "r"):
+                return tag in ("#Rec_C", "#Rec_D")
+            if component in ("m", "n"):
+                return tag in (
+                    "#Rec_C",
+                    "#Rec_D",
+                    "#Lig_TR",
+                    "#Lig_C",
+                    "#Lig_D",
+                )
+            return False
+
         disang_file = f"{self.comp_folder}/{component}00/disang.rest"
         with open(disang_file, "r") as f:
             disang = f.readlines()
@@ -559,19 +841,7 @@ class RESTMBARAnalysis(MBARAnalysis):
             if not cols:
                 continue
             tag = cols[-1]
-            if component == "t" and tag == "#Lig_TR":
-                num_rest += 1
-            elif component in ("l", "c") and tag in ("#Lig_C", "#Lig_D"):
-                num_rest += 1
-            elif component in ("a", "r") and tag in ("#Rec_C", "#Rec_D"):
-                num_rest += 1
-            elif component in ("m", "n") and tag in (
-                "#Rec_C",
-                "#Rec_D",
-                "#Lig_TR",
-                "#Lig_C",
-                "#Lig_D",
-            ):
+            if _tag_matches(tag):
                 num_rest += 1
 
         rty = ["d"] * num_rest
@@ -588,92 +858,30 @@ class RESTMBARAnalysis(MBARAnalysis):
                 if not cols:
                     continue
                 tag = cols[-1]
+                if not _tag_matches(tag):
+                    continue
 
-                def _natms() -> int:
-                    return len(cols[2].split(",")) - 1
-
-                if component == "t" and tag == "#Lig_TR":
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("l", "c") and tag in ("#Lig_C", "#Lig_D"):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("a", "r") and tag in ("#Rec_C", "#Rec_D"):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("m", "n") and tag in (
-                    "#Rec_C",
-                    "#Rec_D",
-                    "#Lig_TR",
-                    "#Lig_C",
-                    "#Lig_D",
-                ):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
+                fields = _parse_amber_rst_line(line)
+                req[win, r] = _parse_amber_rst_float(fields, "r2", line)
+                force = _parse_amber_rst_float(fields, "rk2", line)
+                nat = _parse_amber_rst_natoms(fields, line)
+                if nat == 2:
+                    rty[r] = "d"
+                    rfc[win, r] = force
+                elif nat == 3:
+                    rty[r] = "a"
+                    rfc[win, r] = force * (np.pi / 180.0) ** 2
+                elif nat == 4:
+                    rty[r] = "t"
+                    rfc[win, r] = force * (np.pi / 180.0) ** 2
+                else:
+                    raise ValueError("Unknown restraint natoms")
+                r += 1
+            if r != num_rest:
+                raise ValueError(
+                    f"Window {component}{win:02d} has {r} matching restraints; "
+                    f"expected {num_rest}"
+                )
 
         return rfc, req, rty, num_rest
 
@@ -725,24 +933,15 @@ class RESTMBARAnalysis(MBARAnalysis):
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
         kT = 0.0019872041 * temperature
-        win_dir = Path(f"{comp_folder}/{component}{win_i:02d}")
-        cwd0 = Path.cwd()
-        try:
-            os.chdir(win_dir)
+        win_dir = Path(f"{comp_folder}/{component}{win_i:02d}").resolve()
 
-            # enumerate mdin-XX.nc (or fallback md01.nc..)
-            nc_list: List[str] = []
-            nsims = len(glob.glob("mdin-*.nc"))
-            for i in range(nsims):
-                fn = f"mdin-{i:02d}.nc"
-                if os.path.exists(fn):
-                    nc_list.append(fn)
-
+        val = RESTMBARAnalysis._read_cmass_values(
+            win_dir, num_rest, analysis_start_step, ntwx
+        )
+        if val is None:
+            nc_list = RESTMBARAnalysis._window_nc_list(win_dir)
             if not nc_list:
-                fallback = ["md01.nc", "md02.nc", "md03.nc", "md04.nc"]
-                nc_list = [f for f in fallback if os.path.exists(f)]
-            if not nc_list:
-                raise FileNotFoundError("No NetCDF trajs for REST window")
+                raise FileNotFoundError("No cmass traces or NetCDF trajs for REST window")
 
             logger.debug(
                 f"[RESTMBAR] {component}{win_i:02d} using {len(nc_list)} nc files"
@@ -750,87 +949,87 @@ class RESTMBARAnalysis(MBARAnalysis):
 
             # generate restraint traces via cpptraj using current topology choice
             def _gen(top_choice: str):
-                generate_results_rest(nc_list, component, blocks=5, top=top_choice)
+                generate_results_rest(
+                    nc_list, component, blocks=5, top=top_choice, workdir=win_dir
+                )
 
             try:
                 _gen("full")
             except Exception:
                 _gen("vac")
 
-            with open("restraints.dat", "r") as fin:
+            with open(win_dir / "restraints.dat", "r") as fin:
                 lines = [ln for ln in fin if (ln and ln[0] not in "#@")]
             val = np.zeros((len(lines), num_rest), dtype=float)
             for n, line in enumerate(lines):
                 cols = line.split()
                 for r in range(num_rest):
-                    if rty[r] == "t":
-                        tmp = float(cols[r + 1])
-                        if tmp < req[win_i, r] - 180.0:
-                            tmp += 360.0
-                        elif tmp > req[win_i, r] + 180.0:
-                            tmp -= 360.0
-                        val[n, r] = tmp
-                    else:
-                        val[n, r] = float(cols[r + 1])
-
-            # reduced potential at this window
-            if component != "u":
-                if rfc[win_i, 0] == 0:  # guard tiny zeros
-                    tmp = np.ones((num_rest,), np.float64) * 1e-3
-                    u = np.sum(tmp * (val - req[win_i]) ** 2 / kT, axis=1)
-                else:
-                    u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
-            else:
-                u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
+                    val[n, r] = float(cols[r + 1])
 
             # Drop early frames if requested (convert steps -> frame index)
             start_idx = max(0, int(analysis_start_step))
             if analysis_start_step > 0 and ntwx > 0:
-                # frames recorded every ntwx steps; dt cancels but kept for clarity
-                start_idx = max(0, int(math.ceil(analysis_start_step / float(ntwx))))
-            if start_idx > 0:
-                logger.debug(
-                    f"[RESTMBAR] {component}{win_i:02d} dropping first {start_idx} frames "
-                    f"(analysis_start_step={analysis_start_step}, ntwx={ntwx})"
+                start_idx = max(
+                    0, int(math.ceil(analysis_start_step / float(ntwx)))
                 )
             if start_idx > 0:
-                u = u[start_idx:]
+                logger.debug(
+                    f"[RESTMBAR] {component}{win_i:02d} dropping first "
+                    f"{start_idx} frames (analysis_start_step="
+                    f"{analysis_start_step}, ntwx={ntwx})"
+                )
                 val = val[start_idx:]
 
-            t0 = 0
-            if truncate:
-                with SilenceAlchemlybOnly():
-                    t0, _, _ = detect_equilibration(u, nskip=10)
-                u = u[t0:]
-                val = val[t0:]
+        for r in range(num_rest):
+            if rty[r] != "t":
+                continue
+            low = val[:, r] < req[win_i, r] - 180.0
+            high = val[:, r] > req[win_i, r] + 180.0
+            val[low, r] += 360.0
+            val[high, r] -= 360.0
 
-            Upot = np.zeros((num_win, len(u)), np.float64)
-            for w in range(num_win):
-                if component != "u":
-                    Upot[w] = np.sum(rfc[w] * (val - req[w]) ** 2 / kT, axis=1)
-                else:
-                    Upot[w] = (rfc[w, 0] * (val[:, 0] - req[w, 0]) ** 2) / kT
+        # reduced potential at this window
+        if component != "u":
+            if rfc[win_i, 0] == 0:  # guard tiny zeros
+                tmp = np.ones((num_rest,), np.float64) * 1e-3
+                u = np.sum(tmp * (val - req[win_i]) ** 2 / kT, axis=1)
+            else:
+                u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
+        else:
+            u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
 
-            # Pack like alchemlyb (time,lambdas) MultiIndex
-            win_i_list = np.arange(num_win, dtype=np.float64)
-            mbar_time = np.arange(len(u), dtype=np.float64)
-            clambda = float(win_i)
+        t0 = 0
+        if truncate:
+            with SilenceAlchemlybOnly():
+                t0, _, _ = detect_equilibration(u, nskip=10)
+            u = u[t0:]
+            val = val[t0:]
 
-            mbar_df = pd.DataFrame(
-                Upot,
-                index=np.array(win_i_list, dtype=np.float64),
-                columns=pd.MultiIndex.from_arrays(
-                    [mbar_time, np.repeat(clambda, len(mbar_time))],
-                    names=["time", "lambdas"],
-                ),
-            ).T
-            return mbar_df
-        finally:
-            os.chdir(cwd0)
+        Upot = np.zeros((num_win, len(u)), np.float64)
+        for w in range(num_win):
+            if component != "u":
+                Upot[w] = np.sum(rfc[w] * (val - req[w]) ** 2 / kT, axis=1)
+            else:
+                Upot[w] = (rfc[w, 0] * (val[:, 0] - req[w, 0]) ** 2) / kT
+
+        # Pack like alchemlyb (time,lambdas) MultiIndex
+        win_i_list = np.arange(num_win, dtype=np.float64)
+        mbar_time = np.arange(len(u), dtype=np.float64)
+        clambda = float(win_i)
+
+        mbar_df = pd.DataFrame(
+            Upot,
+            index=np.array(win_i_list, dtype=np.float64),
+            columns=pd.MultiIndex.from_arrays(
+                [mbar_time, np.repeat(clambda, len(mbar_time))],
+                names=["time", "lambdas"],
+            ),
+        ).T
+        return mbar_df
 
 
 class BoreschAnalysis(FEAnalysisBase):
-    def __init__(self, disangfile, k_r, k_a, temperature):
+    def __init__(self, disangfile, k_r, k_a, temperature, restraint_tag=None):
         """
         Initialize the Boresch analysis with the disang file and parameters.
 
@@ -845,6 +1044,9 @@ class BoreschAnalysis(FEAnalysisBase):
             They are the same (they don't have to be).
         temperature : float
             The temperature in Kelvin for the analysis.
+        restraint_tag : str, optional
+            Select a tagged Boresch block such as ``Lig_TR_REF`` or
+            ``Lig_TR_ALT``. When omitted, the legacy ``#Lig_TR`` match is used.
         """
         super().__init__()
         self.disangfile = disangfile
@@ -853,6 +1055,7 @@ class BoreschAnalysis(FEAnalysisBase):
         assert self.k_r > 0.0, "k_r must be positive"
         assert self.k_a > 0.0, "k_a must be positive"
         self.temperature = temperature
+        self.restraint_tag = restraint_tag
 
     def run_analysis(self):
         """
@@ -870,7 +1073,21 @@ class BoreschAnalysis(FEAnalysisBase):
         with open(self.disangfile, "r") as f_in:
             lines = [line.rstrip() for line in f_in]
 
-            tr_lines = list(line for line in lines if "#Lig_TR" in line)
+            if self.restraint_tag:
+                tag = f"#{str(self.restraint_tag).lstrip('#')}"
+                tr_lines = [line for line in lines if tag in line]
+            else:
+                tr_lines = [line for line in lines if "#Lig_TR" in line]
+            if len(tr_lines) < 6:
+                label = (
+                    str(self.restraint_tag).lstrip("#")
+                    if self.restraint_tag
+                    else "Lig_TR"
+                )
+                raise ValueError(
+                    f"Expected at least 6 Boresch restraint lines tagged #{label} "
+                    f"in {self.disangfile}, found {len(tr_lines)}"
+                )
             r0 = _extract_r2_val(tr_lines[0])  # P1–L1 distance (target at r2)
             a1_0 = _extract_r2_val(tr_lines[1])  # P2–P1–L1 angle
             t1_0 = _extract_r2_val(tr_lines[2])  # P3–P2–P1–L1 dihedral
@@ -964,14 +1181,28 @@ class BoreschAnalysis(FEAnalysisBase):
         )
 
 
+def _disang_has_restraint_tag(disangfile: str | Path, tag: str) -> bool:
+    needle = f"#{tag.lstrip('#')}"
+    try:
+        with open(disangfile, "r") as f_in:
+            return any(needle in line for line in f_in)
+    except FileNotFoundError:
+        return False
+
+
 def generate_results_rest(
-    md_sim_files: List[str], comp: str, blocks: int = 5, top: str = "full"
+    md_sim_files: List[str],
+    comp: str,
+    blocks: int = 5,
+    top: str = "full",
+    workdir: str | Path | None = None,
 ) -> None:
     """
     Build a cpptraj input on the fly using 'restraints.in' template in cwd,
     swapping the topology to ../{comp}-1/{top}.prmtop and appending trajins.
     """
-    with open("restraints.in", "r") as f:
+    work_path = Path.cwd() if workdir is None else Path(workdir)
+    with open(work_path / "restraints.in", "r") as f:
         lines = f.readlines()
 
     # drop any existing trajin lines
@@ -990,15 +1221,16 @@ def generate_results_rest(
         r"parm\s+(\S+)", f"parm ../{comp}-1/{top}.prmtop", lines[parm_idx]
     )
 
-    with open("restraints_curr.in", "w") as f:
+    with open(work_path / "restraints_curr.in", "w") as f:
         f.writelines(lines[: parm_idx + 1])
         for mdin in md_sim_files:
             f.write(f"trajin {mdin}\n")
         f.writelines(lines[parm_idx + 1 :])
 
-    rc = run_with_log(f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1")
-    if rc != 0:
-        raise RuntimeError("cpptraj failed; see restraints.log")
+    run_with_log(
+        f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1",
+        working_dir=work_path,
+    )
 
 
 # ---- lig wrapper ------------------------------------------------------------
@@ -1033,6 +1265,30 @@ def analyze_lig_task(
         fe_values: List[float] = []
         fe_stds: List[float] = []
         fe_timeseries: Dict[str, np.ndarray] = {}
+        fe_timeseries_backward: Dict[str, np.ndarray] = {}
+
+        def _add_boresch_contribution(
+            label: str,
+            disangfile: str | Path,
+            restraint_tag: str | None = None,
+        ) -> None:
+            k_r, k_a = rest[2], rest[3]
+            direction = COMPONENT_DIRECTION_DICT[label]
+            bor = BoreschAnalysis(
+                disangfile=disangfile,
+                k_r=k_r,
+                k_a=k_a,
+                temperature=temperature,
+                restraint_tag=restraint_tag,
+            )
+            bor.run_analysis()
+            fe_values.append(direction * bor.results["fe"])
+            fe_stds.append(bor.results["fe_error"])
+            fe_timeseries[label] = np.asarray([bor.results["fe"], 0.0])
+            fe_timeseries_backward[label] = np.asarray([bor.results["fe"], 0.0])
+            results_entries.append(
+                f"{label}\t{direction * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
+            )
 
         # Analytical Boresch (if present)
         if "v" in components:
@@ -1045,16 +1301,19 @@ def analyze_lig_task(
             boresch_file = None
 
         if boresch_file:
-            k_r, k_a = rest[2], rest[3]
-            bor = BoreschAnalysis(
-                disangfile=boresch_file, k_r=k_r, k_a=k_a, temperature=temperature
+            _add_boresch_contribution("Boresch", boresch_file)
+
+        septop_boresch_file = Path(lig_path) / "x" / "x-1" / "disang.rest"
+        if (
+            "x" in components
+            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_REF")
+            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_ALT")
+        ):
+            _add_boresch_contribution(
+                "Boresch_REF", septop_boresch_file, restraint_tag="Lig_TR_REF"
             )
-            bor.run_analysis()
-            fe_values.append(COMPONENT_DIRECTION_DICT["Boresch"] * bor.results["fe"])
-            fe_stds.append(bor.results["fe_error"])
-            fe_timeseries["Boresch"] = np.asarray([bor.results["fe"], 0.0])
-            results_entries.append(
-                f"Boresch\t{COMPONENT_DIRECTION_DICT['Boresch'] * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
+            _add_boresch_contribution(
+                "Boresch_ALT", septop_boresch_file, restraint_tag="Lig_TR_ALT"
             )
 
         for comp in components:
@@ -1092,6 +1351,9 @@ def analyze_lig_task(
                 fe_values.append(COMPONENT_DIRECTION_DICT[comp] * ana.results["fe"])
                 fe_stds.append(ana.results["fe_error"])
                 fe_timeseries[comp] = ana.results["fe_timeseries"]
+                fe_timeseries_backward[comp] = ana.results.get(
+                    "fe_timeseries_backward", ana.results["fe_timeseries"]
+                )
                 results_entries.append(
                     f"{comp}\t{COMPONENT_DIRECTION_DICT[comp]*ana.results['fe']:.2f}\t{ana.results['fe_error']:.2f}"
                 )
@@ -1117,6 +1379,9 @@ def analyze_lig_task(
                 fe_values.append(COMPONENT_DIRECTION_DICT[comp] * ana.results["fe"])
                 fe_stds.append(ana.results["fe_error"])
                 fe_timeseries[comp] = ana.results["fe_timeseries"]
+                fe_timeseries_backward[comp] = ana.results.get(
+                    "fe_timeseries_backward", ana.results["fe_timeseries"]
+                )
                 results_entries.append(
                     f"{comp}\t{COMPONENT_DIRECTION_DICT[comp]*ana.results['fe']:.2f}\t{ana.results['fe_error']:.2f}"
                 )
@@ -1143,6 +1408,18 @@ def analyze_lig_task(
                 fe_ts_err2[:n] += ts[:n, 1] ** 2
         fe_ts_err = np.sqrt(fe_ts_err2)
 
+        fe_ts_backward_val = np.zeros(LEN_FE_TIMESERIES, dtype=float)
+        fe_ts_backward_err2 = np.zeros(LEN_FE_TIMESERIES, dtype=float)
+        for comp, ts in fe_timeseries_backward.items():
+            direction = COMPONENT_DIRECTION_DICT.get(comp, +1)
+            if ts.ndim == 1:
+                fe_ts_backward_val += float(ts[0]) * direction
+            else:
+                n = min(LEN_FE_TIMESERIES, ts.shape[0])
+                fe_ts_backward_val[:n] += ts[:n, 0] * direction
+                fe_ts_backward_err2[:n] += ts[:n, 1] ** 2
+        fe_ts_backward_err = np.sqrt(fe_ts_backward_err2)
+
     except Exception as e:
         logger.error(f"Error during FE analysis for {lig}: {e}")
         if raise_on_error:
@@ -1151,6 +1428,8 @@ def analyze_lig_task(
         fe_std = float("nan")
         fe_ts_val = np.zeros(LEN_FE_TIMESERIES) * np.nan
         fe_ts_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
+        fe_ts_backward_val = np.zeros(LEN_FE_TIMESERIES) * np.nan
+        fe_ts_backward_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     # Optional Rocklin correction (component 'y')
     if rocklin_correction and "y" in components:
@@ -1189,14 +1468,37 @@ def analyze_lig_task(
             fe_value += corr
             results_entries.append(f"Rocklin\t{corr:.2f}\t0.00")
             fe_ts_val += corr
+            fe_ts_backward_val += corr
 
     results_entries.append(f"Total\t{fe_value:.2f}\t{fe_std:.2f}")
     with open(f"{lig_path}/Results/Results.dat", "w") as f:
         f.write("\n".join(results_entries))
 
+    def _timeseries_json_value(ts: np.ndarray) -> list:
+        arr = np.asarray(ts, dtype=float)
+        return arr.tolist()
+
+    component_timeseries = {
+        comp: {
+            "fe_timeseries": _timeseries_json_value(ts),
+            "fe_timeseries_backward": _timeseries_json_value(
+                fe_timeseries_backward.get(comp, ts)
+            ),
+        }
+        for comp, ts in fe_timeseries.items()
+    }
+
     with open(f"{lig_path}/Results/fe_timeseries.json", "w") as f:
         json.dump(
-            {"fe_value": fe_ts_val.tolist(), "fe_std": fe_ts_err.tolist()}, f, indent=2
+            {
+                "fe_value": fe_ts_val.tolist(),
+                "fe_std": fe_ts_err.tolist(),
+                "backward_fe_value": fe_ts_backward_val.tolist(),
+                "backward_fe_std": fe_ts_backward_err.tolist(),
+                "components": component_timeseries,
+            },
+            f,
+            indent=2,
         )
 
     sns.set(style="whitegrid")

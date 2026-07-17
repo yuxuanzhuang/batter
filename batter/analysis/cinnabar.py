@@ -14,9 +14,12 @@ from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 
 __all__ = [
     "CinnabarConversionResult",
+    "DEFAULT_X_CONVERGENCE_FALLBACK_FILTER",
+    "DEFAULT_X_CONVERGENCE_FILTER",
     "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
@@ -31,6 +34,8 @@ __all__ = [
 ]
 
 CINNABAR_MIN_UNCERTAINTY_KCAL_MOL = 1.0e-6
+DEFAULT_X_CONVERGENCE_FILTER = (0.8, 1.0)
+DEFAULT_X_CONVERGENCE_FALLBACK_FILTER = (0.5, 2.0)
 
 
 @dataclass
@@ -44,6 +49,10 @@ class CinnabarConversionResult:
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
     edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
+    x_convergence_filter: tuple[float, float] | None = None
+    x_convergence_fallback_filter: tuple[float, float] | None = None
+    convergence_filter_summary: pd.DataFrame = field(default_factory=pd.DataFrame)
+
 
 def _import_networkx():
     try:
@@ -112,7 +121,7 @@ def _rbfe_run_ids_for_replicate_note(
         .astype(str)
         .str.lower()
     )
-    rbfe_df = df.loc[protocol_series.eq("rbfe")].copy()
+    rbfe_df = df.loc[protocol_series.isin({"rbfe", "rbfe_septop"})].copy()
     if rbfe_df.empty:
         return []
 
@@ -284,6 +293,423 @@ def _include_in_analysis_mask(series: pd.Series) -> pd.Series:
         return bool(value)
 
     return series.map(_coerce).astype(bool)
+
+
+def normalize_x_convergence_filter(
+    value: Sequence[float] | str | None,
+) -> tuple[float, float] | None:
+    """Normalize the optional x-component convergence filter.
+
+    The returned pair is ``(minimum_data_fraction, tolerance_kcal_mol)``.
+    ``None`` and common off-like strings disable the filter.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if not text or text in {
+            "none",
+            "off",
+            "false",
+            "no",
+            "disabled",
+            "disable",
+        }:
+            return None
+        parts = [part for part in re.split(r"[,\s]+", text) if part]
+        if len(parts) != 2:
+            raise ValueError(
+                "x convergence filter must be two values: data_fraction tolerance_kcal_mol."
+            )
+        raw_fraction, raw_tolerance = parts
+    else:
+        parts = list(value)
+        if len(parts) != 2:
+            raise ValueError(
+                "x convergence filter must contain exactly two values: "
+                "(data_fraction, tolerance_kcal_mol)."
+            )
+        raw_fraction, raw_tolerance = parts
+
+    fraction = float(raw_fraction)
+    tolerance = float(raw_tolerance)
+    if not np.isfinite(fraction) or fraction <= 0.0 or fraction > 1.0:
+        raise ValueError("x convergence data fraction must be in the interval (0, 1].")
+    if not np.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("x convergence tolerance must be finite and non-negative.")
+    return (fraction, tolerance)
+
+
+def _row_value(row: pd.Series, key: str, default: str = "") -> str:
+    if key not in row.index:
+        return default
+    value = row.get(key, default)
+    if value is None or value is pd.NA:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    text = str(value).strip()
+    return text if text else default
+
+
+def _x_results_json_for_row(
+    row: pd.Series,
+    *,
+    default_work_dir: str | Path | None,
+) -> Path | None:
+    work_dir_text = _row_value(row, "source_work_dir")
+    work_dir = Path(work_dir_text) if work_dir_text else None
+    if work_dir is None and default_work_dir is not None:
+        work_dir = Path(default_work_dir)
+    run_id = _row_value(row, "run_id")
+    ligand = _row_value(row, "ligand")
+    if work_dir is None or not run_id or not ligand:
+        return None
+    return work_dir / "results" / run_id / ligand / "Results" / "x_results.json"
+
+
+def _series_values(payload: dict[str, Any], key: str) -> np.ndarray:
+    values = payload.get(key)
+    if values is None:
+        return np.asarray([], dtype=float)
+    arr = np.asarray(values, dtype=float)
+    if arr.ndim == 1:
+        if arr.size < 1:
+            return np.asarray([], dtype=float)
+        return arr[:1].astype(float)
+    if arr.ndim != 2 or arr.shape[1] < 1:
+        return np.asarray([], dtype=float)
+    return arr[:, 0].astype(float)
+
+
+def _time_convergence_fractions(payload: dict[str, Any], n_points: int) -> np.ndarray:
+    convergence = payload.get("convergence")
+    if isinstance(convergence, dict):
+        time_conv = convergence.get("time_convergence")
+        if isinstance(time_conv, dict):
+            records = time_conv.get("records")
+            if isinstance(records, list) and records:
+                fractions: list[float] = []
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    for key in (
+                        "data_fraction",
+                        "fraction",
+                        "Fraction",
+                        "time",
+                        "Time",
+                    ):
+                        if key in rec:
+                            try:
+                                fractions.append(float(rec[key]))
+                            except Exception:
+                                pass
+                            break
+                if len(fractions) >= n_points:
+                    return np.asarray(fractions[:n_points], dtype=float)
+    if n_points <= 0:
+        return np.asarray([], dtype=float)
+    return np.linspace(1.0 / n_points, 1.0, n_points, dtype=float)
+
+
+def _x_convergence_record(
+    row: pd.Series,
+    *,
+    threshold: tuple[float, float],
+    default_work_dir: str | Path | None,
+) -> dict[str, Any]:
+    min_fraction, tolerance = threshold
+    path = _x_results_json_for_row(row, default_work_dir=default_work_dir)
+    base: dict[str, Any] = {
+        "run_id": _row_value(row, "run_id"),
+        "edge_label": _row_value(row, "edge_label", _row_value(row, "ligand")),
+        "ligand": _row_value(row, "ligand"),
+        "x_results_json": str(path) if path is not None else "",
+        "filter_fraction": float(min_fraction),
+        "filter_tolerance_kcal_mol": float(tolerance),
+        "checked": False,
+        "included": True,
+        "reason": "missing_x_results_json",
+        "data_fraction": np.nan,
+        "x_final_kcal_mol": np.nan,
+        "x_forward_kcal_mol": np.nan,
+        "x_backward_kcal_mol": np.nan,
+        "forward_delta_kcal_mol": np.nan,
+        "backward_delta_kcal_mol": np.nan,
+        "forward_backward_delta_kcal_mol": np.nan,
+    }
+    if path is None or not path.is_file():
+        return base
+
+    try:
+        payload = json.loads(path.read_text())
+    except Exception as exc:
+        base["reason"] = f"unreadable_x_results_json: {exc}"
+        return base
+
+    forward = _series_values(payload, "fe_timeseries")
+    backward = _series_values(payload, "fe_timeseries_backward")
+    n_points = min(len(forward), len(backward))
+    if n_points <= 0:
+        base["reason"] = "missing_x_forward_backward_timeseries"
+        return base
+
+    forward = forward[:n_points]
+    backward = backward[:n_points]
+    fractions = _time_convergence_fractions(payload, n_points)
+    if len(fractions) < n_points:
+        fractions = np.linspace(1.0 / n_points, 1.0, n_points, dtype=float)
+    fractions = np.asarray(fractions[:n_points], dtype=float)
+    valid = np.flatnonzero(np.isfinite(fractions) & (fractions >= min_fraction))
+    if len(valid) == 0:
+        base["reason"] = "insufficient_x_convergence_fraction"
+        base["included"] = False
+        return base
+
+    idx = int(valid[0])
+    try:
+        final = float(payload.get("fe"))
+    except Exception:
+        final = float("nan")
+    if not np.isfinite(final):
+        finite_forward = forward[np.isfinite(forward)]
+        final = float(finite_forward[-1]) if finite_forward.size else float("nan")
+    f_val = float(forward[idx])
+    b_val = float(backward[idx])
+    f_delta = abs(f_val - final)
+    b_delta = abs(b_val - final)
+    fb_delta = abs(f_val - b_val)
+    tol_eps = max(1.0e-12, abs(float(tolerance)) * 1.0e-12)
+    converged = (
+        np.isfinite(final)
+        and np.isfinite(f_val)
+        and np.isfinite(b_val)
+        and f_delta <= tolerance + tol_eps
+        and b_delta <= tolerance + tol_eps
+        and fb_delta <= tolerance + tol_eps
+    )
+
+    base.update(
+        {
+            "checked": True,
+            "included": bool(converged),
+            "reason": "converged" if converged else "unconverged_x_component",
+            "data_fraction": float(fractions[idx]),
+            "x_final_kcal_mol": final,
+            "x_forward_kcal_mol": f_val,
+            "x_backward_kcal_mol": b_val,
+            "forward_delta_kcal_mol": float(f_delta),
+            "backward_delta_kcal_mol": float(b_delta),
+            "forward_backward_delta_kcal_mol": float(fb_delta),
+        }
+    )
+    return base
+
+
+class _UnionFind:
+    def __init__(self, nodes: Sequence[str] = ()) -> None:
+        self.parent: dict[str, str] = {}
+        for node in nodes:
+            self.add(node)
+
+    def add(self, node: str) -> None:
+        if node and node not in self.parent:
+            self.parent[node] = node
+
+    def find(self, node: str) -> str:
+        self.add(node)
+        parent = self.parent[node]
+        if parent != node:
+            self.parent[node] = self.find(parent)
+        return self.parent[node]
+
+    def union(self, left: str, right: str) -> None:
+        if not left or not right:
+            return
+        root_left = self.find(left)
+        root_right = self.find(right)
+        if root_left != root_right:
+            self.parent[root_right] = root_left
+
+
+def _edge_node_labels(
+    rbfe_df: pd.DataFrame,
+    *,
+    edge_separator: str,
+) -> pd.DataFrame:
+    work = rbfe_df.copy()
+    edge_series = work.get(
+        "edge_label",
+        work.get("ligand", pd.Series("", index=work.index)),
+    )
+    lig_split = edge_series.fillna("").astype(str).str.split(
+        edge_separator,
+        n=1,
+        expand=True,
+    )
+    if lig_split.shape[1] != 2:
+        return pd.DataFrame(
+            {"ligand_A_node": "", "ligand_B_node": ""},
+            index=work.index,
+        )
+    work["ligand_A_raw"] = lig_split[0].str.strip()
+    work["ligand_B_raw"] = lig_split[1].str.strip()
+    return _assign_ligand_node_labels(work, edge_separator=edge_separator)
+
+
+def _restore_connectivity_with_fallback_edges(
+    rbfe_df: pd.DataFrame,
+    summary: pd.DataFrame,
+    keep_mask: np.ndarray,
+    *,
+    fallback_threshold: tuple[float, float] | None,
+    default_work_dir: str | Path | None,
+    edge_separator: str,
+) -> np.ndarray:
+    if fallback_threshold is None or rbfe_df.empty or not np.any(~keep_mask):
+        return keep_mask
+
+    labeled = _edge_node_labels(rbfe_df, edge_separator=edge_separator)
+    node_pairs = [
+        (
+            str(row.ligand_A_node or "").strip(),
+            str(row.ligand_B_node or "").strip(),
+        )
+        for row in labeled[["ligand_A_node", "ligand_B_node"]].itertuples(index=False)
+    ]
+    nodes = sorted({node for pair in node_pairs for node in pair if node})
+    if len(nodes) < 2:
+        return keep_mask
+
+    original = _UnionFind(nodes)
+    kept = _UnionFind(nodes)
+    for left, right in node_pairs:
+        original.union(left, right)
+    for keep, (left, right) in zip(keep_mask, node_pairs):
+        if keep:
+            kept.union(left, right)
+
+    fallback_records: dict[int, dict[str, Any]] = {}
+    candidates: list[tuple[float, int]] = []
+    for pos, keep in enumerate(keep_mask):
+        if keep:
+            continue
+        left, right = node_pairs[pos]
+        if not left or not right or original.find(left) != original.find(right):
+            continue
+        fallback_record = _x_convergence_record(
+            rbfe_df.iloc[pos],
+            threshold=fallback_threshold,
+            default_work_dir=default_work_dir,
+        )
+        fallback_records[pos] = fallback_record
+        checked = bool(fallback_record.get("checked", False))
+        passes = bool(fallback_record.get("included", False))
+        if not checked or not passes:
+            continue
+        deltas = [
+            float(fallback_record.get("forward_delta_kcal_mol", np.nan)),
+            float(fallback_record.get("backward_delta_kcal_mol", np.nan)),
+            float(fallback_record.get("forward_backward_delta_kcal_mol", np.nan)),
+        ]
+        finite_deltas = [delta for delta in deltas if np.isfinite(delta)]
+        score = max(finite_deltas) if finite_deltas else float("inf")
+        candidates.append((score, pos))
+
+    for pos, fallback_record in fallback_records.items():
+        for key, value in fallback_record.items():
+            summary.loc[pos, f"fallback_{key}"] = value
+
+    restored = 0
+    for _score, pos in sorted(candidates):
+        left, right = node_pairs[pos]
+        if kept.find(left) == kept.find(right):
+            continue
+        kept.union(left, right)
+        keep_mask[pos] = True
+        restored += 1
+        summary.loc[pos, "included"] = True
+        summary.loc[pos, "restored_for_connectivity"] = True
+        summary.loc[pos, "reason"] = "restored_for_connectivity"
+
+    if restored:
+        logger.info(
+            "Restored {} RBFE edge measurement(s) with the fallback x-component "
+            "convergence filter to preserve network connectivity "
+            "(fraction >= {:.2f}, tolerance <= {:.3f} kcal/mol).",
+            restored,
+            fallback_threshold[0],
+            fallback_threshold[1],
+        )
+    return keep_mask
+
+
+def _filter_by_x_convergence(
+    rbfe_df: pd.DataFrame,
+    *,
+    x_convergence_filter: Sequence[float] | str | None,
+    x_convergence_fallback_filter: Sequence[float] | str | None,
+    default_work_dir: str | Path | None,
+    edge_separator: str,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    tuple[float, float] | None,
+    tuple[float, float] | None,
+]:
+    threshold = normalize_x_convergence_filter(x_convergence_filter)
+    fallback_threshold = normalize_x_convergence_filter(x_convergence_fallback_filter)
+    if threshold is None:
+        return rbfe_df.copy(), pd.DataFrame(), None, None
+    if rbfe_df.empty:
+        return rbfe_df.copy(), pd.DataFrame(), threshold, fallback_threshold
+
+    records = [
+        _x_convergence_record(
+            row,
+            threshold=threshold,
+            default_work_dir=default_work_dir,
+        )
+        for _, row in rbfe_df.iterrows()
+    ]
+    summary = pd.DataFrame.from_records(records)
+    summary["primary_reason"] = summary["reason"]
+    summary["restored_for_connectivity"] = False
+    keep_mask = summary["included"].astype(bool).to_numpy()
+    keep_mask = _restore_connectivity_with_fallback_edges(
+        rbfe_df,
+        summary,
+        keep_mask,
+        fallback_threshold=fallback_threshold,
+        default_work_dir=default_work_dir,
+        edge_separator=edge_separator,
+    )
+    filtered = rbfe_df.loc[keep_mask].copy()
+    n_checked = int(summary["checked"].astype(bool).sum())
+    n_skipped = int((~summary["included"].astype(bool)).sum())
+    if n_skipped:
+        logger.info(
+            "Skipped {} RBFE edge measurement(s) by x-component convergence filter "
+            "(fraction >= {:.2f}, tolerance <= {:.3f} kcal/mol).",
+            n_skipped,
+            threshold[0],
+            threshold[1],
+        )
+    if n_checked == 0:
+        logger.debug(
+            "x-component convergence filter found no checkable x_results.json files; "
+            "leaving RBFE rows unchanged."
+        )
+    if filtered.empty:
+        raise ValueError(
+            "No usable RBFE rows remain after x-component convergence filtering "
+            f"(fraction >= {threshold[0]:.2f}, tolerance <= {threshold[1]:.3f} kcal/mol)."
+        )
+    return filtered, summary, threshold, fallback_threshold
 
 
 def _metadata_pair_values(
@@ -933,7 +1359,7 @@ def load_batter_rbfe_results(
         .fillna("")
         .astype(str)
         .str.lower()
-        .eq("rbfe")
+        .isin({"rbfe", "rbfe_septop"})
     )
 
     work = df.loc[ligand_mask | original_mask | protocol_mask].copy()
@@ -1254,6 +1680,10 @@ def build_batter_rbfe_cinnabar(
     run_ids: Sequence[str] | None = None,
     ligands: Sequence[str] | None = None,
     edge_separator: str = "~",
+    x_convergence_filter: Sequence[float] | str | None = DEFAULT_X_CONVERGENCE_FILTER,
+    x_convergence_fallback_filter: Sequence[float] | str | None = (
+        DEFAULT_X_CONVERGENCE_FALLBACK_FILTER
+    ),
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
     merge_bidirectional: bool = True,
@@ -1275,6 +1705,18 @@ def build_batter_rbfe_cinnabar(
         ligands=ligands,
         edge_separator=edge_separator,
     )
+    (
+        work,
+        convergence_summary,
+        normalized_x_filter,
+        normalized_x_fallback_filter,
+    ) = _filter_by_x_convergence(
+        work,
+        x_convergence_filter=x_convergence_filter,
+        x_convergence_fallback_filter=x_convergence_fallback_filter,
+        default_work_dir=work_dir,
+        edge_separator=edge_separator,
+    )
     result = dataframe_to_cinnabar(
         work,
         ligand_column="edge_label",
@@ -1294,6 +1736,9 @@ def build_batter_rbfe_cinnabar(
         exp_value_unit=exp_value_unit,
         exp_error_unit=exp_error_unit,
     )
+    result.x_convergence_filter = normalized_x_filter
+    result.x_convergence_fallback_filter = normalized_x_fallback_filter
+    result.convergence_filter_summary = convergence_summary
     result.ligand_assets = _build_ligand_assets(
         result.raw_signed,
         work_dir=work_dir,
@@ -1313,6 +1758,10 @@ def build_batter_rbfe_cinnabar_from_runs(
     *,
     ligands: Sequence[str] | None = None,
     edge_separator: str = "~",
+    x_convergence_filter: Sequence[float] | str | None = DEFAULT_X_CONVERGENCE_FILTER,
+    x_convergence_fallback_filter: Sequence[float] | str | None = (
+        DEFAULT_X_CONVERGENCE_FALLBACK_FILTER
+    ),
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
     merge_bidirectional: bool = True,
@@ -1331,6 +1780,18 @@ def build_batter_rbfe_cinnabar_from_runs(
     work = load_batter_rbfe_results_from_runs(
         runs,
         ligands=ligands,
+        edge_separator=edge_separator,
+    )
+    (
+        work,
+        convergence_summary,
+        normalized_x_filter,
+        normalized_x_fallback_filter,
+    ) = _filter_by_x_convergence(
+        work,
+        x_convergence_filter=x_convergence_filter,
+        x_convergence_fallback_filter=x_convergence_fallback_filter,
+        default_work_dir=None,
         edge_separator=edge_separator,
     )
     result = dataframe_to_cinnabar(
@@ -1353,6 +1814,9 @@ def build_batter_rbfe_cinnabar_from_runs(
         exp_value_unit=exp_value_unit,
         exp_error_unit=exp_error_unit,
     )
+    result.x_convergence_filter = normalized_x_filter
+    result.x_convergence_fallback_filter = normalized_x_fallback_filter
+    result.convergence_filter_summary = convergence_summary
     result.ligand_assets = _build_ligand_assets(
         result.raw_signed,
         work_dir=None,
@@ -1372,6 +1836,10 @@ def build_batter_rbfe_cinnabar_by_run(
     run_ids: Sequence[str] | None = None,
     ligands: Sequence[str] | None = None,
     edge_separator: str = "~",
+    x_convergence_filter: Sequence[float] | str | None = DEFAULT_X_CONVERGENCE_FILTER,
+    x_convergence_fallback_filter: Sequence[float] | str | None = (
+        DEFAULT_X_CONVERGENCE_FALLBACK_FILTER
+    ),
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
     merge_bidirectional: bool = True,
@@ -1395,8 +1863,20 @@ def build_batter_rbfe_cinnabar_by_run(
     )
     out: dict[str, CinnabarConversionResult] = {}
     for run_id, group in work.groupby("run_id", sort=True):
-        result = dataframe_to_cinnabar(
+        (
+            filtered_group,
+            convergence_summary,
+            normalized_x_filter,
+            normalized_x_fallback_filter,
+        ) = _filter_by_x_convergence(
             group,
+            x_convergence_filter=x_convergence_filter,
+            x_convergence_fallback_filter=x_convergence_fallback_filter,
+            default_work_dir=work_dir,
+            edge_separator=edge_separator,
+        )
+        result = dataframe_to_cinnabar(
+            filtered_group,
             ligand_column="edge_label",
             edge_separator=edge_separator,
             uncertainty_mode=uncertainty_mode,
@@ -1414,6 +1894,9 @@ def build_batter_rbfe_cinnabar_by_run(
             exp_value_unit=exp_value_unit,
             exp_error_unit=exp_error_unit,
         )
+        result.x_convergence_filter = normalized_x_filter
+        result.x_convergence_fallback_filter = normalized_x_fallback_filter
+        result.convergence_filter_summary = convergence_summary
         result.ligand_assets = _build_ligand_assets(
             result.raw_signed,
             work_dir=work_dir,
@@ -1434,6 +1917,10 @@ def auto_write_rbfe_cinnabar_for_run(
     run_id: str,
     *,
     out_dir: str | Path | None = None,
+    x_convergence_filter: Sequence[float] | str | None = DEFAULT_X_CONVERGENCE_FILTER,
+    x_convergence_fallback_filter: Sequence[float] | str | None = (
+        DEFAULT_X_CONVERGENCE_FALLBACK_FILTER
+    ),
     combine_by_run_first: bool = True,
     merge_bidirectional: bool = True,
     write_plots: bool = True,
@@ -1442,10 +1929,16 @@ def auto_write_rbfe_cinnabar_for_run(
 ) -> dict[str, Any]:
     """Write a per-run RBFE Cinnabar bundle plus a replicate-aware follow-up note."""
     work_root = Path(work_dir)
-    output_dir = Path(out_dir) if out_dir is not None else (work_root / "results" / "cinnabar" / str(run_id))
+    output_dir = (
+        Path(out_dir)
+        if out_dir is not None
+        else (work_root / "results" / "cinnabar" / str(run_id))
+    )
     result = build_batter_rbfe_cinnabar(
         work_root,
         run_ids=[str(run_id)],
+        x_convergence_filter=x_convergence_filter,
+        x_convergence_fallback_filter=x_convergence_fallback_filter,
         combine_by_run_first=combine_by_run_first,
         merge_bidirectional=merge_bidirectional,
     )
@@ -1458,10 +1951,35 @@ def auto_write_rbfe_cinnabar_for_run(
         write_cycle_closure=write_cycle_closure,
         absolute_offset=absolute_offset,
     )
+    unskipped_result = None
+    unskipped_outputs = None
+    unskipped_output_dir = None
+    if getattr(result, "x_convergence_filter", None) is not None:
+        unskipped_output_dir = output_dir / "unskipped"
+        unskipped_result = build_batter_rbfe_cinnabar(
+            work_root,
+            run_ids=[str(run_id)],
+            x_convergence_filter=None,
+            x_convergence_fallback_filter=None,
+            combine_by_run_first=combine_by_run_first,
+            merge_bidirectional=merge_bidirectional,
+        )
+        unskipped_outputs = write_cinnabar_outputs(
+            unskipped_result,
+            unskipped_output_dir,
+            method_name="BATTER",
+            target_name=f"{work_root.name}:{run_id} unskipped",
+            write_plots=write_plots,
+            write_cycle_closure=write_cycle_closure,
+            absolute_offset=absolute_offset,
+        )
     return {
         "result": result,
         "outputs": outputs,
         "output_dir": output_dir,
+        "unskipped_result": unskipped_result,
+        "unskipped_outputs": unskipped_outputs,
+        "unskipped_output_dir": unskipped_output_dir,
         "replicate_note": _replicate_cinnabar_note(work_root, str(run_id)),
         "absolute_warning": getattr(result, "absolute_warning", None),
     }
@@ -4571,6 +5089,14 @@ def write_cinnabar_outputs(
     result.edge_summary.to_csv(edge_path, index=False)
     outputs["edge_summary_csv"] = edge_path
 
+    if (
+        result.convergence_filter_summary is not None
+        and not result.convergence_filter_summary.empty
+    ):
+        conv_filter_path = out_root / "x_convergence_filter.csv"
+        result.convergence_filter_summary.to_csv(conv_filter_path, index=False)
+        outputs["x_convergence_filter_csv"] = conv_filter_path
+
     title = method_name if not target_name else f"{method_name}: {target_name}"
 
     cycle_closure_info, cycle_closure_outputs = _write_cycle_closure_outputs(
@@ -4731,6 +5257,52 @@ def write_cinnabar_outputs(
         "n_directional_edges": directionality["n_directional_edges"],
         "n_reciprocal_pairs": directionality["n_reciprocal_pairs"],
         "reciprocal_pairs": directionality["reciprocal_pairs"],
+        "x_convergence_filter": (
+            {
+                "enabled": True,
+                "fraction": float(result.x_convergence_filter[0]),
+                "tolerance_kcal_mol": float(result.x_convergence_filter[1]),
+                "n_checked": int(
+                    result.convergence_filter_summary["checked"].astype(bool).sum()
+                )
+                if result.convergence_filter_summary is not None
+                and not result.convergence_filter_summary.empty
+                and "checked" in result.convergence_filter_summary.columns
+                else 0,
+                "n_skipped": int(
+                    (~result.convergence_filter_summary["included"].astype(bool)).sum()
+                )
+                if result.convergence_filter_summary is not None
+                and not result.convergence_filter_summary.empty
+                and "included" in result.convergence_filter_summary.columns
+                else 0,
+                "fallback": (
+                    {
+                        "enabled": True,
+                        "fraction": float(result.x_convergence_fallback_filter[0]),
+                        "tolerance_kcal_mol": float(
+                            result.x_convergence_fallback_filter[1]
+                        ),
+                        "n_restored": int(
+                            result.convergence_filter_summary[
+                                "restored_for_connectivity"
+                            ]
+                            .astype(bool)
+                            .sum()
+                        )
+                        if result.convergence_filter_summary is not None
+                        and not result.convergence_filter_summary.empty
+                        and "restored_for_connectivity"
+                        in result.convergence_filter_summary.columns
+                        else 0,
+                    }
+                    if result.x_convergence_fallback_filter is not None
+                    else {"enabled": False}
+                ),
+            }
+            if result.x_convergence_filter is not None
+            else {"enabled": False}
+        ),
         "cycle_closure": cycle_closure_info,
         "outputs": {key: path.name for key, path in outputs.items()},
     }

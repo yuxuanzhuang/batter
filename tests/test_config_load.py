@@ -74,6 +74,36 @@ fe_sim:
     assert sim_cfg.infer_disulfide_bonds is False
 
 
+def test_run_config_ring_penetration_repair_options(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(
+        f"""
+run:
+  output_folder: "{tmp_path / 'work'}"
+protocol: abfe
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+  fix_ring_penetration: false
+  ring_penetration_fix_mode: ligand
+fe_sim:
+  z_lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.create.fix_ring_penetration is False
+    assert cfg.create.ring_penetration_fix_mode == "ligand"
+    assert sim_cfg.fix_ring_penetration is False
+    assert sim_cfg.ring_penetration_fix_mode == "ligand"
+
+
 def test_load_simulation_config(tmp_path: Path) -> None:
     sim_yaml = tmp_path / "sim.yaml"
     sim_yaml.write_text(
@@ -193,6 +223,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  network_scorer: shape-difference
   atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
   lomap:
@@ -212,6 +243,7 @@ rbfe:
     assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
     assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
     assert cfg.rbfe.atom_mapper == "lomap"
+    assert cfg.rbfe.network_scorer == "shape_difference"
     assert cfg.rbfe.lomap.time == 7
     assert cfg.rbfe.lomap.max3d == 2.0
     assert cfg.rbfe.lomap.shift is False
@@ -253,7 +285,21 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.map_exact_ring_matches_only is True
     assert cfg.kartograf.allow_partial_fused_rings is True
     assert cfg.kartograf.allow_bond_breaks is False
+    assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
+    assert cfg.minimal_mapping_atom == 3
+    assert cfg.direction_policy == "larger_volume"
+
+
+def test_rbfe_direction_policy_normalizes_hyphenated_value() -> None:
+    cfg = RBFENetworkArgs(direction_policy="larger-volume")
+
+    assert cfg.direction_policy == "larger_volume"
+
+
+def test_rbfe_minimal_mapping_atom_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="minimal_mapping_atom"):
+        RBFENetworkArgs(minimal_mapping_atom=0)
 
 
 def test_run_config_rejects_rbfe_kartograf_hydrogen_mapping_options(
@@ -445,6 +491,16 @@ def test_sim_config_infer_disulfide_bonds_default(tmp_path: Path) -> None:
     assert cfg.infer_disulfide_bonds is True
 
 
+def test_sim_config_ring_penetration_repair_defaults(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0.0, 1.0], n_steps={"z": 300_000})
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert cfg.fix_ring_penetration is True
+    assert cfg.ring_penetration_fix_mode == "auto"
+
+
 def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     conf_json = tmp_path / "conf.json"
     conf_json.write_text("[]")
@@ -552,6 +608,104 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
 
 
+def test_abfe_diff_uses_d_component_from_sections(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={"d": [0.0, 0.25, 0.5, 1.0]},
+        n_steps={"d": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ABFE_diff")
+
+    assert cfg.fe_type == "uno_rest_diff"
+    assert cfg.components == ["d"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["d"] == [0.0, 0.25, 0.5, 1.0]
+
+
+def test_abfe_diff_can_add_ligand_conformational_component(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={
+            "d": [0.0, 0.5, 1.0],
+            "l": [0.0, 0.25, 0.5, 0.75, 1.0],
+        },
+        n_steps={"d": 300_000, "l": 100_000},
+        lig_dihcf_force=10.0,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ABFE_diff")
+
+    assert cfg.components == ["d", "l"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["l"] == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert cfg.dic_n_steps["l"] == 100_000
+    assert cfg.lig_dihcf_force == 10.0
+
+
+def test_ligand_rest_uses_l_component_from_sections(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={"l": [0.0, 0.25, 0.5, 1.0]},
+        n_steps={"l": 100_000},
+        lig_dihcf_force=10.0,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ligand-rest")
+
+    assert cfg.fe_type == "ligand_rest"
+    assert cfg.components == ["l"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["l"] == [0.0, 0.25, 0.5, 1.0]
+    assert cfg.dic_n_steps["l"] == 100_000
+
+
+def test_ligand_rest_requires_positive_dihedral_force(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        n_steps={"l": 100_000},
+    )
+
+    with pytest.raises(ValueError, match="ligand_rest requires positive lig_dihcf_force"):
+        SimulationConfig.from_sections(create, fe_args, protocol="ligand_rest")
+
+
+def test_run_config_abfe_diff_accepts_legacy_d_fields(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "abfe_diff.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: ABFE-diff
+run:
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+fe_sim:
+  d_lambdas: [0.0, 0.5, 1.0]
+  d_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.protocol == "abfe_diff"
+    assert sim_cfg.fe_type == "uno_rest_diff"
+    assert sim_cfg.components == ["d"]
+    assert sim_cfg.component_lambdas["d"] == [0.0, 0.5, 1.0]
+
+
 def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
@@ -572,10 +726,20 @@ def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> 
 
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
-    if protocol == "abfe":
+    normalized_protocol = protocol.lower().replace("-", "_")
+    if normalized_protocol == "abfe":
         n_steps = {"z": 300_000}
+    elif normalized_protocol == "abfe_diff":
+        n_steps = {"d": 300_000}
+    elif normalized_protocol == "ligand_rest":
+        n_steps = {"l": 100_000}
+    elif normalized_protocol in {"rbfe", "rbfe_septop"}:
+        n_steps = {"x": 300_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
+    extra_fe = {}
+    if normalized_protocol == "ligand_rest":
+        extra_fe["lig_dihcf_force"] = 10.0
     payload = {
         "protocol": protocol,
         "backend": "local",
@@ -585,6 +749,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
             "lambdas": [0.0, 1.0],
             "eq_steps": 1000,
             "n_steps": n_steps,
+            **extra_fe,
         },
     }
     return RunConfig.model_validate(payload)
@@ -595,6 +760,9 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     [
         ("asfe", "asfe"),
         ("abfe", "uno_rest"),
+        ("ABFE_diff", "uno_rest_diff"),
+        ("ligand-rest", "ligand_rest"),
+        ("rbfe-septop", "relative_septop"),
     ],
 )
 def test_resolved_sim_config_sets_fe_type(
@@ -671,6 +839,46 @@ def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.n_bootstraps == 64
+
+
+def test_cinnabar_x_convergence_filter_default(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter == (0.8, 1.0)
+    assert cfg.cinnabar_x_convergence_fallback_filter == (0.5, 2.0)
+
+
+def test_cinnabar_x_convergence_filter_can_be_disabled(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+        cinnabar_x_convergence_filter="off",
+        cinnabar_x_convergence_fallback_filter="off",
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter is None
+    assert cfg.cinnabar_x_convergence_fallback_filter is None
+
+
+def test_cinnabar_x_convergence_filter_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+        cinnabar_x_convergence_filter=[0.9, 0.5],
+        cinnabar_x_convergence_fallback_filter=[0.6, 1.5],
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+    assert cfg.cinnabar_x_convergence_filter == (0.9, 0.5)
+    assert cfg.cinnabar_x_convergence_fallback_filter == (0.6, 1.5)
 
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:

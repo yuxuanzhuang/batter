@@ -20,7 +20,19 @@ retry=${RETRY_COUNT:-${RETRY:-}}
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
+    local errexit_was_on=0
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    SIM_COMMAND_STATUS=0
+    set +e
     eval "$@"
+    SIM_COMMAND_STATUS=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    else
+        set +e
+    fi
 }
 
 if [[ -f FINISHED ]]; then
@@ -29,6 +41,8 @@ if [[ -f FINISHED ]]; then
 fi
 
 source check_run.bash
+
+rm -f FAILED
 
 consume_prior_failure_marker >/dev/null
 
@@ -96,7 +110,7 @@ start_ps=$(production_start_ps "$production_start_marker" "$production_initial_r
 select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry"
 rst_in="$SELECTED_MD_RESTART"
 require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
-restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+restart_ps=$(production_restart_ps)
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
@@ -113,7 +127,7 @@ last_rst="md-current.rst7"
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
-if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
+if can_skip_short_final_tail "$total_ps" "$current_ps" "$remaining_ps"; then
     remaining_steps=0
     current_ps="$total_ps"
 fi
@@ -125,16 +139,16 @@ if (( remaining_steps > 0 )); then
     fi
     run_ps=$(awk -v s="$run_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-    # first_run if no md-*.out exists yet
     first_run=0
-    if [[ $(latest_md_index "md-*.out") -lt 0 ]]; then
+    if [[ "$rst_in" == "$production_initial_rst" ]]; then
         first_run=1
     fi
 
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    cmass_file=$(printf "cmass-%02d.txt" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
-    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" > "$mdin_current"
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" "$retry" "$start_ps" "$cmass_file" > "$mdin_current"
 
     # Preflight: ensure output directory writable (avoids Fortran OPEN errors)
     : > .write_test.$$ 2>/dev/null || {
@@ -154,10 +168,10 @@ if (( remaining_steps > 0 )); then
     fi
 
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the rolling restart.
-    restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    restart_ps=$(production_restart_ps)
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
@@ -167,7 +181,8 @@ if (( remaining_steps > 0 )); then
     last_rst="md-current.rst7"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
+    require_nonempty_file_or_attempt_fail "$last_rst" "[ERROR] Production is marked complete but restart $last_rst is missing."
     print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
 parm $PRMTOP
 trajin ${last_rst}

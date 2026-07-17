@@ -25,6 +25,24 @@ if [[ ! -f ./check_run.bash ]]; then
 fi
 source ./check_run.bash
 
+if ! declare -F production_is_complete >/dev/null 2>&1; then
+production_is_complete() {
+    local current_ps=$1
+    local total_ps=$2
+    local dt_ps=${3:-0}
+
+    awk -v cur="$current_ps" -v tot="$total_ps" -v dt="$dt_ps" '
+        BEGIN {
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            exit !((cur + tol) >= tot)
+        }
+    '
+}
+fi
+
 # Determine completed time (ps) from restart and latest md-*.out index for window 0.
 window_progress() {
     local win0=$1
@@ -155,7 +173,9 @@ if (( remaining_steps > 0 )); then
             exit 1
         }
         current_mdin="${PFOLDER}/${win}/mdin-current"
-        write_mdin_current "$tmpl" "$run_steps" "$first_run" "$current_mdin" > "$current_mdin"
+        cmass_file=$(printf "cmass-%02d.txt" "$seg_idx")
+        dumpave_file="${win}/${cmass_file}"
+        write_mdin_current "$tmpl" "$run_steps" "$first_run" "$current_mdin" "$retry" "" "$dumpave_file" > "$current_mdin"
 
         # Determine restart input per window (prefer rolling restarts, else eq.rst7)
         rst_in="eq.rst7"
@@ -209,11 +229,15 @@ if (( remaining_steps > 0 )); then
         reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
         exit 1
     fi
+    read restart_ps last_idx < <(window_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+    [[ -z $restart_ps ]] && restart_ps=0
+    current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
+    [[ -z $current_ps ]] && current_ps=0
 else
     current_ps="$total_ps"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
     echo "FINISHED" > ${PFOLDER}/FINISHED
     echo "[INFO] Simulation complete; writing per-window FINISHED markers."
     for ((i = 0; i < N_WINDOWS; i++)); do

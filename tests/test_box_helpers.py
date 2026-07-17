@@ -1,15 +1,216 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("parmed")
+pmd = pytest.importorskip("parmed")
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import box
+
+
+def _pdb_atom(
+    serial: int,
+    name: str,
+    resname: str,
+    chain: str,
+    resid: int,
+    x: float,
+    y: float,
+    z: float,
+    element: str,
+) -> str:
+    return (
+        f"ATOM  {serial:5d} {name:<4} {resname:>3} {chain}{resid:4d}    "
+        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2}\n"
+    )
+
+
+def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
+    data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
+    parm = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    parm.parm_data["SOLVENT_POINTERS"] = [0, 0, 0]
+    parm.parm_data["ATOMS_PER_MOLECULE"] = [0]
+
+    repaired = box._repair_parmed_molecule_table_for_combine(parm)
+
+    assert repaired is parm
+    assert parm.parm_data["SOLVENT_POINTERS"] == [1, 1, 2]
+    assert parm.parm_data["ATOMS_PER_MOLECULE"] == [len(parm.atoms)]
+    assert len(copy.copy(parm).atoms) == len(parm.atoms)
+
+
+def test_restore_reference_hydrogen_coordinates_repairs_existing_lipid_protons(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "full_pre.pdb"
+    reference = tmp_path / "equil-reference.pdb"
+    target.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C31", "PC", "A", 365, 0.000, 0.000, 0.000, "C"),
+                _pdb_atom(2, "C32", "PC", "A", 365, 1.500, 0.000, 0.000, "C"),
+                _pdb_atom(3, "N31", "PC", "A", 365, 1.500, 1.400, 0.000, "N"),
+                _pdb_atom(4, "C33", "PC", "A", 365, 1.500, 0.000, 1.400, "C"),
+                _pdb_atom(5, "H2A", "PC", "A", 365, 0.560, 0.000, 0.000, "H"),
+                _pdb_atom(6, "H2B", "PC", "A", 365, 0.600, 0.100, 0.000, "H"),
+                _pdb_atom(7, "O", "WAT", "A", 366, 5.000, 0.000, 0.000, "O"),
+                _pdb_atom(8, "H1", "WAT", "A", 366, 5.100, 0.000, 0.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    reference.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C31", "PC", "X", 99, 0.000, 0.000, 0.000, "C"),
+                _pdb_atom(2, "C32", "PC", "X", 99, 1.500, 0.000, 0.000, "C"),
+                _pdb_atom(3, "N31", "PC", "X", 99, 1.500, 1.400, 0.000, "N"),
+                _pdb_atom(4, "C33", "PC", "X", 99, 1.500, 0.000, 1.400, "C"),
+                _pdb_atom(5, "H2A", "PC", "X", 99, 2.500, -0.300, -0.300, "H"),
+                _pdb_atom(6, "H2B", "PC", "X", 99, 1.100, -0.800, 0.300, "H"),
+                _pdb_atom(7, "O", "WAT", "X", 100, 7.000, 0.000, 0.000, "O"),
+                _pdb_atom(8, "H1", "WAT", "X", 100, 7.900, 0.000, 0.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    restored = box._restore_reference_hydrogen_coordinates(target, reference)
+
+    assert restored == 2
+    atoms = {}
+    for line in target.read_text().splitlines():
+        if line.startswith(("ATOM  ", "HETATM")) and line[17:20].strip() == "PC":
+            atoms[line[12:16].strip()] = np.asarray(
+                [float(line[30:38]), float(line[38:46]), float(line[46:54])]
+            )
+    np.testing.assert_allclose(atoms["H2A"], [2.5, -0.3, -0.3], atol=1.0e-3)
+    assert np.linalg.norm(atoms["H2A"] - atoms["C31"]) > 2.0
+    assert np.linalg.norm(atoms["H2A"] - atoms["C32"]) == pytest.approx(1.086, abs=1.0e-3)
+
+    water_h1 = next(
+        line
+        for line in target.read_text().splitlines()
+        if line.startswith("ATOM") and line[17:20].strip() == "WAT" and line[12:16].strip() == "H1"
+    )
+    assert float(water_h1[30:38]) == pytest.approx(5.1)
+
+
+def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> None:
+    (tmp_path / "ref_vac.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "TER\n"
+        "ATOM      3  C1  LIG A   2      10.000  20.000  30.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   2      11.000  21.000  31.000  1.00  0.00           C\n"
+        "TER\n"
+        "END\n"
+    )
+
+    out = box._write_abfe_diff_charge_ligand_from_ref_vac(tmp_path, "LIG")
+
+    u = mda.Universe(out.as_posix())
+    np.testing.assert_allclose(
+        u.atoms.positions,
+        np.asarray([[10.0, 20.0, 30.0], [11.0, 21.0, 31.0]], dtype=float),
+        atol=1.0e-3,
+    )
+
+
+def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
+    data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
+    first = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    second = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    combined = first + second
+
+    original_ntypes = combined.ptr("ntypes")
+    original_charge = sum(atom.charge for atom in combined.residues[1].atoms)
+
+    box._make_residues_nonsteric(combined, [1])
+
+    first_atom = combined.residues[0].atoms[0]
+    duplicate_atom = combined.residues[1].atoms[0]
+
+    assert combined.ptr("ntypes") == original_ntypes + 1
+    assert first_atom.epsilon > 0
+    assert first_atom.rmin > 0
+    assert duplicate_atom.epsilon == 0
+    assert duplicate_atom.rmin == 0
+    assert sum(atom.charge for atom in combined.residues[1].atoms) == pytest.approx(
+        original_charge
+    )
+
+
+def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(
+    tmp_path: Path,
+) -> None:
+    class DummyStructure:
+        def __init__(self, coordinates) -> None:
+            self.coordinates = np.asarray(coordinates, dtype=float)
+            self.saved = []
+
+        def save(
+            self,
+            path: str,
+            *,
+            format: str | None = None,
+            overwrite: bool = False,
+        ) -> None:
+            self.saved.append(
+                {
+                    "name": Path(path).name,
+                    "format": format,
+                    "overwrite": overwrite,
+                    "coordinates": np.asarray(self.coordinates, dtype=float).copy(),
+                }
+            )
+
+    vac_pre = np.asarray([[1.0, 2.0, 3.0]])
+    vac_repaired = np.asarray([[4.0, 5.0, 6.0]])
+    full_pre = np.asarray([[1.0, 2.0, 3.0], [7.0, 8.0, 9.0]])
+    full_repaired = np.asarray([[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    vac = DummyStructure(vac_repaired)
+    full = DummyStructure(full_repaired)
+
+    files = box._save_pre_ring_repair_snapshots(
+        tmp_path,
+        vac=vac,
+        vac_coordinates=vac_pre,
+        combined=full,
+        combined_coordinates=full_pre,
+    )
+
+    assert files == {
+        "full_inpcrd": "full.inpcrd.pre_ring_repair",
+        "full_pdb": "full.pdb.pre_ring_repair",
+        "vac_inpcrd": "vac.inpcrd.pre_ring_repair",
+        "vac_pdb": "vac.pdb.pre_ring_repair",
+    }
+    assert [item["name"] for item in vac.saved] == [
+        "vac.inpcrd.pre_ring_repair",
+        "vac.pdb.pre_ring_repair",
+    ]
+    assert [item["name"] for item in full.saved] == [
+        "full.inpcrd.pre_ring_repair",
+        "full.pdb.pre_ring_repair",
+    ]
+    assert [item["format"] for item in vac.saved] == ["rst7", "pdb"]
+    assert [item["format"] for item in full.saved] == ["rst7", "pdb"]
+    assert all(item["overwrite"] for item in [*vac.saved, *full.saved])
+    for item in vac.saved:
+        np.testing.assert_allclose(item["coordinates"], vac_pre)
+    for item in full.saved:
+        np.testing.assert_allclose(item["coordinates"], full_pre)
+    np.testing.assert_allclose(vac.coordinates, vac_repaired)
+    np.testing.assert_allclose(full.coordinates, full_repaired)
 
 
 def test_ligand_charge_from_metadata_rounds_and_handles_missing(tmp_path: Path) -> None:
@@ -502,6 +703,143 @@ def test_chain_id_from_renum_uses_amber_residue_ids() -> None:
     assert box._chain_id_from_renum(renum_df, resid=34, resname="THR") == "B"
     assert box._chain_id_from_renum(renum_df, resid=427, resname="NME") == "B"
     assert box._chain_id_from_renum(renum_df, resid=33, resname="NHE") == "A"
+
+
+def test_renum_chain_ids_for_shifted_fe_protein_uses_sequence(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "full_pre.pdb"
+    lines = [
+        _pdb_atom(1, "DU", "DUM", " ", 1, 0, 0, 0, "C"),
+        _pdb_atom(2, "DU", "DUM", " ", 2, 0, 0, 0, "C"),
+        _pdb_atom(3, "N", "LEU", " ", 3, 0, 0, 0, "N"),
+        _pdb_atom(4, "CA", "LEU", " ", 3, 0, 0, 0, "C"),
+        _pdb_atom(5, "N", "ALA", " ", 4, 0, 0, 0, "N"),
+        _pdb_atom(6, "CA", "ALA", " ", 4, 0, 0, 0, "C"),
+        _pdb_atom(7, "N", "GLU", " ", 5, 0, 0, 0, "N"),
+        _pdb_atom(8, "CA", "GLU", " ", 5, 0, 0, 0, "C"),
+        _pdb_atom(9, "N", "HID", " ", 6, 0, 0, 0, "N"),
+        _pdb_atom(10, "CA", "HID", " ", 6, 0, 0, 0, "C"),
+        _pdb_atom(11, "N", "LEU", " ", 7, 0, 0, 0, "N"),
+        _pdb_atom(12, "CA", "LEU", " ", 7, 0, 0, 0, "C"),
+        _pdb_atom(13, "N", "VAL", " ", 8, 0, 0, 0, "N"),
+        _pdb_atom(14, "CA", "VAL", " ", 8, 0, 0, 0, "C"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    universe = mda.Universe(str(pdb))
+    residues = universe.select_atoms(box._PROTEIN_WITH_TERMINAL_CAPS).residues
+    renum_df = pd.DataFrame(
+        [
+            {
+                "old_resname": "DUM",
+                "old_chain": "D",
+                "old_resid": 1,
+                "new_resname": "DUM",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "DUM",
+                "old_chain": "D",
+                "old_resid": 2,
+                "new_resname": "DUM",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "LEU",
+                "old_chain": "A",
+                "old_resid": 306,
+                "new_resname": "LEU",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "ALA",
+                "old_chain": "A",
+                "old_resid": 307,
+                "new_resname": "ALA",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "GLU",
+                "old_chain": "B",
+                "old_resid": 523,
+                "new_resname": "GLU",
+                "new_resid": 3,
+            },
+            {
+                "old_resname": "HIE",
+                "old_chain": "B",
+                "old_resid": 524,
+                "new_resname": "HIE",
+                "new_resid": 4,
+            },
+            {
+                "old_resname": "LEU",
+                "old_chain": "B",
+                "old_resid": 525,
+                "new_resname": "LEU",
+                "new_resid": 5,
+            },
+            {
+                "old_resname": "VAL",
+                "old_chain": "C",
+                "old_resid": 534,
+                "new_resname": "VAL",
+                "new_resid": 6,
+            },
+            {
+                "old_resname": "WAT",
+                "old_chain": "W",
+                "old_resid": 999,
+                "new_resname": "WAT",
+                "new_resid": 999,
+            },
+        ]
+    )
+
+    assert box._renum_chain_ids_for_residues(residues, renum_df) == [
+        "A",
+        "A",
+        "B",
+        "B",
+        "B",
+        "C",
+    ]
+
+
+def test_write_identity_amber_renum_preserves_pdb_residue_records(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+    renum = tmp_path / "build_amber_renum.txt"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "DU", "DUM", "D", 1, 0, 0, 0, "C"),
+                "TER\n",
+                _pdb_atom(2, "DU", "DUM", "D", 2, 0, 0, 0, "C"),
+                "TER\n",
+                _pdb_atom(3, "N", "LEU", "A", 3, 0, 0, 0, "N"),
+                _pdb_atom(4, "CA", "LEU", "A", 3, 0, 0, 0, "C"),
+                _pdb_atom(5, "N", "HID", "B", 217, 0, 0, 0, "N"),
+                _pdb_atom(6, "CA", "HID", "B", 217, 0, 0, 0, "C"),
+                _pdb_atom(7, "O", "WAT", "W", 999, 0, 0, 0, "O"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    box._write_identity_amber_renum(pdb, renum)
+
+    assert renum.read_text().splitlines() == [
+        "DUM D     1 DUM     1",
+        "DUM D     2 DUM     2",
+        "LEU A     3 LEU     3",
+        "HID B   217 HID   217",
+        "WAT W   999 WAT   999",
+    ]
 
 
 def test_collapse_terminal_cap_resid_values_uses_neighbor_resids() -> None:

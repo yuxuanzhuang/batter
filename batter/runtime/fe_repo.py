@@ -148,6 +148,9 @@ class FEResultsRepository:
     def ligand_dir(self, run_id: str, ligand: str) -> Path:
         return self._lig_dir(run_id, ligand)
 
+    def run_dir(self, run_id: str) -> Path:
+        return self._root / run_id
+
     def _publish_index_file(self, tmp_path: str) -> None:
         os.replace(tmp_path, self._idx)
         # ``mkstemp`` creates files as 0600. The shared FE index is intended to

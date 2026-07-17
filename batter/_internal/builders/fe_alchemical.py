@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from batter._internal.builders.base import BaseBuilder
 from .fe_registry import BUILD_COMPLEX_REGISTRY, CREATE_SIMULATION_REGISTRY, CREATE_BOX_REGISTRY, RESTRAINT_REGISTRY, SIM_FILES_REGISTRY
-from batter._internal.ops import restraints, runfiles, box, amber
 
 
 from batter.utils import (
@@ -19,6 +18,8 @@ class AlchemicalFEBuilder(BaseBuilder):
 
     def _build_complex(self) -> bool:
         """Dispatch component-specific build_complex"""
+        from batter._internal.ops import build_complex  # noqa: F401
+
         comp = self.ctx.comp.lower()
         if comp not in BUILD_COMPLEX_REGISTRY:
             raise NotImplementedError(f"No build_complex registered for component '{comp}'")
@@ -26,6 +27,7 @@ class AlchemicalFEBuilder(BaseBuilder):
 
     def _create_amber_files(self) -> None:
         """Render AMBER templates for the system."""
+        from batter._internal.ops import amber
         
         work = self.ctx.working_dir
         amber_dir = self.ctx.amber_dir
@@ -39,6 +41,8 @@ class AlchemicalFEBuilder(BaseBuilder):
     
     def _create_simulation_dir(self) -> None:
         """Dispatch component-specific sim_files"""
+        from batter._internal.ops import simprep  # noqa: F401
+
         comp = self.ctx.comp.lower()
         if comp not in CREATE_SIMULATION_REGISTRY:
             raise NotImplementedError(f"No create_simulation registered for component '{comp}'")
@@ -47,6 +51,7 @@ class AlchemicalFEBuilder(BaseBuilder):
         
     def _create_box(self) -> None:
         """Render AMBER templates and build solvated/ionized system."""
+        from batter._internal.ops import box  # noqa: F401
 
         comp = self.ctx.comp.lower()
         if comp not in CREATE_BOX_REGISTRY:
@@ -56,6 +61,8 @@ class AlchemicalFEBuilder(BaseBuilder):
 
     def _restraints(self) -> None:
         """Add restraints restraints as specified."""
+        from batter._internal.ops import restraints  # noqa: F401
+
         if self.ctx.win != -1 and COMPONENTS_LAMBDA_DICT[self.comp] == 'lambdas':
             return
         fn = RESTRAINT_REGISTRY.get(self.ctx.comp)
@@ -64,9 +71,13 @@ class AlchemicalFEBuilder(BaseBuilder):
 
     def _sim_files(self) -> None:
         """Create simulation input files."""
+        from batter._internal.ops import sim_files  # noqa: F401
+
         fn = SIM_FILES_REGISTRY.get(self.ctx.comp)
         fn(self.ctx, self.component_windows)
         logger.debug(f"[{self.stage}] Created sim files for {self.ctx.ligand}")
         
     def _run_files(self) -> None:
+        from batter._internal.ops import runfiles
+
         runfiles.write_fe_run_file(self.ctx, self.component_windows)

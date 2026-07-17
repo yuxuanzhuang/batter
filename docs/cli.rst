@@ -88,6 +88,10 @@ Key options:
    Maximum total submissions for the script (including the first run; default: 4).
 ``--current-submission-time``
    Internal counter for auto-resubmit; increments on each resubmission (default: 0).
+``--force-job-attempt N``
+   Use ``N`` as the job-attempt value for every queued component instead of
+   reading each component's ``job_attempt.txt``. This is useful when rerunning a
+   batch with the reduced-timestep retry settings.
 
 Inspect Free-Energy Results
 ===========================
@@ -116,7 +120,32 @@ To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window. By default existing analysis outputs are preserved;
 pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
-bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
+bootstrap resamples. Analysis failures are logged and skipped by default; pass
+``--raise-on-error`` to stop at the first failure.
+
+To submit the analysis itself as a SLURM manager job, use ``--slurm-submit``::
+
+   batter fe analyze work/adrb2 run-20240101 --slurm-submit
+
+The generated script uses ``job_manager.header``/``job_manager.body`` in the same
+way as ``batter run --slurm-submit``. Use ``--partition`` or
+``--slurm-manager-path`` to override the generated manager script.
+
+To generate a per-ligand (or per-RBFE-pair) SLURM array script without submitting
+it immediately, use ``--job-array``::
+
+   batter fe analyze work/adrb2 run-20240101 --job-array --array-limit 128 --workers 2
+
+This writes ``*_array.sbatch`` and a matching ``*.tasks.tsv`` task file in the
+current directory. Submit the generated script with ``sbatch`` after inspection.
+Use ``--array-limit`` to control concurrent array tasks, ``--array-output`` to
+choose the script path, and ``--partition`` to set the generated script's
+partition. For RBFE and ``rbfe_septop`` runs, each array task analyzes one
+transformation pair; ``--ligand`` may be a pair id such as ``LIG1~LIG2`` or an
+endpoint ligand name to include all pairs touching that ligand. If you omit
+``run_id``, BATTER writes array tasks for every execution under
+``work/adrb2/executions``. ``--job-array`` cannot be combined with
+``--slurm-submit`` because it generates the array script for separate submission.
 
 For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
 ``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory
@@ -160,6 +189,7 @@ is omitted, BATTER writes to ``./cinnabar``. Common files include:
 
 * ``edge_summary.csv`` – combined edge-level DDG estimates and uncertainties
 * ``raw_signed.csv`` – signed per-measurement table after BATTER canonicalizes edge direction
+* ``x_convergence_filter.csv`` – edge filter decisions when x-component convergence filtering is enabled
 * ``cinnabar_relative.csv`` – relative measurements exported from the FEMap
 * ``cinnabar_absolute.csv`` – MLE-derived absolute values when the network is connected
 * ``cinnabar_absolute_sorted.png`` – BATTER-rendered absolute ΔG ranking plot, sorted by energy
@@ -187,6 +217,15 @@ Use ``--combine-by-run-first`` (default) to collapse repeated measurements withi
 each run before combining runs. Switch to ``--pool-all-measurements`` if you want to
 weight every stored edge measurement directly. ``--uncertainty-mode`` controls the
 repeat-combination rule (``ivw``, ``sample``, or ``max``).
+
+By default, RBFE Cinnabar export skips edge measurements whose x-component
+forward/backward convergence has not reached 1 kcal/mol by 80% of the production
+data. It can restore edges needed for network connectivity with the fallback
+0.5/2 kcal/mol threshold. Tune these with ``--x-convergence-filter`` and
+``--x-convergence-fallback-filter``, or disable them with
+``--no-x-convergence-filter`` / ``--no-x-convergence-fallback-filter``. When the
+main filter is active, BATTER also writes an ``unskipped/`` bundle beside the
+filtered output.
 
 By default BATTER also merges opposite-direction rows such as ``LIGA~LIGB`` and
 ``LIGB~LIGA`` into one canonical edge before constructing the FEMap. Use

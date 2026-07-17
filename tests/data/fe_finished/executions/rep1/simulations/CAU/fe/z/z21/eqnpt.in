@@ -34,7 +34,7 @@ Equilibrate, NPT.
   nmd = 100,
   nmc = 1000,
   mcwat = 0,
-  mcligshift = 40,
+  mcligshift = 10,
   mcresstr = "WAT",
  /
  &pmd

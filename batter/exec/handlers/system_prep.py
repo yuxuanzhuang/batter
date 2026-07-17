@@ -40,6 +40,8 @@ _PROTEIN_TERMINAL_CAP_RESNAME_SET = set(_PROTEIN_TERMINAL_CAP_RESNAMES.split())
 _PROTEIN_WITH_TERMINAL_CAPS = (
     f"(protein or resname {_PROTEIN_TERMINAL_CAP_RESNAMES})"
 )
+_DSSP_PROTEIN_SELECTION = "protein and not resname NMA ACE"
+_DSSP_BACKBONE_NAME_GROUPS = (("N",), ("CA",), ("C",), ("O", "O1", "OT1"))
 
 
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
@@ -325,6 +327,133 @@ def _group_residues_by_source_identity(residues) -> list[list[Any]]:
     return groups
 
 
+def _residue_has_dssp_backbone(residue) -> bool:
+    names = list(residue.atoms.names)
+    return all(
+        sum(names.count(atom_name) for atom_name in atom_names) == 1
+        for atom_names in _DSSP_BACKBONE_NAME_GROUPS
+    )
+
+
+def _residue_label(residue) -> str:
+    chain_id = str(residue.atoms.chainIDs[0]).strip() if len(residue.atoms) else ""
+    segid = str(residue.segid).strip()
+    chain_label = chain_id or segid or "?"
+    return f"{residue.resname} {chain_label}:{int(residue.resid)}"
+
+
+def _atomgroup_from_residues(residues: Sequence[Any]) -> mda.AtomGroup:
+    universe = residues[0].universe
+    return universe.residues[[int(residue.resindex) for residue in residues]].atoms
+
+
+def _split_residues_for_dssp(residues) -> tuple[list[list[Any]], list[Any]]:
+    """
+    Build DSSP fragments from source chains while excluding incomplete residues.
+    """
+    dssp_fragments: list[list[Any]] = []
+    skipped_residues: list[Any] = []
+
+    for source_group in _group_residues_by_source_identity(residues):
+        chain_id = (
+            str(source_group[0].atoms.chainIDs[0]).strip()
+            if len(source_group[0].atoms)
+            else ""
+        )
+        segid = str(source_group[0].segid).strip()
+        source_fragments, _ = _split_residues_on_breaks(
+            source_group, segid=segid, chain_id=chain_id
+        )
+
+        for source_fragment in source_fragments:
+            current: list[Any] = []
+            for residue in source_fragment:
+                if _residue_has_dssp_backbone(residue):
+                    current.append(residue)
+                    continue
+                skipped_residues.append(residue)
+                if current:
+                    dssp_fragments.append(current)
+                    current = []
+            if current:
+                dssp_fragments.append(current)
+
+    return dssp_fragments, skipped_residues
+
+
+def _run_dssp_by_chain_fragments(protein_atoms: mda.AtomGroup) -> np.ndarray:
+    residues = protein_atoms.residues
+    if residues.n_residues == 0:
+        return np.array([])
+
+    residue_positions = {
+        int(residue.resindex): idx for idx, residue in enumerate(residues)
+    }
+    dssp_fragments, skipped_residues = _split_residues_for_dssp(residues)
+    if skipped_residues:
+        skipped_labels = ", ".join(_residue_label(res) for res in skipped_residues[:8])
+        suffix = "..." if len(skipped_residues) > 8 else ""
+        logger.warning(
+            "Skipping {} protein residues with incomplete DSSP backbone atoms: {}{}",
+            len(skipped_residues),
+            skipped_labels,
+            suffix,
+        )
+
+    dssp_array: np.ndarray | None = None
+    for fragment in dssp_fragments:
+        fragment_atoms = _atomgroup_from_residues(fragment)
+        try:
+            fragment_dssp = np.asarray(DSSP(fragment_atoms).run().results["dssp"])
+        except Exception as exc:
+            logger.warning(
+                "Failed to run DSSP on protein fragment {}-{}: {}",
+                _residue_label(fragment[0]),
+                _residue_label(fragment[-1]),
+                exc,
+            )
+            continue
+
+        if fragment_dssp.size == 0:
+            continue
+        if fragment_dssp.ndim == 1:
+            fragment_dssp = fragment_dssp.reshape(1, -1)
+        if fragment_dssp.shape[1] != len(fragment):
+            logger.warning(
+                "Skipping DSSP result for protein fragment {}-{} because result "
+                "length {} does not match residue count {}",
+                _residue_label(fragment[0]),
+                _residue_label(fragment[-1]),
+                fragment_dssp.shape[1],
+                len(fragment),
+            )
+            continue
+
+        if dssp_array is None:
+            dssp_array = np.full(
+                (fragment_dssp.shape[0], residues.n_residues),
+                "-",
+                dtype=fragment_dssp.dtype,
+            )
+        elif fragment_dssp.shape[0] != dssp_array.shape[0]:
+            logger.warning(
+                "Skipping DSSP result for protein fragment {}-{} because frame "
+                "count {} does not match previous DSSP frame count {}",
+                _residue_label(fragment[0]),
+                _residue_label(fragment[-1]),
+                fragment_dssp.shape[0],
+                dssp_array.shape[0],
+            )
+            continue
+
+        columns = [residue_positions[int(residue.resindex)] for residue in fragment]
+        dssp_array[:, columns] = fragment_dssp
+
+    if dssp_array is None:
+        return np.array([])
+    return dssp_array
+
+
 def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], int]:
     """
     Build per-atom segid overrides to canonicalize segids within each protein residue.
@@ -576,19 +705,14 @@ class _SystemPrepRunner:
         dssp_json = self.ligands_folder / "protein_input_dssp.json"
         try:
             u_prot = mda.Universe(self._protein_input)
-            dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE')).run()
-            dssp_array = np.asarray(dssp_ana.results["dssp"])
+            protein_atoms = u_prot.select_atoms(_DSSP_PROTEIN_SELECTION)
+            dssp_array = _run_dssp_by_chain_fragments(protein_atoms)
         except Exception as exc:
-            try:
-                logger.warning(f"Failed to run DSSP on full protein input {self._protein_input}, trying with last residue removed")
-                dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE').residues[:-1].atoms).run()
-                dssp_array = np.asarray(dssp_ana.results["dssp"])
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to run DSSP on protein input {self._protein_input}: {exc}. No secondary-structure conditioned restraints. "
-                    "If you want to debug, please run `DSSP` in MDAnalysis on the input protein file."
-                )
-                dssp_array = np.array([])
+            logger.warning(
+                f"Failed to run DSSP on protein input {self._protein_input}: {exc}. No secondary-structure conditioned restraints. "
+                "If you want to debug, please run `DSSP` in MDAnalysis on the input protein file."
+            )
+            dssp_array = np.array([])
 
         np.save(dssp_npy, dssp_array)
         dssp_json.write_text(json.dumps(dssp_array.tolist()))
@@ -1120,6 +1244,21 @@ class _SystemPrepRunner:
                     u_lig,
                     lig_sdf,
                     protein_dssp=dssp_result.get("results"),
+                )
+        elif len(resolved_anchor_atoms) == 1:
+            if anchor_ligand_is_apo:
+                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
+                    u_prot,
+                    protein_dssp=dssp_result.get("results"),
+                    preferred_p1_selection=resolved_anchor_atoms[0],
+                )
+            else:
+                resolved_anchor_atoms = select_receptor_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    lig_sdf,
+                    protein_dssp=dssp_result.get("results"),
+                    preferred_p1_selection=resolved_anchor_atoms[0],
                 )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(

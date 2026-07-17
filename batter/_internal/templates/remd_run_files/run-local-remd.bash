@@ -26,6 +26,24 @@ if [[ ! -f ./check_run.bash ]]; then
 fi
 source ./check_run.bash
 
+if ! declare -F production_is_complete >/dev/null 2>&1; then
+production_is_complete() {
+    local current_ps=$1
+    local total_ps=$2
+    local dt_ps=${3:-0}
+
+    awk -v cur="$current_ps" -v tot="$total_ps" -v dt="$dt_ps" '
+        BEGIN {
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            exit !((cur + tol) >= tot)
+        }
+    '
+}
+fi
+
 # Write a REMD mdin current file:
 # - keep nstlim fixed to the REMD interval
 # - update numexchg based on remaining steps
@@ -35,6 +53,7 @@ write_mdin_remd_current() {
     local nstlim_value=$2
     local numexchg_value=$3
     local first_run=$4
+    local dumpave_file=${5:-}
     if [[ ! -f $tmpl ]]; then
         echo "[ERROR] Missing template $tmpl" >&2
         return 1
@@ -52,14 +71,26 @@ write_mdin_remd_current() {
     else
         text=$(echo "$text" | awk -v val="$numexchg_value" '
             BEGIN { in_cntrl=0; inserted=0 }
-            { line=$0 }
-            tolower(line) ~ /^&cntrl/ { in_cntrl=1 }
-            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted==0) {
-                print "  numexchg = " val ","
-                inserted=1
+            {
+                line=$0
+                if (tolower(line) ~ /^&cntrl/) { in_cntrl=1 }
+                if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted==0) {
+                    print "  numexchg = " val ","
+                    inserted=1
+                }
+                print line
+                if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) { in_cntrl=0 }
             }
-            print line
-            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) { in_cntrl=0 }
+        ')
+    fi
+    if [[ -n $dumpave_file ]]; then
+        text=$(echo "$text" | awk -v dumpave="$dumpave_file" '
+            BEGIN{IGNORECASE=1}
+            /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+                print "DUMPAVE=" dumpave
+                next
+            }
+            { print }
         ')
     fi
     echo "$text"
@@ -196,7 +227,9 @@ if (( remaining_steps > 0 )); then
             exit 1
         }
         current_mdin="${PFOLDER}/${win}/mdin-remd-current"
-        write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" > "$current_mdin"
+        cmass_file=$(printf "cmass-%02d.txt" "$seg_idx")
+        dumpave_file="${win}/${cmass_file}"
+        write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" "$dumpave_file" > "$current_mdin"
 
         # Determine restart input per window (prefer rolling restarts, else eq.rst7)
         rst_in="eq.rst7"
@@ -242,16 +275,23 @@ if (( remaining_steps > 0 )); then
         reduce_dt_for_remd_windows "REMD segment ${seg_idx}" "$retry"
         exit 1
     fi
+    read restart_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+    [[ -z $restart_ps ]] && restart_ps=0
+    current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
+    [[ -z $current_ps ]] && current_ps=0
 else
     current_ps="$total_ps"
 fi
 
-# if we reach here, REMD step completed successfully
-echo "FINISHED" > ${PFOLDER}/FINISHED
-echo "[INFO] REMD complete; writing per-window FINISHED markers."
-for ((i = 0; i < N_WINDOWS; i++)); do
-    win=$(printf "%s%02d" "${COMP}" "$i")
-    echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
-    echo "[INFO] ${win}: FINISHED"
-done
+if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
+    echo "FINISHED" > ${PFOLDER}/FINISHED
+    echo "[INFO] REMD complete; writing per-window FINISHED markers."
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "${COMP}" "$i")
+        echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
+        echo "[INFO] ${win}: FINISHED"
+    done
+    exit 0
+fi
+echo "[INFO] Not finished yet; rerun to continue."
 exit 0

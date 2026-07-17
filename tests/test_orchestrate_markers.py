@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
@@ -110,6 +111,41 @@ def test_filter_needing_phase_and_is_done(tmp_path):
     assert markers.is_done(done_sys, phase) is True
     remaining = markers.filter_needing_phase([done_sys, todo_sys], phase)
     assert [s.name for s in remaining] == ["todo"]
+
+
+def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_path):
+    root = tmp_path / "lig"
+    equil = root / "equil"
+    equil.mkdir(parents=True)
+    (equil / "representative.pdb").write_text("MODEL\nENDMDL\n")
+    stable_path = equil / "stable_boresch_distance.json"
+    prolif_path = equil / "prolif_interactions.json"
+    stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
+
+    auto_anchor_system = _make_system(root)
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is False
+    prolif_path.write_text(json.dumps({"schema_version": 3, "usable": True}) + "\n")
+
+    stable_path.write_text(
+        json.dumps(
+            {
+                "schema_version": markers._STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+                "usable": False,
+                "reason": "no pair",
+            }
+        )
+        + "\n"
+    )
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is True
+
+    stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
+    explicit_anchor_system = SimSystem(
+        name=root.name,
+        root=root,
+        anchors=("resid 10 and name CA",),
+        meta={"ligand": root.name},
+    )
+    assert markers.is_done(explicit_anchor_system, "equil_analysis") is True
 
 
 @dataclass
@@ -227,6 +263,26 @@ def test_prepare_fe_progress_path(tmp_path):
     )
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()
+
+
+def test_prepare_fe_weak_saved_state_requires_windows_marker(tmp_path):
+    root = tmp_path / "LIG1"
+    root.mkdir()
+    register_phase_state(
+        root,
+        "prepare_fe",
+        required=[["fe/prepare_fe.ok"]],
+        success=[["fe/prepare_fe.ok"]],
+    )
+    fe_root = root / "fe"
+    fe_root.mkdir()
+    (fe_root / "prepare_fe.ok").write_text("ok\n")
+
+    system = _make_system(root)
+    assert markers.is_done(system, "prepare_fe") is False
+
+    (fe_root / "prepare_fe_windows.ok").write_text("ok\n")
+    assert markers.is_done(system, "prepare_fe") is True
 
 
 def test_equil_progress_invalidated_when_finished_marker_missing(tmp_path):

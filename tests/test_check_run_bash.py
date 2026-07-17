@@ -4,6 +4,22 @@ from pathlib import Path
 import subprocess
 
 
+def _write_ascii_restart(path: Path, natom: int, payload_fields: int) -> None:
+    values = [f"{idx + 1:.7f}" for idx in range(payload_fields)]
+    lines = ["test restart\n", f"{natom}  1.0000000E+00\n"]
+    for i in range(0, len(values), 6):
+        lines.append(" ".join(f"{value:>12}" for value in values[i : i + 6]) + "\n")
+    path.write_text("".join(lines))
+
+
+def _restart_text(time_ps: str) -> str:
+    return (
+        "Stub Amber restart\n"
+        f"1  {time_ps}\n"
+        "  0.0  0.0  0.0\n"
+    )
+
+
 def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
     cmd = (
@@ -19,12 +35,418 @@ def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]
     )
 
 
+def test_abfe_window_equilibration_runs_window_eq_in() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    run_local = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-local.bash"
+    )
+    text = run_local.read_text()
+
+    assert 'init_dst="${win_folder}/eq_init.rst7"' in text
+    assert 'final_dst="${win_folder}/eq.rst7"' in text
+    assert "-i eq.in -p $PRMTOP_MERGED -c eq_init.rst7" in text
+    assert "-o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7" in text
+
+
 def test_check_min_energy_prefers_eamber():
     data_dir = Path(__file__).resolve().parent / "data" / "md_output"
     result = _run_check_min_energy(data_dir / "mini.out")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "EAMBER: -64851.9795 kcal/mol" in result.stdout
+
+
+def test_amber_restart_validation_accepts_complete_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt04.rst7"
+    _write_ascii_restart(restart, natom=4, payload_fields=18)
+
+    cmd = f"source '{check_run}' && amber_restart_validation_status '{restart}'"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_amber_restart_validation_accepts_netcdf_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_disappear.rst7"
+    restart.write_bytes(b"CDF\x02" + b"\0" * 200)
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+cat <<'EOF'
+netcdf eqnpt_disappear {
+dimensions:
+    spatial = 3 ;
+    atom = 2 ;
+variables:
+    double time ;
+    double coordinates(atom, spatial) ;
+    double velocities(atom, spatial) ;
+// global attributes:
+        :Conventions = "AMBERRESTART" ;
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        f"&& amber_restart_validation_status '{restart}'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_amber_restart_validation_rejects_truncated_netcdf_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_disappear.rst7"
+    restart.write_bytes(b"CDF\x02")
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+cat <<'EOF'
+netcdf eqnpt_disappear {
+dimensions:
+    spatial = 3 ;
+    atom = 2 ;
+variables:
+    double time ;
+    double coordinates(atom, spatial) ;
+    double velocities(atom, spatial) ;
+// global attributes:
+        :Conventions = "AMBERRESTART" ;
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        f"&& amber_restart_validation_status '{restart}'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "shorter than expected payload" in result.stdout
+
+
+def test_should_skip_completed_step_rejects_truncated_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_eq.rst7"
+    _write_ascii_restart(restart, natom=4, payload_fields=5)
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& should_skip_completed_step 'Long equilibration' 'eqnpt_eq.rst7' 0 0 0"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "not a complete Amber restart" in result.stdout
+    assert "rerunning Long equilibration" in result.stdout
+
+
+def test_should_skip_completed_step_rejects_incomplete_amber_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=4, payload_fields=18)
+    (tmp_path / "eq.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =    42000   TIME(PS) =      84.000\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& should_skip_completed_step 'RBFE equilibration seed' 'eq.rst7' 0 0 0"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "incomplete Amber output eq.out" in result.stdout
+    assert "rerunning RBFE equilibration seed" in result.stdout
+
+
+def test_check_sim_failure_rejects_numeric_failure_in_derived_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 10000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        " NSTEP =     9900   TIME(PS) =      19.800  TEMP(K) =      NaN\n"
+        " Etot   =            NaN  EKtot   =            NaN\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=2 check_sim_failure 'Equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Numeric failure detected in eq.out" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "eq.out").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.out"))
+    assert "dt=0.001000" in (tmp_path / "eq.in").read_text()
+    assert "dt = 0.004" in (tmp_path / "mdin-template").read_text()
+
+
+def test_check_sim_failure_allows_mbar_energy_overflow_in_completed_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 50000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        "MBAR Energy analysis:\n"
+        "Energy at 0.0000 = ******************\n"
+        "Energy at 0.0435 = ******************\n"
+        "Energy at 0.0870 = 760374317.96542871\n"
+        "\n"
+        "      A V E R A G E S   O V E R   50000 S T E P S\n"
+        " EAMBER (non-restraint)  =   -203914.5689\n"
+        "--------------------------------------------------------------------------------\n"
+        "   5.  TIMINGS\n"
+        "--------------------------------------------------------------------------------\n"
+        "|  Total wall time:         170    seconds     0.05 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=1 check_sim_failure 'Equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Equilibration seed completed successfully" in result.stdout
+    assert (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_allows_gpu_box_change_when_md_restart_exists(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =  5000000   TIME(PS) =  20000.000\n"
+    )
+    (tmp_path / "md-01.nc").write_text("partial trajectory\n")
+    (tmp_path / "cmass-01.txt").write_text("partial cmass\n")
+    (tmp_path / "run.log").write_text(
+        "ERROR: Calculation halted.  Periodic box dimensions have changed too much from their initial values.\n"
+        "The GPU code does not automatically reorganize grid cells and thus you\n"
+        "will need to restart the calculation from the previous restart file.\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
+        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "md-01.out md-01.nc cmass-01.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "continuing with next segment" in result.stdout
+    assert (tmp_path / "md-current.rst7").exists()
+    assert (tmp_path / "md-01.out").exists()
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_rejects_gpu_box_change_without_md_restart(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =  5000000   TIME(PS) =  20000.000\n"
+    )
+    (tmp_path / "md-01.nc").write_text("partial trajectory\n")
+    (tmp_path / "cmass-01.txt").write_text("partial cmass\n")
+    (tmp_path / "run.log").write_text(
+        "ERROR: Calculation halted.  Periodic box dimensions have changed too much from their initial values.\n"
+        "The GPU code does not automatically reorganize grid cells and thus you\n"
+        "will need to restart the calculation from the previous restart file.\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
+        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "md-01.out md-01.nc cmass-01.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Command exited with status 255" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "md-01.out").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.out"))
+
+
+def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "mini.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "mini.out").write_text(
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "      1       1.9998E+13     2.0223E+12     4.5637E+14     C16     22116\n"
+        " VDWAALS = *************  EEL     =  -160501.2396  HBOND      =        0.0000\n"
+        "\n"
+        "                    FINAL RESULTS\n"
+        "\n"
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "   2000      -1.9975E+05     1.2325E+01     8.9000E+01     EPW     41028\n"
+        " VDWAALS =    19835.0909  EEL     =  -237149.6056  HBOND      =        0.0000\n"
+        " EAMBER  =  -201034.1384\n"
+        "|  Total wall time:          72    seconds     0.02 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=1 check_sim_failure 'Minimization' run.log mini.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Minimization completed successfully" in result.stdout
+    assert (tmp_path / "mini.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_check_sim_failure_rejects_incomplete_amber_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 50000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        "Here is the input file:\n"
+        " NSTEP =    42000   TIME(PS) =      84.000\n"
+    )
+    (tmp_path / "eq.nc").write_text("partial trajectory\n")
+    (tmp_path / "run.log").write_text("pmemd was preempted\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=2 check_sim_failure 'RBFE equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "did not reach normal completion marker: eq.out" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "eq.out").exists()
+    assert not (tmp_path / "eq.nc").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.out"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.nc"))
 
 
 def test_archive_existing_log_file_moves_log(tmp_path: Path) -> None:
@@ -60,6 +482,9 @@ def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> No
 
     tmpl.write_text("nstlim = 10,\ndt = 0.004,\n")
     current.write_text("nstlim = 8,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text("stale md\n")
+    (tmp_path / "cmass.txt").write_text("stale legacy cmass\n")
+    (tmp_path / "cmass-01.txt").write_text("stale segmented cmass\n")
 
     cmd = (
         f"source '{check_run}' "
@@ -74,9 +499,12 @@ def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "dt=0.003000" in tmpl.read_text()
-    assert "dt=0.003000" in current.read_text()
+    assert "dt=0.002000" in tmpl.read_text()
+    assert "dt=0.002000" in current.read_text()
     assert "! target_dt=0.004" in tmpl.read_text()
+    assert not (tmp_path / "md-01.out").exists()
+    assert not (tmp_path / "cmass.txt").exists()
+    assert not (tmp_path / "cmass-01.txt").exists()
 
 
 def test_target_dt_and_remaining_steps_use_reduced_dt(tmp_path: Path) -> None:
@@ -149,7 +577,7 @@ def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     text = tmpl.read_text()
     assert "! target_dt=0.004" in text
-    assert "dt=0.003000" in text
+    assert "dt=0.002000" in text
 
 
 def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
@@ -163,6 +591,7 @@ def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
         f"source '{check_run}' "
         "&& retry_adjusted_dt_ps mdin-template 1 "
         "&& retry_adjusted_dt_ps mdin-template 3 "
+        "&& retry_adjusted_dt_ps mdin-template 4 "
         "&& retry_adjusted_dt_ps mdin-template 5 "
         "&& retry_adjusted_dt_ps mdin-template 6 "
         "&& retry_adjusted_dt_ps mdin-template 8 "
@@ -181,9 +610,10 @@ def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
     assert result.stdout.splitlines() == [
         "0.004000",
         "0.003000",
-        "0.003000",
         "0.002000",
-        "0.002000",
+        "0.001000",
+        "0.001000",
+        "0.001000",
         "0.001000",
         "0.001000",
     ]
@@ -215,7 +645,155 @@ def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
-    assert "dt=0.003000" in rendered_text
+    assert "dt=0.001000" in rendered_text
+    assert "irest = 1," in rendered_text
+    assert "ntx = 5," in rendered_text
+
+
+def test_write_mdin_current_fresh_start_uses_coordinate_restart_mode(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  nstlim = 10,\n"
+        "  dt = 0.004,\n"
+        "  temp0 = 298.15,\n"
+        "/\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current 'mdin-template' 8 1 'mdin-current' '' 20 > 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "irest = 0," in rendered_text
+    assert "ntx = 1," in rendered_text
+    assert "nstlim = 8," in rendered_text
+    assert "t = 20," in rendered_text
+    assert "tempi = 298.15," in rendered_text
+
+
+def test_write_mdin_current_rewrites_dumpave_to_segment_cmass(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  nstlim = 10,\n"
+        "  dt = 0.004,\n"
+        "/\n"
+        "DISANG=disang.rest\n"
+        "DUMPAVE=cmass.txt\n"
+        "LISTIN=POUT\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current "
+        "'mdin-template' 8 0 'mdin-current' '' '' 'cmass-02.txt' "
+        "> 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "nstlim = 8," in rendered_text
+    assert "DUMPAVE=cmass-02.txt" in rendered_text
+    assert "DUMPAVE=cmass.txt" not in rendered_text
+
+
+def test_write_mdin_current_caps_output_frequencies_to_segment_steps(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  ntpr = 100,\n"
+        "  ntwr = 2500,\n"
+        "  ntwe = 0,\n"
+        "  ntwx = 25000,\n"
+        "  nstlim = 25000,\n"
+        "  dt = 0.001,\n"
+        "/\n"
+        " &wt type='DUMPFREQ', istep1=1000, /\n"
+        "DUMPAVE=cmass.txt\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current "
+        "'mdin-template' 80 0 'mdin-current' '' '' 'cmass-01.txt' "
+        "> 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "nstlim = 80," in rendered_text
+    assert "ntpr = 80," in rendered_text
+    assert "ntwr = 80," in rendered_text
+    assert "ntwx = 80," in rendered_text
+    assert "ntwe = 0," in rendered_text
+    assert "istep1=80" in rendered_text
+    assert "DUMPAVE=cmass-01.txt" in rendered_text
+
+
+def test_short_tail_skip_requires_prior_production_progress(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    cmd = (
+        f"source '{check_run}'; "
+        "can_skip_short_final_tail 100 0 100; "
+        "status_no_progress=$?; "
+        "can_skip_short_final_tail 4000 3900 100; "
+        "status_tail=$?; "
+        "printf '%s %s\\n' \"$status_no_progress\" \"$status_tail\""
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "1 0"
 
 
 def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_path: Path) -> None:
@@ -224,8 +802,21 @@ def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_
     tmpl = tmp_path / "mdin-template"
     current = tmp_path / "mdin-current"
 
-    tmpl.write_text("! target_dt=0.004\nirest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.001,\n")
-    current.write_text("irest = 1,\nntx = 5,\nnstlim = 8,\ndt = 0.001,\n")
+    tmpl.write_text(
+        "! target_dt=0.004\n"
+        "irest = 1,\n"
+        "ntx = 5,\n"
+        "nstlim = 10,\n"
+        "dt = 0.001,\n"
+        "DUMPAVE=cmass.txt\n"
+    )
+    current.write_text(
+        "irest = 1,\n"
+        "ntx = 5,\n"
+        "nstlim = 8,\n"
+        "dt = 0.001,\n"
+        "DUMPAVE=cmass-03.txt\n"
+    )
     (tmp_path / "job_attempt.txt").write_text("4\n")
 
     cmd = (
@@ -241,10 +832,12 @@ def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "dt=0.003000" in tmpl.read_text()
+    assert "dt=0.002000" in tmpl.read_text()
     current_text = current.read_text()
     assert "nstlim = 8," in current_text
-    assert "dt=0.003000" in current_text
+    assert "dt=0.002000" in current_text
+    assert "DUMPAVE=cmass-03.txt" in current_text
+    assert "DUMPAVE=cmass.txt" not in current_text
 
 
 def test_write_mdin_current_same_file_redirect_keeps_template_dt(tmp_path: Path) -> None:
@@ -303,7 +896,7 @@ def test_cleanup_stale_md_artifacts_strict_archives_suspect_current_restart(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -331,7 +924,7 @@ def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -414,7 +1007,7 @@ EOF
 def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -445,7 +1038,7 @@ def test_select_valid_md_restart_archives_invalid_current_and_uses_previous(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "md-current.rst7").write_text("not a restart\n")
-    (tmp_path / "md-previous.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-previous.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-02.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      60.000  TEMP(K) =   298.0\n"

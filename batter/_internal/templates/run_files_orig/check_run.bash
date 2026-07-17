@@ -116,6 +116,174 @@ require_nonempty_file_or_attempt_fail() {
     mark_failed_and_exit "$message"
 }
 
+is_amber_restart_path() {
+    case "$1" in
+        *.inpcrd|*.rst7|*.restrt) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+has_netcdf_magic() {
+    local restart_path=$1
+    local magic
+
+    magic=$(dd if="$restart_path" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$magic" in
+        43444601|43444602|43444605|89484446*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+netcdf_restart_validation_status() {
+    local restart_path=$1
+    local size
+
+    if ! command -v ncdump >/dev/null 2>&1; then
+        if has_netcdf_magic "$restart_path"; then
+            echo "ok"
+            return 0
+        fi
+        echo "ncdump unavailable for binary restart"
+        return 0
+    fi
+
+    if ! ncdump -h "$restart_path" >/dev/null 2>&1; then
+        echo "invalid NetCDF restart header"
+        return 0
+    fi
+
+    size=$(wc -c < "$restart_path" | tr -d ' ')
+    ncdump -h "$restart_path" 2>/dev/null | awk -v file_size="$size" '
+        BEGIN {
+            atom = 0
+            spatial = 0
+            has_coords = 0
+            coord_bytes = 0
+            vel_bytes = 0
+            conventions = 0
+        }
+        /^[[:space:]]*atom[[:space:]]*=/ {
+            atom = $3 + 0
+        }
+        /^[[:space:]]*spatial[[:space:]]*=/ {
+            spatial = $3 + 0
+        }
+        /^[[:space:]]*(float|double)[[:space:]]+coordinates\(atom,[[:space:]]*spatial\)/ {
+            has_coords = 1
+            coord_bytes = ($1 == "double" ? 8 : 4)
+        }
+        /^[[:space:]]*(float|double)[[:space:]]+velocities\(atom,[[:space:]]*spatial\)/ {
+            vel_bytes = ($1 == "double" ? 8 : 4)
+        }
+        /:Conventions[[:space:]]*=[[:space:]]*"AMBERRESTART"/ {
+            conventions = 1
+        }
+        END {
+            if (atom <= 0) {
+                print "NetCDF restart missing atom dimension"
+                exit
+            }
+            if (spatial <= 0) {
+                print "NetCDF restart missing spatial dimension"
+                exit
+            }
+            if (!has_coords) {
+                print "NetCDF restart missing coordinates variable"
+                exit
+            }
+            if (!conventions) {
+                print "NetCDF file is not marked AMBERRESTART"
+                exit
+            }
+
+            expected = atom * spatial * (coord_bytes + vel_bytes)
+            if (file_size + 0 < expected) {
+                printf "NetCDF restart shorter than expected payload (%d < %d bytes)", file_size, expected
+                exit
+            }
+            print "ok"
+        }
+    '
+}
+
+amber_restart_validation_status() {
+    local restart_path=$1
+
+    if [[ -z $restart_path || ! -s $restart_path ]]; then
+        echo "missing or empty"
+        return 0
+    fi
+
+    if has_netcdf_magic "$restart_path" \
+        && command -v ncdump >/dev/null 2>&1 \
+        && ncdump -h "$restart_path" >/dev/null 2>&1; then
+        netcdf_restart_validation_status "$restart_path"
+        return 0
+    fi
+
+    if ! LC_ALL=C grep -Iq . "$restart_path"; then
+        if has_netcdf_magic "$restart_path"; then
+            netcdf_restart_validation_status "$restart_path"
+        else
+            echo "binary restart is not readable as NetCDF"
+        fi
+        return 0
+    fi
+
+    awk '
+        BEGIN {
+            count = 0
+            status = ""
+        }
+        NR == 2 {
+            natom_raw = $1
+            if (natom_raw !~ /^[0-9]+$/ || natom_raw + 0 <= 0) {
+                print "invalid atom count in restart header"
+                status = "bad"
+                exit
+            }
+            natom = natom_raw + 0
+            coord = natom * 3
+            coord_box = coord + 6
+            vel = natom * 6
+            vel_box = vel + 6
+            next
+        }
+        NR > 2 {
+            for (i = 1; i <= NF; i++) {
+                if ($i !~ /^[-+]?(([0-9]+([.][0-9]*)?)|([.][0-9]+))([EeDd][-+]?[0-9]+)?$/) {
+                    printf "non-numeric restart payload on line %d", NR
+                    status = "bad"
+                    exit
+                }
+                count++
+            }
+        }
+        END {
+            if (status != "") {
+                exit
+            }
+            if (NR < 2) {
+                print "missing restart header"
+                exit
+            }
+            if (count == coord || count == coord_box || count == vel || count == vel_box) {
+                print "ok"
+                exit
+            }
+            printf "expected %d/%d coordinate or %d/%d coordinate+velocity fields, found %d", coord, coord_box, vel, vel_box, count
+        }
+    ' "$restart_path"
+}
+
+amber_restart_is_complete() {
+    local restart_path=$1
+    local status
+
+    status=$(amber_restart_validation_status "$restart_path")
+    [[ $status == "ok" ]]
+}
+
 remove_empty_file_if_present() {
     local path=$1
 
@@ -137,6 +305,37 @@ md_out_has_completion_marker() {
     grep -Eq 'Final Performance Info|Total wall time' "$path"
 }
 
+output_file_for_restart_artifact() {
+    local artifact=$1
+
+    case "$artifact" in
+        *.rst7) printf '%s\n' "${artifact%.rst7}.out" ;;
+        *.restrt) printf '%s\n' "${artifact%.restrt}.out" ;;
+        *) return 1 ;;
+    esac
+}
+
+restart_artifact_has_incomplete_output() {
+    local artifact=$1
+    local out_file
+
+    is_amber_restart_path "$artifact" || return 1
+    out_file=$(output_file_for_restart_artifact "$artifact" 2>/dev/null) || return 1
+    [[ -s "$out_file" ]] || return 1
+    md_out_has_amber_control_data "$out_file" || return 1
+    ! md_out_has_completion_marker "$out_file"
+}
+
+cmass_file_for_md_stem() {
+    local stem=$1
+    local n
+
+    if [[ $stem =~ ^md-?([0-9]+)$ ]]; then
+        n=${BASH_REMATCH[1]}
+        printf "cmass-%02d.txt\n" "$((10#$n))"
+    fi
+}
+
 archive_incomplete_md_out_if_present() {
     local path=$1
     local retry_count=${2:-}
@@ -152,7 +351,8 @@ archive_incomplete_md_out_if_present() {
         "${stem}.nc" \
         "${stem}.log" \
         "${stem}.mden" \
-        "${stem}.mdinfo"
+        "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")"
     echo "[INFO] Archived incomplete MD output $path before restart."
     return 0
 }
@@ -176,6 +376,7 @@ archive_suspect_md_restart_if_present() {
         "${stem}.log" \
         "${stem}.mden" \
         "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")" \
         "$restart_file"
     echo "[INFO] Archived incomplete MD segment $out_file and suspect restart $restart_file before resume."
     return 0
@@ -231,7 +432,8 @@ archive_zero_frame_md_trajectory_if_present() {
         "$nc_file" \
         "${stem}.log" \
         "${stem}.mden" \
-        "${stem}.mdinfo"
+        "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")"
     echo "[INFO] Archived zero-frame MD trajectory $nc_file before restart."
     return 0
 }
@@ -314,6 +516,7 @@ cleanup_stale_empty_md_artifacts() {
         "md-current.rst7"
         "md-previous.rst7"
         "cmass.txt"
+        "cmass-*.txt"
     )
 
     if [[ -n ${ZSH_VERSION-} ]]; then
@@ -367,6 +570,16 @@ should_skip_completed_step() {
         return 1
     fi
 
+    if is_amber_restart_path "$artifact" && ! amber_restart_is_complete "$artifact"; then
+        echo "[INFO] Existing artifact ${artifact} is not a complete Amber restart ($(amber_restart_validation_status "$artifact")); rerunning ${stage}."
+        return 1
+    fi
+
+    if restart_artifact_has_incomplete_output "$artifact"; then
+        echo "[INFO] Existing artifact ${artifact} has incomplete Amber output $(output_file_for_restart_artifact "$artifact"); rerunning ${stage}."
+        return 1
+    fi
+
     if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
         echo "[INFO] Prior failure marker found; rerunning ${stage} despite existing artifact ${artifact}."
         return 1
@@ -385,6 +598,7 @@ check_sim_failure() {
     local command_status=${SIM_COMMAND_STATUS:-0}
     local -a extra_files=()
     local extra_file_count=0
+    local _seen_numeric_failure_files=""
     if (( $# > 5 )); then
         extra_files=("${@:6}")
         extra_file_count=${#extra_files[@]}
@@ -407,14 +621,130 @@ check_sim_failure() {
         fi
     }
 
+    amber_output_has_numeric_failure() {
+        local output_file=$1
+        [[ -f "$output_file" && -s "$output_file" ]] || return 1
+
+        # Minimization may briefly print overflows while still recovering to a
+        # usable restart. If Amber wrote FINAL RESULTS, judge the final state
+        # instead of transient early minimization lines.
+        if awk '
+            /FINAL RESULTS/ {
+                final_start = NR
+            }
+            {
+                lines[NR] = $0
+            }
+            END {
+                start = final_start ? final_start : 1
+                for (i = start; i <= NR; i++) {
+                    line = tolower(lines[i])
+                    if (line ~ /(^|[^[:alpha:]])(nan|infinity|inf)([^[:alpha:]]|$)/) {
+                        exit 0
+                    }
+                }
+                exit 1
+            }
+        ' "$output_file"; then
+            return 0
+        fi
+
+        if awk '
+            /FINAL RESULTS/ {
+                final_start = NR
+            }
+            {
+                lines[NR] = $0
+            }
+            END {
+                start = final_start ? final_start : 1
+                for (i = start; i <= NR; i++) {
+                    if (lines[i] ~ /^[[:space:]]*(Etot|BOND|ANGLE|DIHED|1-4 NB|1-4 EEL|VDWAALS|EAMBER|SC_|lambda =).*\*\*\*\*\*/) {
+                        exit 0
+                    }
+                }
+                exit 1
+            }
+        ' "$output_file"; then
+            return 0
+        fi
+
+        return 1
+    }
+
+    numeric_failure_file() {
+        local -a candidates=()
+        local f stem seen
+
+        if [[ -n "$rst_file" && "$rst_file" == *.rst7 ]]; then
+            stem=${rst_file%.rst7}
+            candidates+=("${stem}.out")
+        fi
+        candidates+=("$log_file")
+        if (( extra_file_count > 0 )); then
+            for f in "${extra_files[@]}"; do
+                case "$f" in
+                    *.out|*.log|*.mdinfo|mdinfo) candidates+=("$f") ;;
+                esac
+            done
+        fi
+
+        for f in "${candidates[@]}"; do
+            [[ -n "$f" ]] || continue
+            seen=" ${_seen_numeric_failure_files:-} "
+            [[ "$seen" == *" $f "* ]] && continue
+            _seen_numeric_failure_files="${_seen_numeric_failure_files:-} $f"
+            if amber_output_has_numeric_failure "$f"; then
+                printf '%s\n' "$f"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    dt_reduction_template_for_failure() {
+        if [[ "$rst_file" == "eq.rst7" && -f eq.in ]]; then
+            printf '%s\n' "eq.in"
+        else
+            printf '%s\n' "mdin-template"
+        fi
+    }
+
+    reduce_dt_for_failed_stage() {
+        local reduction_start=${1:-2}
+        local tmpl
+        tmpl=$(dt_reduction_template_for_failure)
+        reduce_dt_on_failure "$tmpl" 0.001 "$stage" "$retry_count" "$reduction_start"
+    }
+
+    recoverable_gpu_box_grid_restart() {
+        case "$stage" in
+            "MD segment "*) ;;
+            *) return 1 ;;
+        esac
+
+        [[ -f "$log_file" ]] || return 1
+        grep -Eqi "Periodic box dimensions have changed too much|GPU code does not automatically reorganize grid cells" "$log_file" || return 1
+        [[ -n "$rst_file" && -s "$rst_file" ]] || return 1
+
+        if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+            return 1
+        fi
+        return 0
+    }
+
     if [[ $command_status =~ ^[0-9]+$ && $command_status -ne 0 ]]; then
+        if recoverable_gpu_box_grid_restart; then
+            echo "[INFO] $stage hit Amber GPU periodic-box grid-cell restart condition; found usable $rst_file, continuing with next segment."
+            return 0
+        fi
         echo "[ERROR] $stage simulation failed. Command exited with status $command_status."
         if [[ -f "$log_file" ]]; then
             tail -n 200 "$log_file" || true
         fi
         cleanup_outputs
         if [[ $retry_count -ge 3 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+            reduce_dt_for_failed_stage 3
         fi
         remove_previous_restart
         write_attempt_failed_marker
@@ -424,12 +754,17 @@ check_sim_failure() {
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
 
+    if recoverable_gpu_box_grid_restart; then
+        echo "[INFO] $stage hit Amber GPU periodic-box grid-cell restart condition; found usable $rst_file, continuing with next segment."
+        return 0
+    fi
+
     if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL|cudaGetDeviceCount|Calculation halted" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"
         tail -n 200 "$log_file" || true
         cleanup_outputs
         if [[ $retry_count -ge 3 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+            reduce_dt_for_failed_stage 3
         fi
 
         remove_previous_restart
@@ -441,7 +776,42 @@ check_sim_failure() {
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
         cleanup_outputs
         if [[ $retry_count -ge 2 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
+            reduce_dt_for_failed_stage 1
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    if [[ -n "$rst_file" ]] && is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+        echo "[ERROR] $stage simulation failed. Restart file is incomplete or malformed: $rst_file ($(amber_restart_validation_status "$rst_file"))"
+        cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_for_failed_stage 1
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    if [[ -n "$rst_file" ]] && restart_artifact_has_incomplete_output "$rst_file"; then
+        local out_file
+        out_file=$(output_file_for_restart_artifact "$rst_file")
+        echo "[ERROR] $stage simulation failed. Amber output did not reach normal completion marker: $out_file"
+        tail -n 200 "$out_file" || true
+        cleanup_outputs
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    local bad_output_file
+    if bad_output_file=$(numeric_failure_file); then
+        echo "[ERROR] $stage simulation failed. Numeric failure detected in ${bad_output_file}:"
+        tail -n 200 "$bad_output_file" || true
+        cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_for_failed_stage 1
         fi
         remove_previous_restart
         write_attempt_failed_marker
@@ -571,14 +941,16 @@ cleanup_failed_md_segment() {
         return
     fi
 
-    local out_tag win
+    local out_tag cmass_tag win
     out_tag=$(printf "md-%02d" "$seg_idx")
+    cmass_tag=$(cmass_file_for_md_stem "$out_tag")
     for ((i = 0; i < n_windows; i++)); do
         win=$(printf "%s%02d" "$comp" "$i")
         rm -f "${pfolder}/${win}/${out_tag}.out" \
               "${pfolder}/${win}/${out_tag}.nc" \
               "${pfolder}/${win}/${out_tag}.log" \
               "${pfolder}/${win}/${out_tag}.mden" \
+              "${pfolder}/${win}/${cmass_tag}" \
               "${pfolder}/${win}/md-current.rst7"
     done
 }
@@ -597,7 +969,7 @@ report_progress() {
     [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
     if [[ $seg -ge 0 ]]; then
         stage="production"
-        tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
+        tps=$(production_restart_ps 2>/dev/null || echo 0)
         if [[ -s production-start.ps ]]; then
             tps=$(production_elapsed_ps "$tps" "$(cat production-start.ps)")
         fi
@@ -771,12 +1143,13 @@ retry_adjusted_dt_ps() {
     fi
 
     desired_dt="$target_dt"
-    if [[ $retry_count -ge 9 ]]; then
-        desired_dt=0.001
-    elif [[ $retry_count -ge 6 ]]; then
-        desired_dt=0.002
-    elif [[ $retry_count -ge 3 ]]; then
-        desired_dt=0.003
+    if [[ $retry_count -ge $_reduction_start ]]; then
+        local reduction_steps
+        reduction_steps=$((retry_count - _reduction_start + 1))
+        if [[ $reduction_steps -gt 3 ]]; then
+            reduction_steps=3
+        fi
+        desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" -v steps="$reduction_steps" 'BEGIN{v=target-steps*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
     fi
 
     awk -v target="$target_dt" -v desired="$desired_dt" -v current="$current_dt" '
@@ -796,18 +1169,27 @@ sync_current_mdin_from_template() {
     local tmpl=${1:-mdin-template}
     local current_mdin=${2:-}
     local retry_count=${3:-}
+    local effective_dt_override=${4:-}
 
     [[ -n "$current_mdin" && -f "$current_mdin" ]] || return 0
 
-    local nstlim_value tmp
+    local nstlim_value tmp dumpave_file
     if [[ $(basename -- "$current_mdin") == "mdin-remd-current" ]]; then
         rewrite_mdin_dt_file "$current_mdin" "$(parse_dt_ps "$tmpl")"
         return 0
     fi
 
     nstlim_value=$(parse_nstlim "$current_mdin" 2>/dev/null || parse_nstlim "$tmpl" 2>/dev/null) || return 0
+    dumpave_file=$(awk '
+        BEGIN{IGNORECASE=1}
+        /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+            sub(/^[[:space:]]*DUMPAVE[[:space:]]*=[[:space:]]*/, "")
+            print
+            exit
+        }
+    ' "$current_mdin")
     tmp="${current_mdin}.tmp"
-    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" > "$tmp" && mv "$tmp" "$current_mdin"
+    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" "" "$dumpave_file" "$effective_dt_override" > "$tmp" && mv "$tmp" "$current_mdin"
 }
 
 ensure_target_dt_marker() {
@@ -834,6 +1216,14 @@ remaining_steps_from_time() {
         BEGIN {
             rem = tot - cur
             if (dt <= 0 || rem <= 0) {
+                print 0
+                exit
+            }
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            if (rem <= tol) {
                 print 0
                 exit
             }
@@ -876,7 +1266,7 @@ apply_retry_dt_reduction() {
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$desired_dt"
     fi
 
     echo "[INFO] Applied retry dt in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
@@ -955,11 +1345,11 @@ reduce_dt_on_failure() {
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$new_dt"
     fi
 
     # remove old sims if there's any.
-    rm -f md-*
+    rm -f md-* cmass.txt cmass-*.txt
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
@@ -1201,6 +1591,25 @@ completed_steps() {
     echo "$tps"
 }
 
+production_restart_ps() {
+    local current_rst=${1:-md-current.rst7}
+    local previous_rst=${2:-md-previous.rst7}
+    local tps prev_tps
+
+    tps=$(completed_time_ps_from_rst "$current_rst")
+
+    if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
+        prev_tps=$(completed_time_ps_from_rst "$previous_rst")
+        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
+            tps="$prev_tps"
+        else
+            tps=0
+        fi
+    fi
+
+    echo "$tps"
+}
+
 production_start_ps() {
     local marker=${1:-production-start.ps}
     local initial_rst=${2:-eq.rst7}
@@ -1248,12 +1657,157 @@ completed_production_ps() {
     local initial_rst=${3:-eq.rst7}
     local absolute_ps start_ps
 
-    absolute_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    absolute_ps=$(production_restart_ps)
     [[ -n $absolute_ps ]] || absolute_ps=0
     start_ps=$(production_start_ps "$marker" "$initial_rst")
     production_elapsed_ps "$absolute_ps" "$start_ps"
 }
 
+production_is_complete() {
+    local current_ps=$1
+    local total_ps=$2
+    local dt_ps=${3:-0}
+
+    awk -v cur="$current_ps" -v tot="$total_ps" -v dt="$dt_ps" '
+        BEGIN {
+            tol = dt * 0.5
+            if (tol < 1e-6) {
+                tol = 1e-6
+            }
+            exit !((cur + tol) >= tot)
+        }
+    '
+}
+
+
+mdin_set_cntrl_value() {
+    local key=$1
+    local value=$2
+
+    awk -v key="$key" -v value="$value" '
+        BEGIN {
+            in_cntrl = 0
+            inserted = 0
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+        }
+        {
+            line = $0
+            lower = tolower(line)
+            if (lower ~ /^[[:space:]]*&cntrl/) {
+                in_cntrl = 1
+            }
+            if (lower ~ key_pattern) {
+                print "  " key " = " value ","
+                inserted = 1
+                next
+            }
+            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted == 0) {
+                print "  " key " = " value ","
+                inserted = 1
+            }
+            print line
+            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) {
+                in_cntrl = 0
+            }
+        }
+    '
+}
+
+mdin_get_cntrl_value() {
+    local key=$1
+
+    awk -v key="$key" '
+        BEGIN {
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+        }
+        {
+            line = $0
+            lower = tolower(line)
+            if (lower ~ key_pattern) {
+                sub(/^[^=]*=/, "", line)
+                sub(/,.*/, "", line)
+                gsub(/[[:space:]]/, "", line)
+                print line
+                exit
+            }
+        }
+    '
+}
+
+mdin_has_cntrl_value() {
+    local key=$1
+
+    awk -v key="$key" '
+        BEGIN {
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+            found = 0
+        }
+        {
+            if (tolower($0) ~ key_pattern) {
+                found = 1
+                exit
+            }
+        }
+        END {
+            exit !found
+        }
+    '
+}
+
+mdin_cap_cntrl_frequency_to_nstlim() {
+    local key=$1
+    local nstlim_value=$2
+    local input current_value
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+
+    input=$(cat)
+    current_value=$(printf "%s\n" "$input" | mdin_get_cntrl_value "$key")
+    if [[ $current_value =~ ^[0-9]+$ && $current_value -gt 0 && $current_value -gt $nstlim_value ]]; then
+        printf "%s\n" "$input" | mdin_set_cntrl_value "$key" "$nstlim_value"
+    else
+        printf "%s\n" "$input"
+    fi
+}
+
+mdin_cap_dumpfreq_to_nstlim() {
+    local nstlim_value=$1
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+
+    awk -v nstlim="$nstlim_value" '
+        BEGIN { IGNORECASE = 1 }
+        {
+            line = $0
+            if (line ~ /DUMPFREQ/ && match(line, /istep1[[:space:]]*=[[:space:]]*[0-9]+/)) {
+                token = substr(line, RSTART, RLENGTH)
+                value = token
+                sub(/.*=/, "", value)
+                gsub(/[[:space:]]/, "", value)
+                if (value + 0 > nstlim + 0) {
+                    line = substr(line, 1, RSTART - 1) "istep1=" int(nstlim) substr(line, RSTART + RLENGTH)
+                }
+            }
+            print line
+        }
+    '
+}
+
+can_skip_short_final_tail() {
+    local total_ps=$1
+    local current_ps=$2
+    local remaining_ps=$3
+
+    awk -v tot="$total_ps" -v cur="$current_ps" -v rem="$remaining_ps" '
+        BEGIN {
+            if (tot <= 0 || cur <= 0 || rem <= 0) {
+                exit 1
+            }
+            frac = rem / tot
+            exit !(tot >= 100 && rem <= 100 && frac <= 0.025)
+        }
+    '
+}
 
 write_mdin_current() {
     local tmpl=${1:-mdin-template}
@@ -1261,16 +1815,23 @@ write_mdin_current() {
     local first_run=$3
     local current_mdin=${4:-mdin-current}
     local retry_count=${5:-}
+    local initial_time_ps=${6:-}
+    local dumpave_file=${7:-}
+    local effective_dt_override=${8:-}
 
     [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
 
-    local text
+    local text freq_key
     text=$(<"$tmpl")
 
     local template_dt effective_dt
     template_dt=$(parse_dt_ps "$tmpl")
-    retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
-    effective_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" 0.001 3)
+    if [[ $effective_dt_override =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+        effective_dt="$effective_dt_override"
+    else
+        retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
+        effective_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" 0.001 3)
+    fi
 
     if awk -v eff="$effective_dt" -v template="$template_dt" 'BEGIN{exit !(eff != template)}'; then
         text=$(echo "$text" | awk -v newdt="$effective_dt" '
@@ -1285,10 +1846,38 @@ write_mdin_current() {
         ')
     fi
 
-    text=$(echo "$text" \
-        | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
-        | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
+    if [[ $first_run == 1 ]]; then
+        local temp0_value
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "0")
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "1")
+        if [[ $initial_time_ps =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+            text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "t" "$initial_time_ps")
+        fi
+        if ! printf "%s\n" "$text" | mdin_has_cntrl_value "tempi"; then
+            temp0_value=$(printf "%s\n" "$text" | mdin_get_cntrl_value "temp0")
+            if [[ -n $temp0_value ]]; then
+                text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "tempi" "$temp0_value")
+            fi
+        fi
+    else
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
+    fi
 
-    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "nstlim" "$nstlim_value")
+    for freq_key in ntpr ntwr ntwx ntwe; do
+        text=$(printf "%s\n" "$text" | mdin_cap_cntrl_frequency_to_nstlim "$freq_key" "$nstlim_value")
+    done
+    text=$(printf "%s\n" "$text" | mdin_cap_dumpfreq_to_nstlim "$nstlim_value")
+    if [[ -n $dumpave_file ]]; then
+        text=$(printf "%s\n" "$text" | awk -v dumpave="$dumpave_file" '
+            BEGIN{IGNORECASE=1}
+            /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+                print "DUMPAVE=" dumpave
+                next
+            }
+            { print }
+        ')
+    fi
     echo "$text"
 }

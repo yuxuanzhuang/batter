@@ -78,15 +78,19 @@ For a successful result, BATTER writes::
 
 ``fe_timeseries.json`` and ``fe_timeseries.png``
    Overall progress diagnostic for the assembled FE estimate. The JSON file stores
-   the cumulative FE value and uncertainty arrays across increasing fractions of the
-   trajectory. The PNG plots those values against simulation progress, adds error
-   bars, and overlays the final FE estimate as a dashed reference line with a
-   shaded ``±1 kcal/mol`` band.
+   the cumulative forward FE value and uncertainty arrays across increasing
+   fractions of the trajectory, plus ``backward_fe_value`` and
+   ``backward_fe_std`` arrays from the backward convergence direction. The PNG
+   plots the forward values against simulation progress, adds error bars, and
+   overlays the final FE estimate as a dashed reference line with a shaded
+   ``±1 kcal/mol`` band.
 
 ``<component>_results.json``
    Per-component scalar summary written by the MBAR analysis stage. It stores the
-   final FE value, its uncertainty, and the component-level FE timeseries used to
-   build the overall summary.
+   final FE value, its uncertainty, forward/backward component-level FE
+   timeseries, and a ``convergence`` block with the raw time-convergence,
+   block-convergence, and overlap-matrix data used to create
+   ``<component>_convergence.png``.
 
 ``<component>_convergence.png``
    Three-panel convergence diagnostic for one FE component. BATTER plots:
@@ -147,29 +151,39 @@ RBFE-Specific Additions
 
 RBFE records use the same top-level pattern, but the payload is slightly different::
 
+   results/<run_id>/
+   ├── rbfe_network.json
+   ├── rbfe_network.png
+   ├── rbfe_network.html
+   └── <ligand_ref~ligand_alt>/
+       ├── record.json
+       ├── Results/
+       │   ├── Results.dat
+       │   ├── mapping.json
+       │   ├── mapping.pkl
+       │   └── mapping.png
+       ├── Equil_ref/
+       └── Equil_alt/
+
+``results/<run_id>/rbfe_network.*``
+   Run-level copies of the resolved RBFE network artifacts from
+   ``executions/<run_id>/artifacts/config/``. The HTML dashboard is generated
+   during ``prepare_rbfe`` and includes pan/zoom controls, clickable ligand and
+   edge notes, collapsed reverse-direction edges, prepared atom-mapping or
+   pocket-shape images when drawing succeeds, and selectable edge coloring by
+   graph redundancy or available mapping metrics.
+
+Per-pair RBFE result records live under::
+
    results/<run_id>/<ligand_ref~ligand_alt>/
    ├── record.json
    ├── Results/
    │   ├── Results.dat
-   │   ├── rbfe_network.png
-   │   ├── rbfe_network.html
    │   ├── mapping.json
    │   ├── mapping.pkl
    │   └── mapping.png
    ├── Equil_ref/
    └── Equil_alt/
-
-``Results/rbfe_network.png``
-   Copy of the resolved RBFE network plot from
-   ``executions/<run_id>/artifacts/config/rbfe_network.png``.
-
-``Results/rbfe_network.html``
-   Copy of the planned RBFE network dashboard from
-   ``executions/<run_id>/artifacts/config/rbfe_network.html``. The dashboard is
-   generated during ``prepare_rbfe`` and includes pan/zoom controls, clickable
-   ligand and edge notes, collapsed reverse-direction edges, prepared
-   atom-mapping images when drawing succeeds, and selectable edge coloring by
-   graph redundancy or available mapping metrics.
 
 ``Results/mapping.*``
    Atom-mapping artifacts copied into the transformation setup directory from

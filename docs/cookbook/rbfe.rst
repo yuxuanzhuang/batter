@@ -22,7 +22,7 @@ Minimal RBFE configuration
        LIG1: /path/to/lig1.sdf
        LIG2: /path/to/lig2.sdf
        LIG3: /path/to/lig3.sdf
-     # Optional: provide explicit receptor anchors to override auto-selection.
+     # Optional: omit anchors, provide one P1 anchor, or provide explicit P1/P2/P3.
      # anchor_atoms:
      #   - "name CA and resid 113"
      #   - "name CA and resid 82"
@@ -42,8 +42,8 @@ If you omit ``rbfe.mapping`` (and do not provide files), BATTER uses
 Anchor selection
 ----------------
 
-``create.anchor_atoms`` is optional. When it is omitted, BATTER chooses the
-three receptor anchors heuristically during system preparation:
+``create.anchor_atoms`` is optional. When it is omitted, BATTER chooses the three
+receptor anchors heuristically during system preparation:
 
 * For ABFE/RBFE and MD runs with at least one real ligand, BATTER uses the first
   real ligand pose as the binding-site reference. It prefers stable receptor
@@ -54,22 +54,44 @@ three receptor anchors heuristically during system preparation:
   stable, non-degenerate receptor-anchor triplet without relying on dummy
   ligand coordinates.
 
-Provide ``create.anchor_atoms`` manually when you want fixed anchors for a
-known binding site, when the first ligand pose is not representative, or when
-the heuristic reports that no suitable triplet was found. Resolved anchors are
-stored in ``executions/<run_id>/all-ligands/manifest.json`` under
-``anchors`` and ``anchor_atom_selections``.
+If you know the receptor interaction that should define the Boresch reference,
+provide one selection. BATTER treats that atom as P1 and chooses P2/P3
+automatically; prefer the binding-site Cα of a residue associated with a
+conserved ligand interaction, such as the residue forming a salt bridge. Provide
+three selections only when you need fully manual P1/P2/P3 geometry. Resolved
+global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
+under ``anchors`` and ``anchor_atom_selections``. Prepared-system anchor masks
+used later by equilibration and FE setup are written to each ligand's
+``equil/anchors.json``.
+
+Standard RBFE and rbfe_septop
+-----------------------------
+
+Use ``protocol: rbfe`` when ligand pairs have a chemically meaningful common
+core. BATTER prepares reusable atom-mapping artifacts and the transformation
+setup uses those mappings for the standard RBFE softcore construction.
+
+Use ``protocol: rbfe_septop`` for scaffold hops, protonation-state comparisons,
+or pairs where a common-core mapping would be misleading. The same RBFE network
+planner is used, but SEPTOP FE setup treats each full ligand as softcore and
+uses opposite lambda-dependent Boresch restraints for the two bound ligands.
+Mapping artifacts are still generated for network scoring and review, and
+``rbfe.network_scorer: auto`` switches to receptor-frame pocket-shape scoring by
+default.
 
 Default mapping algorithm
 -------------------------
 
-The default mapping is a star network:
+The default mapping starts as a star network:
 
 * Ligands are taken in input order.
-* The first ligand is used as reference.
+* The first ligand is used as the initial reference.
 * Pairs are built as ``(lig1, lig2)``, ``(lig1, lig3)``, ...
 
-This corresponds to ``RBFENetwork.default_mapping``.
+This corresponds to ``RBFENetwork.default_mapping``. Unless you set
+``rbfe.direction_policy: preserve`` or provide ``rbfe.mapping_file``, BATTER then
+orients generated edges with ``rbfe.direction_policy``; the default
+``larger_volume`` policy uses the larger grid-volume ligand as the reference.
 
 Mapping options and precedence
 ------------------------------
@@ -79,6 +101,9 @@ RBFE mapping is controlled by ``rbfe`` in ``run.yaml``:
 * ``rbfe.mapping_file``
 * ``rbfe.mapping`` (default ``default``)
 * ``rbfe.atom_mapping_file`` for optional per-pair atom mapping overrides
+* ``rbfe.network_scorer`` (default ``auto``)
+* ``rbfe.direction_policy`` (default ``larger_volume``)
+* ``rbfe.minimal_mapping_atom`` (default ``3``)
 * ``rbfe.add_atom_mapping_edges`` (default ``false``)
 
 If both are provided, BATTER uses ``mapping_file``.
@@ -90,6 +115,10 @@ Supported ``rbfe.mapping`` values
 * ``konnektor``
 
 When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
+``rbfe.network_scorer`` controls how Konnektor scores candidate edges:
+``auto`` resolves to LoMap scoring for standard RBFE and pocket-shape scoring
+for ``rbfe_septop``; explicit values include ``lomap``, ``shape_difference`` and
+``pocket_shape``.
 
 .. code-block:: yaml
 
@@ -97,6 +126,8 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
      mapping: konnektor
      atom_mapper: kartograf
      konnektor_layout: star
+     network_scorer: auto
+     direction_policy: larger_volume
      both_directions: false
 
 .. _rbfe_atom_mapper_options:
@@ -290,10 +321,10 @@ The HTML view is the primary network-review artifact:
   score, mapped-atom ratio, volume ratio, shape mismatch, and shape overlap.
   Missing optional metrics are simply absent from the selector.
 
-During planning, BATTER omits duplicate ligands with identical molecular identity
-and removes edges whose prepared atom mapping has full atom or heavy-atom
-coverage. The skipped
-ligands and edges are recorded in ``rbfe_network.json`` as skip metadata.
+During planning, BATTER omits duplicate ligands with identical molecular
+identity. Full atom or full heavy-atom mappings are retained as normal edges and
+recorded as coverage metadata in the per-edge mapping status and network JSON.
+Skipped identical ligands are recorded in ``rbfe_network.json`` as skip metadata.
 
 Transformation systems are created under:
 

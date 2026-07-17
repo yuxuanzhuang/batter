@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from math import ceil
 import json
 import re
 import MDAnalysis as mda
+import numpy as np
 from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
@@ -22,6 +23,17 @@ from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
 COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
+ABFE_DIFF_POSE_RADIUS = 8.0
+ABFE_DIFF_POSE_MAX_ANCHORS = 8
+ABFE_DIFF_POSE_MIN_ANCHORS = 4
+ABFE_DIFF_POSE_WIDTH = 0.5
+ABFE_DIFF_POSE_LOCAL_ANCHORS = 3
+ABFE_DIFF_POSE_LIGAND_ATOMS = 6
+_ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
+BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
+BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
+SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
+BoreschCandidate = tuple[float, tuple[int, int, int], tuple[float, ...], float, float]
 
 def _stride_atom_serials(
     atoms: Sequence[str | int],
@@ -73,8 +85,268 @@ def _collect_calpha_and_lig(
     return protein_calpha_serials, ligand_heavy_atom_serials
 
 
+def _select_bound_ligand_heavy_atoms(
+    universe: mda.Universe,
+    residue_name: str,
+) -> mda.AtomGroup:
+    """Return heavy atoms from the first ligand residue in the bound pose."""
+    lig_atoms = universe.select_atoms(f"resname {residue_name}")
+    if lig_atoms.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:d] No residues with resname {residue_name!r} found in vac.pdb"
+        )
+
+    ligand_resids = sorted({int(resid) for resid in lig_atoms.resids})
+    bound_resid = ligand_resids[0]
+    bound_atoms = universe.select_atoms(f"resid {bound_resid}")
+    heavy = bound_atoms[
+        [
+            not _is_hydrogen_atom(atom)
+            for atom in bound_atoms
+        ]
+    ]
+    if heavy.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:d] Found zero heavy atoms for bound ligand residue {bound_resid}"
+        )
+    return heavy
+
+
+def _is_hydrogen_atom(atom) -> bool:
+    """Return True for hydrogen atoms using element, type, or PDB atom name."""
+    element = str(getattr(atom, "element", "") or "").strip().upper()
+    if element == "H":
+        return True
+    atom_type = str(getattr(atom, "type", "") or "").strip().upper()
+    if atom_type == "H":
+        return True
+    name = str(getattr(atom, "name", "") or "").strip().upper()
+    return bool(re.match(r"^\d*H", name))
+
+
+def _select_binding_site_calpha_atoms(
+    universe: mda.Universe,
+    ligand_heavy: mda.AtomGroup,
+    *,
+    radius: float = ABFE_DIFF_POSE_RADIUS,
+    min_atoms: int = ABFE_DIFF_POSE_MIN_ANCHORS,
+    max_atoms: int = ABFE_DIFF_POSE_MAX_ANCHORS,
+) -> list:
+    """Choose nearby receptor C-alpha atoms for relative ligand-pose restraints."""
+    ca_atoms = universe.select_atoms("protein and name CA")
+    if ca_atoms.n_atoms == 0:
+        ca_atoms = universe.select_atoms("name CA")
+    if ca_atoms.n_atoms == 0:
+        raise ValueError(
+            "[restraints:d] Cannot build relative pose restraints without receptor CA atoms"
+        )
+
+    deltas = ca_atoms.positions[:, None, :] - ligand_heavy.positions[None, :, :]
+    nearest = np.linalg.norm(deltas, axis=2).min(axis=1)
+    order = np.argsort(nearest)
+    within = [int(idx) for idx in order if nearest[int(idx)] <= radius]
+    selected = within[:max_atoms]
+    if len(selected) < min_atoms:
+        selected = [int(idx) for idx in order[: min(max_atoms, ca_atoms.n_atoms)]]
+    return [ca_atoms[idx] for idx in selected]
+
+
+def _flat_bottom_distance_anchors(target: float, width: float) -> tuple[float, float, float, float]:
+    """Return AMBER r1-r4 anchors for a symmetric flat-bottom distance well."""
+    return (0.0, max(0.0, target - width), target + width, 999.0)
+
+
+def _adjust_receptor_anchor_mask(mask: str, dec_method: str | None) -> str:
+    """Return the receptor anchor mask matching SDR-renumbered FE PDBs."""
+    if str(dec_method or "").lower() != "sdr":
+        return mask
+    match = _ANCHOR_MASK_RE.match(mask.strip())
+    if not match:
+        return mask
+    return f":{int(match.group(1)) + 1}@{match.group(2)}"
+
+
+def _resolve_anchor_atom_from_mask(
+    universe: mda.Universe,
+    atm_num: Sequence[str],
+    mask: str,
+) -> object | None:
+    """Resolve an Amber-style atom mask to an MDAnalysis atom from ``vac.pdb``."""
+    try:
+        serial = atm_num.index(mask)
+    except ValueError:
+        return None
+    if serial <= 0 or serial > universe.atoms.n_atoms:
+        return None
+    return universe.atoms[serial - 1]
+
+
+def _load_abfe_diff_saved_anchors(ctx: BuildContext):
+    work_dir = getattr(ctx, "working_dir", None)
+    comp = getattr(ctx, "comp", "d")
+    if work_dir is None:
+        return None
+    try:
+        return load_anchors(Path(work_dir) / f"{comp}_build_files")
+    except Exception as exc:
+        logger.debug(f"[restraints:{comp}] could not load saved anchors: {exc}")
+        return None
+
+
+def _select_abfe_diff_receptor_anchors(
+    ctx: BuildContext,
+    universe: mda.Universe,
+    vac_pdb: Path,
+    ligand_heavy: mda.AtomGroup,
+    *,
+    count: int,
+    radius: float,
+) -> list:
+    """Choose the receptor atoms defining the ABFE_diff ligand-pose frame."""
+    comp = getattr(ctx, "comp", "d")
+    count = max(ABFE_DIFF_POSE_LOCAL_ANCHORS, int(count))
+    anchors = _load_abfe_diff_saved_anchors(ctx)
+    selected: list = []
+
+    if anchors is not None:
+        atm_num = num_to_mask(vac_pdb.as_posix())
+        dec_method = getattr(getattr(ctx, "sim", None), "dec_method", None)
+        seen_indices: set[int] = set()
+        for raw_mask in (anchors.P1, anchors.P2, anchors.P3):
+            mask = _adjust_receptor_anchor_mask(str(raw_mask), dec_method)
+            atom = _resolve_anchor_atom_from_mask(universe, atm_num, mask)
+            if atom is None:
+                logger.debug(
+                    f"[restraints:{comp}] saved receptor anchor {mask!r} not found in {vac_pdb.name}"
+                )
+                continue
+            if int(atom.index) in seen_indices:
+                continue
+            selected.append(atom)
+            seen_indices.add(int(atom.index))
+            if len(selected) >= count:
+                return selected
+
+    fallback = _select_binding_site_calpha_atoms(
+        universe,
+        ligand_heavy,
+        radius=radius,
+        min_atoms=ABFE_DIFF_POSE_LOCAL_ANCHORS,
+        max_atoms=count,
+    )
+    seen = {int(atom.index) for atom in selected}
+    selected.extend(atom for atom in fallback if int(atom.index) not in seen)
+    if len(selected) < ABFE_DIFF_POSE_LOCAL_ANCHORS:
+        raise ValueError(
+            f"[restraints:{comp}] ABFE_diff local-frame restraints require at least "
+            f"{ABFE_DIFF_POSE_LOCAL_ANCHORS} receptor anchors; found {len(selected)}"
+        )
+    return selected[:count]
+
+
+def _preferred_ligand_anchor_atoms(
+    ctx: BuildContext,
+    universe: mda.Universe,
+    vac_pdb: Path,
+    ligand_heavy: mda.AtomGroup,
+) -> list:
+    """Return saved ligand anchor atoms when they are available in ``vac.pdb``."""
+    anchors = _load_abfe_diff_saved_anchors(ctx)
+    if anchors is None:
+        return []
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    ligand_indices = {int(atom.index) for atom in ligand_heavy}
+    selected: list = []
+    seen_indices: set[int] = set()
+    for raw_mask in (anchors.L1, anchors.L2, anchors.L3):
+        if not raw_mask:
+            continue
+        atom = _resolve_anchor_atom_from_mask(universe, atm_num, str(raw_mask))
+        if atom is None or int(atom.index) not in ligand_indices:
+            continue
+        if int(atom.index) in seen_indices:
+            continue
+        selected.append(atom)
+        seen_indices.add(int(atom.index))
+    return selected
+
+
+def _select_ligand_pose_atoms(
+    ligand_heavy: mda.AtomGroup,
+    *,
+    count: int,
+    preferred_atoms: Sequence[object] = (),
+) -> list:
+    """Choose a compact, spatially spread ligand scaffold for pose restraints."""
+    count = max(3, int(count))
+    heavy_atoms = list(ligand_heavy)
+    if len(heavy_atoms) <= count:
+        return heavy_atoms
+
+    heavy_by_index = {int(atom.index): atom for atom in heavy_atoms}
+    selected_indices: list[int] = []
+    for atom in preferred_atoms:
+        idx = int(atom.index)
+        if idx in heavy_by_index and idx not in selected_indices:
+            selected_indices.append(idx)
+        if len(selected_indices) >= count:
+            return [heavy_by_index[idx] for idx in selected_indices]
+
+    positions = np.asarray([atom.position for atom in heavy_atoms], dtype=float)
+    atom_indices = [int(atom.index) for atom in heavy_atoms]
+    centroid = positions.mean(axis=0)
+
+    while len(selected_indices) < count:
+        candidate_scores: list[tuple[float, int]] = []
+        selected_set = set(selected_indices)
+        for i, atom_index in enumerate(atom_indices):
+            if atom_index in selected_set:
+                continue
+            if selected_indices:
+                selected_positions = np.asarray(
+                    [heavy_by_index[idx].position for idx in selected_indices],
+                    dtype=float,
+                )
+                score = float(
+                    np.linalg.norm(positions[i] - selected_positions, axis=1).min()
+                )
+            else:
+                score = float(np.linalg.norm(positions[i] - centroid))
+            candidate_scores.append((score, atom_index))
+        if not candidate_scores:
+            break
+        _, chosen_index = max(candidate_scores, key=lambda item: (item[0], -item[1]))
+        selected_indices.append(chosen_index)
+
+    return [heavy_by_index[idx] for idx in selected_indices]
+
+
+def _write_distance_restraint_block(
+    handle,
+    atom1: object,
+    atom2: object,
+    *,
+    width: float,
+    force_const: float,
+) -> float:
+    """Write one flat-bottom atom-atom distance restraint and return its target."""
+    target = float(np.linalg.norm(atom1.position - atom2.position))
+    _write_group_colvar_block(
+        handle,
+        anchor_atom=str(int(atom1.index) + 1),
+        group_atoms=[str(int(atom2.index) + 1)],
+        anchors=_flat_bottom_distance_anchors(target, width),
+        strengths=(force_const, force_const),
+    )
+    return target
+
+
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
-    """Load 0-based (ref_indices, alt_indices) from RBFE mapping JSON."""
+    """Load 0-based ``(ref_indices, alt_indices)`` from RBFE mapping JSON.
+
+    Prepared RBFE ``mapping.json`` files store ``componentB_to_componentA``,
+    i.e. alternate-ligand atom index -> reference-ligand atom index.
+    """
     if not mapping_path.exists():
         return [], []
     try:
@@ -87,11 +359,66 @@ def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]
         logger.warning(f"[restraints:x] Unexpected mapping format in {mapping_path}: {type(data)}")
         return [], []
 
-    # scmk1_cc_indices as ref_indices
-    ref_indices = sorted(data.get("scmk1_cc_solvent_indices", []))
-    # scmk2_cc_indices as alt_indices
-    alt_indices = sorted(data.get("scmk2_cc_solvent_indices", []))
+    if "scmk1_cc_solvent_indices" in data or "scmk2_cc_solvent_indices" in data:
+        ref_indices = sorted(int(i) for i in data.get("scmk1_cc_solvent_indices", []))
+        alt_indices = sorted(int(i) for i in data.get("scmk2_cc_solvent_indices", []))
+        return ref_indices, alt_indices
+
+    ref_indices: list[int] = []
+    alt_indices: list[int] = []
+    for raw_alt, raw_ref in data.items():
+        try:
+            ref_indices.append(int(raw_ref))
+            alt_indices.append(int(raw_alt))
+        except (TypeError, ValueError):
+            continue
+    ref_indices = sorted(set(ref_indices))
+    alt_indices = sorted(set(alt_indices))
     return ref_indices, alt_indices
+
+
+def _mapped_heavy_atom_names_from_residue(
+    residue,
+    mapped_indices: Iterable[int],
+) -> list[str]:
+    names: list[str] = []
+    atoms = list(residue.atoms)
+    for raw_idx in mapped_indices:
+        idx = int(raw_idx)
+        if idx < 0 or idx >= len(atoms):
+            continue
+        atom = atoms[idx]
+        name = str(atom.name).strip()
+        if not name or name in names or _is_hydrogen_atom(atom):
+            continue
+        names.append(name)
+    return names
+
+
+def _common_core_boresch_preference_names(
+    names: Iterable[str],
+    *,
+    label: str,
+) -> list[str]:
+    """Return mapped common-core names only when there are enough to prefer."""
+    unique: list[str] = []
+    for name in names:
+        clean = str(name).strip()
+        if clean and clean not in unique:
+            unique.append(clean)
+
+    if len(unique) < SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS:
+        if unique:
+            logger.debug(
+                "[restraints:x] ignoring {} mapped common-region Boresch "
+                "preference: {} mapped heavy atom(s) < {} required: {}",
+                label,
+                len(unique),
+                SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS,
+                unique,
+            )
+        return []
+    return unique
 
 
 def _collect_common_core_heavy_ligand(
@@ -844,11 +1171,567 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 
 
+def _lambda_weight_for_window(ctx: BuildContext) -> float:
+    lambdas = list(getattr(ctx.sim, "component_lambdas", {}).get(ctx.comp, []) or [])
+    if not lambdas:
+        lambdas = list(getattr(ctx.sim, "lambdas", []) or [])
+    if not lambdas:
+        return 0.0
+    if ctx.win < 0:
+        return float(lambdas[0])
+    if ctx.win >= len(lambdas):
+        raise IndexError(
+            f"[restraints:{ctx.comp}] window {ctx.win} outside lambda schedule of length {len(lambdas)}"
+        )
+    return float(lambdas[ctx.win])
+
+
+def _ligand_atom_masks_from_vac_pdb(vac_pdb: Path, mol: str, lig_res: str) -> list[str]:
+    universe = mda.Universe(vac_pdb.as_posix())
+    ligand_atoms = universe.select_atoms(f"resname {mol} and resid {int(lig_res)}")
+    if ligand_atoms.n_atoms == 0:
+        ligand_atoms = universe.select_atoms(f"resname {mol}").residues[0].atoms
+    masks = ["0"]
+    for atom in ligand_atoms:
+        masks.append(f":{int(atom.resid)}@{atom.name}")
+    return masks
+
+
+def _ligand_reference_candidates(ctx: BuildContext, windows_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+
+    def _add(path_like) -> None:
+        if not path_like:
+            return
+        path = Path(str(path_like)).expanduser()
+        if path.exists() and path not in candidates:
+            candidates.append(path)
+
+    index_path = ctx.system_root / "artifacts" / "ligand_params" / "index.json"
+    if index_path.exists():
+        try:
+            index_data = json.loads(index_path.read_text())
+            for entry in index_data.get("ligands", []):
+                if str(entry.get("ligand")) != str(ctx.ligand):
+                    continue
+                input_path = entry.get("input_path")
+                if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                    _add(input_path)
+                meta_path = Path(str(entry.get("store_dir", ""))) / "metadata.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    input_path = meta.get("input_path")
+                    if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                        _add(input_path)
+        except Exception as exc:
+            logger.warning(f"[restraints:l] could not read ligand input metadata: {exc}")
+
+    params_dir = ctx.system_root / "simulations" / ctx.ligand / "params"
+    for meta_name in ("metadata.json", f"{ctx.residue_name}.metadata.json"):
+        meta_path = params_dir / meta_name
+        if meta_path.exists():
+            try:
+                input_path = json.loads(meta_path.read_text()).get("input_path")
+                if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                    _add(input_path)
+            except Exception:
+                pass
+
+    for base in (params_dir, windows_dir):
+        for ext in ("sdf", "pdb", "mol2"):
+            _add(base / f"{ctx.residue_name}.{ext}")
+            _add(base / f"{ctx.ligand}.{ext}")
+
+    return candidates
+
+
+def _load_reference_positions(path: Path) -> np.ndarray:
+    suffix = path.suffix.lower()
+    try:
+        from rdkit import Chem
+
+        mol = None
+        if suffix in {".sdf", ".sd"}:
+            supplier = Chem.SDMolSupplier(path.as_posix(), removeHs=False, sanitize=False)
+            mol = supplier[0] if len(supplier) else None
+        elif suffix == ".pdb":
+            mol = Chem.MolFromPDBFile(path.as_posix(), removeHs=False, sanitize=False)
+        elif suffix == ".mol2":
+            mol = Chem.MolFromMol2File(
+                path.as_posix(),
+                removeHs=False,
+                sanitize=False,
+                cleanupSubstructures=False,
+            )
+        if mol is not None and mol.GetNumConformers() > 0:
+            conf = mol.GetConformer()
+            coords = np.array(
+                [
+                    [conf.GetAtomPosition(i).x, conf.GetAtomPosition(i).y, conf.GetAtomPosition(i).z]
+                    for i in range(mol.GetNumAtoms())
+                ],
+                dtype=float,
+            )
+            return coords
+    except Exception as exc:
+        logger.debug(f"[restraints:l] RDKit could not read {path}: {exc}")
+
+    universe = mda.Universe(path.as_posix())
+    return np.asarray(universe.atoms.positions, dtype=float)
+
+
+def _dihedral_degrees(coords: np.ndarray, indices_1based: Sequence[int]) -> float:
+    i, j, k, l = [int(x) - 1 for x in indices_1based]
+    p0, p1, p2, p3 = coords[[i, j, k, l]]
+    b0 = -(p1 - p0)
+    b1 = p2 - p1
+    b2 = p3 - p2
+    norm = np.linalg.norm(b1)
+    if norm == 0.0:
+        raise ValueError("zero-length central bond in dihedral reference")
+    b1 /= norm
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    x = np.dot(v, w)
+    y = np.dot(np.cross(b1, v), w)
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _reference_dihedral_values_from_input(
+    ctx: BuildContext,
+    windows_dir: Path,
+    relative_dihedrals: Sequence[Sequence[int]],
+) -> tuple[list[float], Path]:
+    required_atoms = max(max(dihedral) for dihedral in relative_dihedrals)
+    failures: list[str] = []
+    for candidate in _ligand_reference_candidates(ctx, windows_dir):
+        try:
+            coords = _load_reference_positions(candidate)
+            if coords.shape[0] < required_atoms:
+                failures.append(
+                    f"{candidate} has {coords.shape[0]} atoms, needs {required_atoms}"
+                )
+                continue
+            vals = [_dihedral_degrees(coords, dihedral) for dihedral in relative_dihedrals]
+            return vals, candidate
+        except Exception as exc:
+            failures.append(f"{candidate}: {exc}")
+    raise FileNotFoundError(
+        "[restraints:l] could not compute ligand dihedral targets from input/parameter conformer. "
+        + "; ".join(failures)
+    )
+
+
+def _ligand_boresch_expressions(P1: str, P2: str, P3: str, L1: str, L2: str, L3: str) -> list[str]:
+    if not all([P1, P2, P3, L1, L2, L3]):
+        raise ValueError("[restraints:l] Boresch restraints require P1/P2/P3 and L1/L2/L3 anchors")
+    return [
+        f"{P1} {L1}",
+        f"{P2} {P1} {L1}",
+        f"{P3} {P2} {P1} {L1}",
+        f"{P1} {L1} {L2}",
+        f"{P2} {P1} {L1} {L2}",
+        f"{P1} {L1} {L2} {L3}",
+    ]
+
+
+def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
+    """
+    Write lambda-scaled Boresch and ligand conformational restraints for component ``l``.
+
+    ``l-1`` carries full-strength targets so ``eq.in`` can ramp the global
+    NMR restraint scale with ``&wt type='REST'``. Production windows carry the
+    fixed force constant scaled by their lambda value.
+    """
+    windows_dir = ctx.window_dir
+    lig = ctx.ligand
+    mol = ctx.residue_name
+    comp = ctx.comp
+
+    vac_pdb = windows_dir / "vac.pdb"
+    vac_lig_prmtop = windows_dir / "vac_ligand.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd = windows_dir / "full.inpcrd"
+    lig_mol2 = windows_dir / f"{mol}.mol2"
+
+    for p in (vac_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
+        if not p.exists():
+            raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
+
+    anchors = load_anchors(ctx.build_dir)
+    P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
+    L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
+    lig_res = anchors.lig_res
+    boresch_exprs = _ligand_boresch_expressions(P1, P2, P3, L1, L2, L3)
+    boresch_vals = _write_assign_and_read_vals(windows_dir, boresch_exprs, full_prmtop, full_inpcrd)
+
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    vac_lig_pdb = windows_dir / "vac_ligand.pdb"
+    if not vac_lig_pdb.exists():
+        vac_lig_pdb = windows_dir / f"{lig}.pdb"
+    if not vac_lig_pdb.exists():
+        vac_lig_pdb = windows_dir / f"{mol}.pdb"
+    if vac_lig_pdb.exists():
+        ligand_atm_num = num_to_mask(vac_lig_pdb.as_posix())
+    else:
+        ligand_atm_num = _ligand_atom_masks_from_vac_pdb(vac_pdb, mol, lig_res)
+    raw_lig_msks = _scan_dihedrals_from_prmtop(vac_lig_prmtop, ligand_atm_num)
+    if lig_mol2.exists():
+        raw_lig_msks = _filter_sp_carbons(raw_lig_msks, lig_mol2)
+    relative_dihedrals: list[tuple[int, int, int, int]] = []
+    for expr in raw_lig_msks:
+        fields = expr.split()
+        if len(fields) != 4:
+            continue
+        try:
+            relative_dihedrals.append(tuple(ligand_atm_num.index(field) for field in fields))
+        except ValueError:
+            logger.warning(f"[restraints:{comp}] skipping ligand dihedral without source atom map: {expr}")
+    lig_msks = [m.replace(":1", f":{lig_res}") for m in raw_lig_msks]
+    if not lig_msks:
+        raise ValueError(f"[restraints:{comp}] no ligand heavy-atom dihedrals found for {lig}")
+    if len(relative_dihedrals) != len(lig_msks):
+        raise ValueError(
+            f"[restraints:{comp}] could not map all ligand dihedrals to input conformer atom order"
+        )
+
+    vals, reference_source = _reference_dihedral_values_from_input(
+        ctx,
+        windows_dir,
+        relative_dihedrals,
+    )
+
+    base_force = float(getattr(ctx.sim, "lig_dihcf_force", 0.0) or 0.0)
+    window_weight = _lambda_weight_for_window(ctx)
+    force_scale = 1.0 if ctx.win < 0 else window_weight
+    force_const = base_force * force_scale
+    base_distance_force = float(getattr(ctx.sim, "lig_distance_force", 0.0) or 0.0)
+    base_angle_force = float(getattr(ctx.sim, "lig_angle_force", 0.0) or 0.0)
+    distance_force = base_distance_force * force_scale
+    angle_force = base_angle_force * force_scale
+    if base_force <= 0.0:
+        logger.warning(
+            "[restraints:l] lig_dihcf_force is <= 0; component l will not restrain ligand conformations."
+        )
+
+    cv_in = windows_dir / "cv.in"
+    cv_in.write_text("cv_file\n")
+
+    restraint_records: list[dict[str, object]] = []
+    boresch_records: list[dict[str, object]] = []
+    used_msks: list[str] = []
+    disang = windows_dir / "disang.rest"
+    with disang.open("w") as df:
+        df.write(
+            f"# Ligand Boresch and conformational restraints comp={comp} "
+            f"base_distance_force={base_distance_force:.8g} "
+            f"base_angle_force={base_angle_force:.8g} "
+            f"base_dihedral_force={base_force:.8g} lambda={window_weight:.8g} "
+            f"force_scale={force_scale:.8g} reference={reference_source}\n"
+        )
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}\n")
+        for idx, (expr, val) in enumerate(zip(boresch_exprs, boresch_vals)):
+            fields = expr.split()
+            n = len(fields)
+            try:
+                iat = ",".join(str(atm_num.index(field)) for field in fields) + ","
+            except ValueError as exc:
+                raise ValueError(f"[restraints:{comp}] could not map Boresch restraint: {expr}") from exc
+            df.write(f"&rst iat={iat:<23s} ")
+            if n == 2:
+                rk = distance_force
+                r1, r2, r3, r4 = 0.0, float(val), float(val), 999.0
+                kind = "distance"
+            elif n == 3:
+                rk = angle_force
+                r1, r2, r3, r4 = 0.0, float(val), float(val), 180.0
+                kind = "angle"
+            elif n == 4:
+                rk = angle_force
+                r1, r2, r3, r4 = float(val) - 180.0, float(val), float(val), float(val) + 180.0
+                kind = "dihedral"
+            else:
+                raise ValueError(f"[restraints:{comp}] invalid Boresch restraint: {expr}")
+            df.write(
+                "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, "
+                "rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                % (r1, r2, r3, r4, rk, rk)
+            )
+            boresch_records.append(
+                {
+                    "index": idx,
+                    "kind": kind,
+                    "mask": expr,
+                    "reference": float(val),
+                    "base_distance_force_constant": base_distance_force,
+                    "base_angle_force_constant": base_angle_force,
+                    "lambda": window_weight,
+                    "force_scale": force_scale,
+                    "force_constant": rk,
+                }
+            )
+        for idx, (expr, val) in enumerate(zip(lig_msks, vals)):
+            fields = expr.split()
+            if len(fields) != 4:
+                continue
+            try:
+                iat = (
+                    f"{atm_num.index(fields[0])},"
+                    f"{atm_num.index(fields[1])},"
+                    f"{atm_num.index(fields[2])},"
+                    f"{atm_num.index(fields[3])},"
+                )
+            except ValueError:
+                logger.warning(f"[restraints:{comp}] skipping unmapped ligand dihedral: {expr}")
+                continue
+            df.write(f"&rst iat={iat:<23s} ")
+            df.write(
+                "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, "
+                "rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                % (
+                    float(val) - 180.0,
+                    float(val),
+                    float(val),
+                    float(val) + 180.0,
+                    force_const,
+                    force_const,
+                )
+            )
+            used_msks.append(expr)
+            restraint_records.append(
+                {
+                    "index": idx,
+                    "mask": expr,
+                    "reference_degrees": float(val),
+                    "base_force_constant": base_force,
+                    "lambda": window_weight,
+                    "force_scale": force_scale,
+                    "force_constant": force_const,
+                }
+            )
+
+    if not used_msks:
+        raise ValueError(f"[restraints:{comp}] no ligand dihedrals could be mapped into vac.pdb")
+
+    (windows_dir / "ligand_dihedral_restraints.json").write_text(
+        json.dumps(
+            {
+                "component": comp,
+                "window": ctx.win,
+                "boresch_restraints": boresch_records,
+                "base_distance_force_constant": base_distance_force,
+                "base_angle_force_constant": base_angle_force,
+                "base_force_constant": base_force,
+                "lambda": window_weight,
+                "force_scale": force_scale,
+                "restraints": restraint_records,
+                "reference_source": reference_source.as_posix(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(f"# comp={comp} ligand Boresch and conformational restraints\n")
+        fh.write("noexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+        for idx, expr in enumerate(boresch_exprs):
+            arr = expr.split()
+            tag = "distance" if len(arr) == 2 else ("angle" if len(arr) == 3 else "dihedral")
+            fh.write(f"{tag} tr{idx} {expr} out restraints.dat\n")
+        for idx, expr in enumerate(used_msks):
+            fh.write(f"dihedral r{idx} {expr} out restraints.dat\n")
+
+    logger.debug(
+        f"[restraints:{comp}] wrote {len(boresch_records)} Boresch and {len(restraint_records)} ligand dihedral restraints in {windows_dir}"
+    )
+
+
 # ───────────────────────────── registrations ─────────────────────────────
+
+@register_restraints("d")
+def _build_restraints_d(builder, ctx: BuildContext) -> None:
+    """
+    ABFE_diff bound-state restraints.
+
+    The default ``local_frame`` mode pins a small ligand scaffold to a three-
+    anchor receptor frame and optionally restrains the ligand scaffold internally.
+    This keeps the bound dummy near its initial pose without the receptor-wide
+    spring cage produced by the original dense C-alpha/heavy-atom network.
+    """
+    windows_dir = ctx.window_dir
+    comp = ctx.comp
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"[restraints:{comp}] missing required file: {vac_pdb}")
+
+    universe = mda.Universe(vac_pdb.as_posix())
+    ligand_heavy = _select_bound_ligand_heavy_atoms(universe, ctx.residue_name)
+
+    force_const = float(getattr(ctx.sim, "lig_distance_force", 5.0) or 5.0)
+    width = float(
+        getattr(ctx.sim, "abfe_diff_pose_width", ABFE_DIFF_POSE_WIDTH)
+        or ABFE_DIFF_POSE_WIDTH
+    )
+    mode = str(
+        getattr(ctx.sim, "abfe_diff_pose_restraint_type", "local_frame")
+        or "local_frame"
+    ).lower().replace("-", "_")
+    anchor_radius = float(
+        getattr(ctx.sim, "abfe_diff_pose_anchor_radius", ABFE_DIFF_POSE_RADIUS)
+        or ABFE_DIFF_POSE_RADIUS
+    )
+
+    if mode == "dense":
+        anchor_atoms = _select_binding_site_calpha_atoms(
+            universe,
+            ligand_heavy,
+            radius=anchor_radius,
+            min_atoms=ABFE_DIFF_POSE_MIN_ANCHORS,
+            max_atoms=ABFE_DIFF_POSE_MAX_ANCHORS,
+        )
+        ligand_pose_atoms = list(ligand_heavy)
+        include_internal = False
+    elif mode == "local_frame":
+        anchor_atoms = _select_abfe_diff_receptor_anchors(
+            ctx,
+            universe,
+            vac_pdb,
+            ligand_heavy,
+            count=int(
+                getattr(
+                    ctx.sim,
+                    "abfe_diff_pose_anchor_count",
+                    ABFE_DIFF_POSE_LOCAL_ANCHORS,
+                )
+                or ABFE_DIFF_POSE_LOCAL_ANCHORS
+            ),
+            radius=anchor_radius,
+        )
+        ligand_pose_atoms = _select_ligand_pose_atoms(
+            ligand_heavy,
+            count=int(
+                getattr(
+                    ctx.sim,
+                    "abfe_diff_pose_ligand_atom_count",
+                    ABFE_DIFF_POSE_LIGAND_ATOMS,
+                )
+                or ABFE_DIFF_POSE_LIGAND_ATOMS
+            ),
+            preferred_atoms=_preferred_ligand_anchor_atoms(
+                ctx, universe, vac_pdb, ligand_heavy
+            ),
+        )
+        include_internal = (
+            str(getattr(ctx.sim, "abfe_diff_pose_internal_restraints", "yes")).lower()
+            == "yes"
+        )
+    else:
+        raise ValueError(
+            f"[restraints:{comp}] unsupported ABFE_diff pose restraint mode: {mode!r}"
+        )
+
+    cv_in = windows_dir / "cv.in"
+    metadata: list[dict[str, float | int | str]] = []
+    with cv_in.open("w") as cvf:
+        cvf.write("cv_file\n")
+        for anchor in anchor_atoms:
+            for lig_atom in ligand_pose_atoms:
+                target = _write_distance_restraint_block(
+                    cvf,
+                    anchor,
+                    lig_atom,
+                    width=width,
+                    force_const=force_const,
+                )
+                metadata.append(
+                    {
+                        "kind": "external_pose",
+                        "anchor_atom_serial": int(anchor.index + 1),
+                        "anchor_resid": int(anchor.resid),
+                        "anchor_name": str(anchor.name),
+                        "ligand_atom_serial": int(lig_atom.index + 1),
+                        "ligand_atom_name": str(lig_atom.name),
+                        "target_distance": target,
+                        "flat_bottom_width": width,
+                        "force_constant": force_const,
+                    }
+                )
+        if include_internal:
+            for i, atom1 in enumerate(ligand_pose_atoms):
+                for atom2 in ligand_pose_atoms[i + 1 :]:
+                    target = _write_distance_restraint_block(
+                        cvf,
+                        atom1,
+                        atom2,
+                        width=width,
+                        force_const=force_const,
+                    )
+                    metadata.append(
+                        {
+                            "kind": "ligand_internal",
+                            "ligand_atom_serial": int(atom1.index + 1),
+                            "ligand_atom_name": str(atom1.name),
+                            "ligand_atom2_serial": int(atom2.index + 1),
+                            "ligand_atom2_name": str(atom2.name),
+                            "target_distance": target,
+                            "flat_bottom_width": width,
+                            "force_constant": force_const,
+                        }
+                    )
+
+    disang = windows_dir / "disang.rest"
+    disang.write_text(
+        f"# ABFE_diff {mode} bound-pose restraints; no Boresch ligand TR terms\n"
+    )
+    _append_colvar_rst_blocks(cv_in, disang)
+
+    (windows_dir / "abfe_diff_pose_restraints.json").write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "ligand_heavy_atom_serials": [
+                    int(atom.index + 1) for atom in ligand_heavy
+                ],
+                "ligand_pose_atom_serials": [
+                    int(atom.index + 1) for atom in ligand_pose_atoms
+                ],
+                "anchor_atom_serials": [
+                    int(atom.index + 1) for atom in anchor_atoms
+                ],
+                "restraints": metadata,
+            },
+            indent=2,
+        )
+    )
+
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(
+            f"# ABFE_diff {mode} pose restraints; no Boresch ligand TR metrics\n"
+            "noexitonerror\n"
+            "parm vac.prmtop\n"
+        )
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+
+    logger.debug(
+        f"[restraints:{comp}] wrote ABFE_diff {mode} pose cv.in, disang.rest, and restraints.in in {windows_dir}"
+    )
+
 
 @register_restraints("v", "o", "z")
 def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
     _write_component_restraints(ctx, skip_lig_tr=False, lig_only=False)
+
+
+@register_restraints("l")
+def _build_restraints_l(builder, ctx: BuildContext) -> None:
+    _write_ligand_dihedral_restraints(ctx)
 
 
 @register_restraints("y")
@@ -929,6 +1812,728 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
 
     logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
 
+
+def _atom_name_from_anchor_mask(mask: str | None) -> str:
+    if not mask:
+        raise ValueError("[restraints:x] Missing ligand anchor atom mask.")
+    match = _ANCHOR_MASK_RE.match(str(mask).strip())
+    if match:
+        return match.group(2)
+    if "@" in str(mask):
+        return str(mask).rsplit("@", 1)[1].strip()
+    return str(mask).strip()
+
+
+def _first_residue_with_resname(universe: mda.Universe, resname: str, *, label: str):
+    atoms = universe.select_atoms(f"resname {resname}")
+    if atoms.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:x] No {label} residue with resname {resname!r} in vac.pdb"
+        )
+    return atoms.residues[0]
+
+
+def _heavy_atom_names_from_residue(residue) -> list[str]:
+    names: list[str] = []
+    for atom in residue.atoms:
+        name = str(atom.name).strip()
+        if name and not _is_hydrogen_atom(atom) and name not in names:
+            names.append(name)
+    return names
+
+
+def _heavy_atoms_from_residue(residue) -> list:
+    atoms: list = []
+    seen_names: set[str] = set()
+    for atom in residue.atoms:
+        name = str(atom.name).strip()
+        if not name or name in seen_names or _is_hydrogen_atom(atom):
+            continue
+        try:
+            position = np.asarray(atom.position, dtype=float)
+        except Exception:
+            continue
+        if position.shape != (3,) or not np.all(np.isfinite(position)):
+            continue
+        atoms.append(atom)
+        seen_names.add(name)
+    return atoms
+
+
+def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list[str]:
+    """Choose a deterministic, non-collinear ligand anchor triplet without atom mapping."""
+    atoms = _heavy_atoms_from_residue(residue)
+    if len(atoms) < 3:
+        selected = [str(atom.name).strip() for atom in atoms]
+        raise ValueError(
+            f"[restraints:x] Need at least 3 {label} heavy atoms for "
+            f"Boresch restraints; got {selected}"
+        )
+
+    coords = np.asarray([np.asarray(atom.position, dtype=float) for atom in atoms])
+    centroid = np.mean(coords, axis=0)
+    span = float(np.max(np.linalg.norm(coords - centroid, axis=1)))
+    span = max(span, 1.0)
+
+    best_score: float | None = None
+    best_indices: tuple[int, int, int] | None = None
+    min_anchor_distance = 0.5
+    min_sine = 0.25
+
+    for i in range(len(atoms)):
+        l1_centrality = np.linalg.norm(coords[i] - centroid) / span
+        for j in range(len(atoms)):
+            if j == i:
+                continue
+            d12 = float(np.linalg.norm(coords[j] - coords[i]))
+            if d12 < min_anchor_distance:
+                continue
+            for k in range(len(atoms)):
+                if k == i or k == j:
+                    continue
+                d13 = float(np.linalg.norm(coords[k] - coords[i]))
+                d23 = float(np.linalg.norm(coords[k] - coords[j]))
+                if min(d13, d23) < min_anchor_distance:
+                    continue
+                area2 = float(
+                    np.linalg.norm(
+                        np.cross(coords[j] - coords[i], coords[k] - coords[i])
+                    )
+                )
+                sine = area2 / max(d12 * d13, 1.0e-12)
+                if sine < min_sine:
+                    continue
+                spread = (min(d12, d13) + 0.5 * d23) / span
+                score = 4.0 * sine + 0.25 * spread - l1_centrality
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_indices = (i, j, k)
+
+    if best_indices is None:
+        logger.warning(
+            "[restraints:x] Could not find a non-collinear {} Boresch anchor "
+            "triplet; falling back to the first three heavy atoms.",
+            label,
+        )
+        best_indices = (0, 1, 2)
+
+    return [str(atoms[idx].name).strip() for idx in best_indices]
+
+
+def _vector_angle_degrees(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float | None:
+    v1 = np.asarray(p1, dtype=float) - np.asarray(p2, dtype=float)
+    v2 = np.asarray(p3, dtype=float) - np.asarray(p2, dtype=float)
+    denom = float(np.linalg.norm(v1) * np.linalg.norm(v2))
+    if denom < 1.0e-12:
+        return None
+    cos_angle = float(np.dot(v1, v2) / denom)
+    return float(np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0))))
+
+
+def _vector_dihedral_degrees(
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    p4: np.ndarray,
+) -> float | None:
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    p3 = np.asarray(p3, dtype=float)
+    p4 = np.asarray(p4, dtype=float)
+
+    b0 = -(p2 - p1)
+    b1 = p3 - p2
+    b2 = p4 - p3
+    norm = float(np.linalg.norm(b1))
+    if norm < 1.0e-12:
+        return None
+    b1 /= norm
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    if float(np.linalg.norm(v)) < 1.0e-12 or float(np.linalg.norm(w)) < 1.0e-12:
+        return None
+    x = float(np.dot(v, w))
+    y = float(np.dot(np.cross(b1, v), w))
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _angle_endpoint_margin_degrees(angle: float) -> float:
+    return min(float(angle), 180.0 - float(angle))
+
+
+def _torsion_endpoint_margin_degrees(torsion: float) -> float:
+    folded = abs(((float(torsion) + 180.0) % 360.0) - 180.0)
+    return min(folded, 180.0 - folded)
+
+
+def _boresch_frame_values(
+    receptor_atoms: Sequence,
+    ligand_atoms: Sequence,
+) -> tuple[float, ...] | None:
+    if len(receptor_atoms) != 3 or len(ligand_atoms) != 3:
+        return None
+    p1, p2, p3 = [np.asarray(atom.position, dtype=float) for atom in receptor_atoms]
+    l1, l2, l3 = [np.asarray(atom.position, dtype=float) for atom in ligand_atoms]
+    values = (
+        _vector_angle_degrees(p2, p1, l1),
+        _vector_dihedral_degrees(p3, p2, p1, l1),
+        _vector_angle_degrees(p1, l1, l2),
+        _vector_dihedral_degrees(p2, p1, l1, l2),
+        _vector_dihedral_degrees(p1, l1, l2, l3),
+    )
+    if any(value is None or not np.isfinite(value) for value in values):
+        return None
+    return tuple(float(value) for value in values)
+
+
+def _boresch_frame_margins(values: Sequence[float]) -> tuple[float, float]:
+    if len(values) != 5:
+        return 0.0, 0.0
+    angle_margin = min(
+        _angle_endpoint_margin_degrees(values[0]),
+        _angle_endpoint_margin_degrees(values[2]),
+    )
+    torsion_margin = min(
+        _torsion_endpoint_margin_degrees(value)
+        for value in (values[1], values[3], values[4])
+    )
+    return float(angle_margin), float(torsion_margin)
+
+
+def _frame_safe_boresch_atom_names_from_residue(
+    residue,
+    *,
+    receptor_atoms: Sequence,
+    label: str,
+    preferred_atom_names: Sequence[str] = (),
+    preferred_first_names: Sequence[str] = (),
+    require_preferred_first: bool = False,
+    min_angle_margin: float = BORESCH_MIN_ANGLE_MARGIN_DEG,
+    min_torsion_margin: float = BORESCH_MIN_TORSION_MARGIN_DEG,
+) -> list[str]:
+    """Choose ligand anchors after checking the full receptor-ligand Boresch frame."""
+    atoms = _heavy_atoms_from_residue(residue)
+    if len(atoms) < 3:
+        selected = [str(atom.name).strip() for atom in atoms]
+        raise ValueError(
+            f"[restraints:x] Need at least 3 {label} heavy atoms for "
+            f"Boresch restraints; got {selected}"
+        )
+
+    coords = np.asarray([np.asarray(atom.position, dtype=float) for atom in atoms])
+    centroid = np.mean(coords, axis=0)
+    span = float(np.max(np.linalg.norm(coords - centroid, axis=1)))
+    span = max(span, 1.0)
+
+    preferred_atom_set = {
+        str(name).strip()
+        for name in preferred_atom_names
+        if str(name).strip()
+    }
+    preferred_names = [
+        str(name).strip()
+        for name in preferred_first_names
+        if str(name).strip()
+    ]
+    preferred_set = set(preferred_names)
+
+    def _scan_candidates(
+        *,
+        min_anchor_distance: float,
+        min_sine: float,
+        angle_margin_cutoff: float,
+        torsion_margin_cutoff: float,
+    ) -> tuple[
+        BoreschCandidate | None,
+        BoreschCandidate | None,
+        BoreschCandidate | None,
+        dict[str, BoreschCandidate],
+    ]:
+        best_valid: BoreschCandidate | None = None
+        best_fallback: BoreschCandidate | None = None
+        preferred_triplet_valid: BoreschCandidate | None = None
+        preferred_valid: dict[str, BoreschCandidate] = {}
+
+        for i in range(len(atoms)):
+            first_name = str(atoms[i].name).strip()
+            l1_centrality = np.linalg.norm(coords[i] - centroid) / span
+            for j in range(len(atoms)):
+                if j == i:
+                    continue
+                d12 = float(np.linalg.norm(coords[j] - coords[i]))
+                if d12 < min_anchor_distance:
+                    continue
+                for k in range(len(atoms)):
+                    if k == i or k == j:
+                        continue
+                    d13 = float(np.linalg.norm(coords[k] - coords[i]))
+                    d23 = float(np.linalg.norm(coords[k] - coords[j]))
+                    if min(d13, d23) < min_anchor_distance:
+                        continue
+                    area2 = float(
+                        np.linalg.norm(
+                            np.cross(coords[j] - coords[i], coords[k] - coords[i])
+                        )
+                    )
+                    sine = area2 / max(d12 * d13, 1.0e-12)
+                    if sine < min_sine:
+                        continue
+
+                    values = _boresch_frame_values(
+                        receptor_atoms,
+                        (atoms[i], atoms[j], atoms[k]),
+                    )
+                    if values is None:
+                        continue
+                    angle_margin, torsion_margin = _boresch_frame_margins(values)
+                    spread = (min(d12, d13) + 0.5 * d23) / span
+                    local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                    endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
+                    score = local_score + endpoint_score
+                    candidate = (
+                        score,
+                        (i, j, k),
+                        values,
+                        angle_margin,
+                        torsion_margin,
+                    )
+                    if best_fallback is None or score > best_fallback[0]:
+                        best_fallback = candidate
+                    if (
+                        angle_margin < angle_margin_cutoff
+                        or torsion_margin < torsion_margin_cutoff
+                    ):
+                        continue
+                    if best_valid is None or score > best_valid[0]:
+                        best_valid = candidate
+                    if preferred_atom_set:
+                        candidate_names = {
+                            str(atoms[idx].name).strip()
+                            for idx in (i, j, k)
+                        }
+                        if candidate_names <= preferred_atom_set and (
+                            preferred_triplet_valid is None
+                            or score > preferred_triplet_valid[0]
+                        ):
+                            preferred_triplet_valid = candidate
+                    if first_name in preferred_set and (
+                        first_name not in preferred_valid
+                        or score > preferred_valid[first_name][0]
+                    ):
+                        preferred_valid[first_name] = candidate
+
+        return best_valid, best_fallback, preferred_triplet_valid, preferred_valid
+
+    def _names_from_candidate(candidate: BoreschCandidate) -> list[str]:
+        return [str(atoms[idx].name).strip() for idx in candidate[1]]
+
+    best_valid, best_fallback, preferred_triplet_valid, preferred_valid = (
+        _scan_candidates(
+            min_anchor_distance=0.5,
+            min_sine=0.25,
+            angle_margin_cutoff=min_angle_margin,
+            torsion_margin_cutoff=min_torsion_margin,
+        )
+    )
+
+    if preferred_triplet_valid is not None:
+        _, _, values, angle_margin, torsion_margin = preferred_triplet_valid
+        names = _names_from_candidate(preferred_triplet_valid)
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} from mapped common "
+            "region with values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+        return names
+
+    for first_name in preferred_names:
+        selected = preferred_valid.get(first_name)
+        if selected is None:
+            continue
+        _, _, values, angle_margin, torsion_margin = selected
+        names = _names_from_candidate(selected)
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with preferred L1 {} "
+            "and values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            first_name,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+        return names
+
+    if require_preferred_first and preferred_names:
+        raise ValueError(
+            f"No {label} Boresch triplet with preferred L1 in {preferred_names} "
+            f"satisfied angle margin >= {min_angle_margin:.1f} deg and torsion "
+            f"margin >= {min_torsion_margin:.1f} deg."
+        )
+
+    selected = best_valid or best_fallback
+    selected_source = (
+        "strict_valid"
+        if best_valid is not None
+        else ("strict_fallback" if best_fallback is not None else None)
+    )
+    if best_valid is None:
+        for min_anchor_distance, min_sine, angle_cutoff, torsion_cutoff in (
+            (0.25, 0.10, min(15.0, min_angle_margin), min(5.0, min_torsion_margin)),
+            (0.05, 0.01, 0.0, 0.0),
+        ):
+            (
+                relaxed_valid,
+                relaxed_fallback,
+                _relaxed_preferred_triplet,
+                _relaxed_preferred,
+            ) = _scan_candidates(
+                min_anchor_distance=min_anchor_distance,
+                min_sine=min_sine,
+                angle_margin_cutoff=angle_cutoff,
+                torsion_margin_cutoff=torsion_cutoff,
+            )
+            relaxed_selected = relaxed_valid or relaxed_fallback
+            if relaxed_selected is None:
+                continue
+            selected = relaxed_selected
+            selected_source = "relaxed"
+            logger.debug(
+                "[restraints:x] Falling back to relaxed {} Boresch anchor "
+                "search (min distance {:.2f} A, min sine {:.2f}, angle margin "
+                ">= {:.1f} deg, torsion margin >= {:.1f} deg).",
+                label,
+                min_anchor_distance,
+                min_sine,
+                angle_cutoff,
+                torsion_cutoff,
+            )
+            break
+
+    if selected is None:
+        logger.warning(
+            "[restraints:x] Could not find a non-collinear {} Boresch anchor "
+            "triplet with receptor-frame checks; falling back to ligand-only "
+            "geometry.",
+            label,
+        )
+        return _independent_boresch_atom_names_from_residue(residue, label=label)
+
+    _, _, values, angle_margin, torsion_margin = selected
+    names = _names_from_candidate(selected)
+    if selected_source == "strict_fallback":
+        logger.warning(
+            "[restraints:x] Could not find a {} Boresch triplet satisfying "
+            "angle margin >= {:.1f} deg and torsion margin >= {:.1f} deg; using "
+            "{} with values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            min_angle_margin,
+            min_torsion_margin,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    elif selected_source == "relaxed":
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with relaxed search "
+            "and values {} (angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    else:
+        logger.debug(
+            "[restraints:x] Selected {} Boresch anchors {} with values {} "
+            "(angle margin {:.1f}, torsion margin {:.1f}).",
+            label,
+            names,
+            [round(value, 3) for value in values],
+            angle_margin,
+            torsion_margin,
+        )
+    return names
+
+
+def _resolve_ref_boresch_atom_names(
+    ref_residue,
+    anchor_names: Sequence[str],
+    receptor_atoms: Sequence | None = None,
+    preferred_atom_names: Sequence[str] = (),
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
+    if any(anchor_names):
+        logger.debug(
+            "[restraints:x] selecting SEPTOP REF Boresch anchors with mapped "
+            "common-region preference"
+        )
+    if receptor_atoms is not None:
+        return _frame_safe_boresch_atom_names_from_residue(
+            ref_residue,
+            receptor_atoms=receptor_atoms,
+            label="reference",
+            preferred_atom_names=preferred_atom_names,
+            preferred_first_names=preferred_first_names,
+        )
+    return _independent_boresch_atom_names_from_residue(
+        ref_residue,
+        label="reference",
+    )
+
+
+def _resolve_alt_boresch_atom_names(
+    *,
+    ref_residue,
+    alt_residue,
+    ref_names: Sequence[str],
+    mapping_path: Path,
+    receptor_atoms: Sequence | None = None,
+    preferred_atom_names: Sequence[str] = (),
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
+    if mapping_path.exists():
+        logger.debug(
+            "[restraints:x] selecting SEPTOP ALT Boresch anchors with mapped "
+            "common-region preference"
+        )
+    if receptor_atoms is not None:
+        return _frame_safe_boresch_atom_names_from_residue(
+            alt_residue,
+            receptor_atoms=receptor_atoms,
+            label="alternate",
+            preferred_atom_names=preferred_atom_names,
+            preferred_first_names=preferred_first_names,
+        )
+    return _independent_boresch_atom_names_from_residue(
+        alt_residue,
+        label="alternate",
+    )
+
+
+def _stable_ranked_ligand_atom_names(system_root: Path, ligand: str) -> list[str]:
+    path = system_root / "simulations" / str(ligand) / "equil" / "stable_boresch_distance.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("[restraints:x] Could not read stable Boresch pairs {}: {}", path, exc)
+        return []
+    if not isinstance(data, dict) or data.get("usable") is False:
+        return []
+    raw_pairs = data.get("ranked_pairs")
+    pairs = raw_pairs if isinstance(raw_pairs, list) else [data]
+    names: list[str] = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        ligand_record = pair.get("ligand") or {}
+        if not isinstance(ligand_record, dict):
+            continue
+        name = str(ligand_record.get("name", "")).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _boresch_tr_expressions(
+    P1: str,
+    P2: str,
+    P3: str,
+    L1: str,
+    L2: str,
+    L3: str,
+) -> list[str]:
+    return [
+        f"{P1} {L1}",
+        f"{P2} {P1} {L1}",
+        f"{P3} {P2} {P1} {L1}",
+        f"{P1} {L1} {L2}",
+        f"{P2} {P1} {L1} {L2}",
+        f"{P1} {L1} {L2} {L3}",
+    ]
+
+
+def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list[str]:
+    """Append lambda-dependent Boresch restraints for both site ligands."""
+    windows_dir = ctx.window_dir
+    extra = ctx.extra or {}
+    lig_ref = extra.get("ligand_ref") or ctx.ligand
+    lig_alt = extra.get("ligand_alt")
+    mol_ref = extra.get("residue_ref") or ctx.residue_name
+    mol_alt = extra.get("residue_alt")
+    if not mol_alt:
+        raise ValueError("[restraints:x] SEPTOP RBFE requires residue_alt metadata.")
+
+    vac_pdb = windows_dir / "vac.pdb"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd = windows_dir / "full.inpcrd"
+    for path in (vac_pdb, full_prmtop, full_inpcrd):
+        if not path.exists():
+            raise FileNotFoundError(f"[restraints:x] missing required file: {path}")
+
+    anchors = load_anchors(ctx.build_dir)
+    P1 = _adjust_receptor_anchor_mask(anchors.P1, ctx.sim.dec_method)
+    P2 = _adjust_receptor_anchor_mask(anchors.P2, ctx.sim.dec_method)
+    P3 = _adjust_receptor_anchor_mask(anchors.P3, ctx.sim.dec_method)
+
+    universe = mda.Universe(vac_pdb.as_posix())
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    receptor_atoms = []
+    for mask in (P1, P2, P3):
+        atom = _resolve_anchor_atom_from_mask(universe, atm_num, mask)
+        if atom is None:
+            raise ValueError(f"[restraints:x] could not resolve SEPTOP receptor anchor {mask!r}")
+        receptor_atoms.append(atom)
+    ref_residue = _first_residue_with_resname(universe, str(mol_ref), label="reference ligand")
+    alt_residue = _first_residue_with_resname(universe, str(mol_alt), label="alternate ligand")
+
+    anchor_names = [
+        _atom_name_from_anchor_mask(anchors.L1),
+        _atom_name_from_anchor_mask(anchors.L2),
+        _atom_name_from_anchor_mask(anchors.L3),
+    ]
+
+    def _unique_names(names: Iterable[str]) -> list[str]:
+        out: list[str] = []
+        for name in names:
+            clean = str(name).strip()
+            if clean and clean not in out:
+                out.append(clean)
+        return out
+
+    mapping_path = windows_dir / "mapping.json"
+    ref_common_indices, alt_common_indices = _load_common_core_indices(mapping_path)
+    ref_common_names = _mapped_heavy_atom_names_from_residue(
+        ref_residue,
+        ref_common_indices,
+    )
+    alt_common_names = _mapped_heavy_atom_names_from_residue(
+        alt_residue,
+        alt_common_indices,
+    )
+    ref_common_preference_names = _common_core_boresch_preference_names(
+        ref_common_names,
+        label="reference",
+    )
+    alt_common_preference_names = _common_core_boresch_preference_names(
+        alt_common_names,
+        label="alternate",
+    )
+    if ref_common_names or alt_common_names:
+        logger.debug(
+            "[restraints:x] mapped common-region ligand atoms for Boresch "
+            "preference: ref={} alt={} usable_ref={} usable_alt={}",
+            ref_common_names,
+            alt_common_names,
+            ref_common_preference_names,
+            alt_common_preference_names,
+        )
+
+    ref_preferred = _unique_names(
+        ref_common_preference_names
+        + _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_ref))
+    )
+    if anchor_names[0] and anchor_names[0] not in ref_preferred:
+        ref_preferred.insert(0, anchor_names[0])
+    alt_preferred = (
+        _stable_ranked_ligand_atom_names(ctx.system_root, str(lig_alt))
+        if lig_alt
+        else []
+    )
+    alt_preferred = _unique_names(alt_common_preference_names + alt_preferred)
+    ref_names = _resolve_ref_boresch_atom_names(
+        ref_residue,
+        anchor_names,
+        receptor_atoms=receptor_atoms,
+        preferred_atom_names=ref_common_preference_names,
+        preferred_first_names=ref_preferred,
+    )
+    alt_names = _resolve_alt_boresch_atom_names(
+        ref_residue=ref_residue,
+        alt_residue=alt_residue,
+        ref_names=ref_names,
+        mapping_path=mapping_path,
+        receptor_atoms=receptor_atoms,
+        preferred_atom_names=alt_common_preference_names,
+        preferred_first_names=alt_preferred,
+    )
+
+    ref_lig_masks = [f":{int(ref_residue.resid)}@{name}" for name in ref_names]
+    alt_lig_masks = [f":{int(alt_residue.resid)}@{name}" for name in alt_names]
+    receptor_exprs = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
+    ref_exprs = _boresch_tr_expressions(P1, P2, P3, *ref_lig_masks)
+    alt_exprs = _boresch_tr_expressions(P1, P2, P3, *alt_lig_masks)
+    rst_full = receptor_exprs + ref_exprs + alt_exprs
+
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
+    _rdhf, rdsf, ldf, laf, _ldhf, _rcom, _lcom = ctx.sim.rest
+
+    existing = disang.read_text() if disang.exists() else ""
+    with disang.open("a") as df:
+        if existing and not existing.endswith("\n"):
+            df.write("\n")
+        df.write(
+            "# SEPTOP lambda-dependent Boresch restraints "
+            f"ref={mol_ref}:{int(ref_residue.resid)} alt={mol_alt}:{int(alt_residue.resid)}\n"
+        )
+        for i, expr in enumerate(rst_full):
+            fields = expr.split()
+            n = len(fields)
+            tag = "Rec_C" if i < 3 else ("Lig_TR_REF" if i < 9 else "Lig_TR_ALT")
+            if i < 3 and n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf, tag)
+                )
+                continue
+            if n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf, tag)
+                )
+            elif n == 3:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf, tag)
+                )
+            elif n == 4:
+                iat = (
+                    f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    f"{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                )
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (
+                        float(vals[i]) - 180.0,
+                        float(vals[i]),
+                        float(vals[i]),
+                        float(vals[i]) + 180.0,
+                        laf,
+                        laf,
+                        tag,
+                    )
+                )
+
+    logger.debug(
+        f"[restraints:x] SEPTOP Boresch anchors ref={ref_lig_masks} alt={alt_lig_masks} written to {disang}"
+    )
+    return ref_exprs + alt_exprs
+
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:
     """
@@ -937,6 +2542,7 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     work = ctx.working_dir
     windows_dir = ctx.window_dir
     lig = ctx.ligand
+    septop = str(getattr(ctx.sim, "fe_type", "")).lower() == "relative_septop"
     extra = ctx.extra or {}
     mol_ref = extra.get("residue_ref") or ctx.residue_name
     mol_alt = extra.get("residue_alt")
@@ -994,7 +2600,21 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     
     disang = windows_dir / "disang.rest"
     disang.write_text("")
+    septop_exprs: list[str] = []
+    if septop:
+        septop_exprs = _append_x_septop_boresch_restraints(ctx, disang)
     _append_colvar_rst_blocks(cv_in, disang)
+
+    # analysis driver
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(f"# comp={comp}\nnoexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+        for i, expr in enumerate(septop_exprs):
+            arr = expr.split()
+            tag = "distance" if len(arr) == 2 else ("angle" if len(arr) == 3 else "dihedral")
+            fh.write(f"{tag} r{i} {expr} out restraints.dat\n")
 
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 

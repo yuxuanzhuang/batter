@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 from pathlib import Path
 import json
@@ -16,6 +17,8 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
+_RBFE_PROTONATION_PRIORITY_SCORE = 1.25
+
 
 def _normalize_atom_mapper(atom_mapper: str | None) -> str:
     mapper = str(atom_mapper or "kartograf").strip().lower()
@@ -24,6 +27,671 @@ def _normalize_atom_mapper(atom_mapper: str | None) -> str:
             f"Unknown atom mapper '{atom_mapper}'. Available: kartograf, lomap"
         )
     return mapper
+
+
+def _normalize_protocol(protocol: str | None) -> str:
+    return str(protocol or "").strip().lower().replace("-", "_")
+
+
+def resolve_network_scorer_name(
+    network_scorer: str | None = None,
+    *,
+    protocol: str | None = None,
+) -> str:
+    scorer = str(network_scorer or "auto").strip().lower().replace("-", "_")
+    if scorer in {"", "auto", "default"}:
+        return (
+            "pocket_shape"
+            if _normalize_protocol(protocol) == "rbfe_septop"
+            else "lomap"
+        )
+    if scorer in {"lomap", "default_lomap"}:
+        return "lomap"
+    if scorer in {
+        "shape",
+        "shape_difference",
+        "shape_mismatch",
+        "kartograf_shape",
+        "kartograf_shape_difference",
+    }:
+        return "shape_difference"
+    if scorer in {
+        "pocket",
+        "pocket_shape",
+        "grid_shape",
+        "pocket_grid",
+        "receptor_grid",
+        "receptor_shape",
+        "receptor_frame_shape",
+    }:
+        return "pocket_shape"
+    raise ValueError(
+        f"Unknown RBFE network scorer '{network_scorer}'. "
+        "Available: auto, lomap, shape_difference, pocket_shape"
+    )
+
+
+def _shape_difference_network_score(mapping) -> float:
+    """High-is-good score that minimizes Kartograf shape mismatch distance."""
+    mapped_count = _mapping_mapped_atom_count(mapping)
+    if mapped_count is not None and mapped_count < 2:
+        return 0.0
+    try:
+        from kartograf.mapping_metrics.metric_shape_difference import (
+            MappingShapeMismatchScorer,
+        )
+
+        scorer = MappingShapeMismatchScorer(ignore_hs=True)
+        mol_shape_dist = scorer.get_rdmol_shape_distance(
+            mapping.componentA.to_rdkit(),
+            mapping.componentB.to_rdkit(),
+        )
+        mapped_shape_dist = scorer.get_mapped_structure_shape_distance(mapping)
+        if not math.isfinite(float(mapped_shape_dist)):
+            return 0.0
+        distance = (float(mapped_shape_dist) + 2.0 * float(mol_shape_dist)) / 3.0
+        if not math.isfinite(distance):
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - distance))
+    except Exception as exc:
+        logger.debug(f"[rbfe] shape-difference network score failed: {exc}")
+        return 0.0
+
+
+def _rdkit_mol_from_component(component: Any) -> Chem.Mol | None:
+    if component is None:
+        return None
+    if hasattr(component, "to_rdkit"):
+        try:
+            mol = component.to_rdkit()
+            if mol is not None:
+                return mol
+        except Exception:
+            pass
+    mol = getattr(component, "_rdkit", None)
+    if mol is not None:
+        return mol
+    mol = getattr(component, "mol", None)
+    if mol is not None:
+        return mol
+    return None
+
+
+def _mapping_component(mapping: Any, name: str) -> Any:
+    component = getattr(mapping, name, None)
+    if component is None:
+        component = getattr(mapping, f"_{name}", None)
+    return component
+
+
+def _pocket_grid_occupancy(
+    mol: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> set[tuple[int, int, int]] | None:
+    """Voxelized receptor-frame ligand heavy-atom occupancy.
+
+    The input ligand poses are assumed to already be in the same receptor frame.
+    A voxel is occupied if its center falls within a buffered vdW radius of any
+    ligand heavy atom.
+    """
+    if mol is None or mol.GetNumConformers() < 1:
+        return None
+    if spacing <= 0:
+        return None
+
+    try:
+        conf = mol.GetConformer()
+    except Exception:
+        return None
+
+    periodic_table = Chem.GetPeriodicTable()
+    voxels: set[tuple[int, int, int]] = set()
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            continue
+        idx = atom.GetIdx()
+        try:
+            pos = conf.GetAtomPosition(idx)
+        except Exception:
+            continue
+        try:
+            radius = float(periodic_table.GetRvdw(atom.GetAtomicNum()))
+        except Exception:
+            radius = 1.7
+        if not math.isfinite(radius) or radius <= 0:
+            radius = 1.7
+        radius = radius + radius_buffer
+
+        ix0 = math.floor((float(pos.x) - radius) / spacing)
+        ix1 = math.floor((float(pos.x) + radius) / spacing)
+        iy0 = math.floor((float(pos.y) - radius) / spacing)
+        iy1 = math.floor((float(pos.y) + radius) / spacing)
+        iz0 = math.floor((float(pos.z) - radius) / spacing)
+        iz1 = math.floor((float(pos.z) + radius) / spacing)
+
+        for ix in range(ix0, ix1 + 1):
+            cx = (ix + 0.5) * spacing
+            dx2 = (cx - float(pos.x)) ** 2
+            if dx2 > radius * radius:
+                continue
+            for iy in range(iy0, iy1 + 1):
+                cy = (iy + 0.5) * spacing
+                dxy2 = dx2 + (cy - float(pos.y)) ** 2
+                if dxy2 > radius * radius:
+                    continue
+                for iz in range(iz0, iz1 + 1):
+                    cz = (iz + 0.5) * spacing
+                    if dxy2 + (cz - float(pos.z)) ** 2 <= radius * radius:
+                        voxels.add((ix, iy, iz))
+
+    return voxels or None
+
+
+def _pocket_grid_volume_voxels(
+    mol: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> int | None:
+    voxels = _pocket_grid_occupancy(
+        mol,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not voxels:
+        return None
+    return len(voxels)
+
+
+def orient_pairs_by_ligand_volume(
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ligand_files: Mapping[str, Path | str],
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> tuple[List[RBFEPair], List[dict[str, Any]]]:
+    """Orient generated RBFE pairs so the larger grid volume is the reference."""
+    volume_by_ligand: dict[str, int | None] = {}
+
+    def _volume(name: str) -> int | None:
+        if name in volume_by_ligand:
+            return volume_by_ligand[name]
+        path = ligand_files.get(name)
+        if path is None:
+            volume_by_ligand[name] = None
+            return None
+        try:
+            volume = _pocket_grid_volume_voxels(
+                _load_rdkit_mol(Path(path)),
+                spacing=spacing,
+                radius_buffer=radius_buffer,
+            )
+        except Exception as exc:
+            logger.debug(
+                f"Could not compute RBFE direction grid volume for {name}: {exc}"
+            )
+            volume = None
+        volume_by_ligand[name] = volume
+        return volume
+
+    oriented: List[RBFEPair] = []
+    decisions: List[dict[str, Any]] = []
+    for raw_pair in pairs:
+        ref, alt = _normalize_pair(raw_pair)
+        ref_volume = _volume(ref)
+        alt_volume = _volume(alt)
+        flipped = (
+            ref_volume is not None
+            and alt_volume is not None
+            and alt_volume > ref_volume
+        )
+        out_ref, out_alt = (alt, ref) if flipped else (ref, alt)
+        oriented.append((out_ref, out_alt))
+
+        record: dict[str, Any] = {
+            "input_pair": [ref, alt],
+            "pair": [out_ref, out_alt],
+            "reference": out_ref,
+            "target": out_alt,
+            "flipped": flipped,
+        }
+        if ref_volume is not None:
+            record["input_reference_volume_voxels"] = ref_volume
+        if alt_volume is not None:
+            record["input_target_volume_voxels"] = alt_volume
+        selected_ref_volume = alt_volume if flipped else ref_volume
+        selected_alt_volume = ref_volume if flipped else alt_volume
+        if selected_ref_volume is not None:
+            record["reference_volume_voxels"] = selected_ref_volume
+        if selected_alt_volume is not None:
+            record["target_volume_voxels"] = selected_alt_volume
+        if ref_volume is None or alt_volume is None:
+            record["reason"] = "volume_unavailable"
+        elif ref_volume == alt_volume:
+            record["reason"] = "equal_volume"
+        else:
+            record["reason"] = "larger_reference_volume"
+        decisions.append(record)
+
+    return _dedupe_pairs(oriented), decisions
+
+
+def _pocket_grid_overlap_score(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> float | None:
+    """High-is-good receptor-frame occupancy score for two ligand poses."""
+    metrics = _pocket_grid_overlap_metrics(
+        mol_a,
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if metrics is None:
+        return None
+    return metrics["pocket_grid_score"]
+
+
+def _pocket_grid_overlap_metrics(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    *,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> dict[str, float] | None:
+    """Return receptor-frame occupancy metrics for two ligand poses."""
+    vox_a = _pocket_grid_occupancy(
+        mol_a,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    vox_b = _pocket_grid_occupancy(
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not vox_a or not vox_b:
+        return None
+
+    overlap = len(vox_a & vox_b)
+    if overlap <= 0:
+        return {
+            "pocket_grid_score": 0.0,
+            "pocket_grid_containment": 0.0,
+            "pocket_grid_jaccard": 0.0,
+            "pocket_grid_overlap_voxels": 0.0,
+            "pocket_grid_ref_voxels": float(len(vox_a)),
+            "pocket_grid_alt_voxels": float(len(vox_b)),
+        }
+    min_volume = min(len(vox_a), len(vox_b))
+    union = len(vox_a | vox_b)
+    if min_volume <= 0 or union <= 0:
+        return None
+
+    containment = overlap / min_volume
+    jaccard = overlap / union
+    score = 0.65 * containment + 0.35 * jaccard
+    return {
+        "pocket_grid_score": max(0.0, min(1.0, float(score))),
+        "pocket_grid_containment": max(0.0, min(1.0, float(containment))),
+        "pocket_grid_jaccard": max(0.0, min(1.0, float(jaccard))),
+        "pocket_grid_overlap_voxels": float(overlap),
+        "pocket_grid_ref_voxels": float(len(vox_a)),
+        "pocket_grid_alt_voxels": float(len(vox_b)),
+    }
+
+
+def _pocket_similarity_metric_scores(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    mapping: Any | None = None,
+) -> dict[str, float]:
+    """Metrics stored in RBFE mapping artifacts for HTML edge visualization."""
+    metrics = _pocket_grid_overlap_metrics(mol_a, mol_b)
+    if metrics is None:
+        return {}
+
+    shape_score = (
+        _shape_difference_network_score(mapping) if mapping is not None else 0.0
+    )
+    pocket_shape_score = metrics["pocket_grid_score"]
+    if shape_score > 0:
+        pocket_shape_score = 0.85 * metrics["pocket_grid_score"] + 0.15 * shape_score
+
+    out = {
+        "pocket_shape_score": max(0.0, min(1.0, float(pocket_shape_score))),
+        **metrics,
+    }
+    if shape_score > 0:
+        out["pocket_shape_kartograf_score"] = max(0.0, min(1.0, float(shape_score)))
+    return out
+
+
+def _voxel_center(
+    voxel: tuple[int, int, int],
+    spacing: float,
+) -> tuple[float, float, float]:
+    return (
+        (float(voxel[0]) + 0.5) * spacing,
+        (float(voxel[1]) + 0.5) * spacing,
+        (float(voxel[2]) + 0.5) * spacing,
+    )
+
+
+def _sample_voxels(
+    voxels: set[tuple[int, int, int]],
+    *,
+    max_points: int = 4500,
+) -> list[tuple[int, int, int]]:
+    if len(voxels) <= max_points:
+        return sorted(voxels)
+    ordered = sorted(voxels)
+    stride = max(1, math.ceil(len(ordered) / max_points))
+    return ordered[::stride][:max_points]
+
+
+def _write_pocket_shape_overlap_png(
+    mol_a: Chem.Mol,
+    mol_b: Chem.Mol,
+    out_path: Path,
+    *,
+    pair_id: str,
+    spacing: float = 0.5,
+    radius_buffer: float = 0.25,
+) -> bool:
+    """Write a receptor-frame voxel-overlap plot for a planned RBFE edge."""
+    vox_a = _pocket_grid_occupancy(
+        mol_a,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    vox_b = _pocket_grid_occupancy(
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    )
+    if not vox_a or not vox_b:
+        return False
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+        from matplotlib.lines import Line2D
+    except Exception as exc:
+        logger.debug(
+            f"Could not import matplotlib for pocket-shape plot {pair_id}: {exc}"
+        )
+        return False
+
+    ref_only = vox_a - vox_b
+    alt_only = vox_b - vox_a
+    overlap = vox_a & vox_b
+    all_voxels = vox_a | vox_b
+    if not all_voxels:
+        return False
+
+    metrics = _pocket_grid_overlap_metrics(
+        mol_a,
+        mol_b,
+        spacing=spacing,
+        radius_buffer=radius_buffer,
+    ) or {}
+
+    categories = [
+        ("reference only", ref_only, "#2563eb", 0.30, 2.0),
+        ("target only", alt_only, "#f97316", 0.30, 2.0),
+        ("overlap", overlap, "#16a34a", 0.78, 3.0),
+    ]
+    sampled: dict[str, list[tuple[float, float, float]]] = {}
+    for label, voxels, _color, _alpha, _size in categories:
+        sampled[label] = [
+            _voxel_center(voxel, spacing)
+            for voxel in _sample_voxels(voxels)
+        ]
+
+    all_points = [
+        _voxel_center(voxel, spacing)
+        for voxel in _sample_voxels(all_voxels, max_points=12000)
+    ]
+    xs = [point[0] for point in all_points]
+    ys = [point[1] for point in all_points]
+    zs = [point[2] for point in all_points]
+
+    def _limits(values: list[float]) -> tuple[float, float]:
+        if not values:
+            return (0.0, 1.0)
+        low = min(values)
+        high = max(values)
+        pad = max(1.0, 0.08 * max(high - low, 1.0))
+        return low - pad, high + pad
+
+    xlim = _limits(xs)
+    ylim = _limits(ys)
+    zlim = _limits(zs)
+
+    try:
+        fig = plt.figure(figsize=(9.8, 7.6), dpi=150)
+        axes = [
+            fig.add_subplot(2, 2, 1, projection="3d"),
+            fig.add_subplot(2, 2, 2),
+            fig.add_subplot(2, 2, 3),
+            fig.add_subplot(2, 2, 4),
+        ]
+
+        ax3d = axes[0]
+        for label, _voxels, color, alpha, size in categories:
+            points = sampled[label]
+            if not points:
+                continue
+            ax3d.scatter(
+                [point[0] for point in points],
+                [point[1] for point in points],
+                [point[2] for point in points],
+                s=size,
+                c=color,
+                alpha=alpha,
+                linewidths=0,
+                depthshade=False,
+            )
+        ax3d.set_title("3D voxel occupancy", fontsize=10)
+        ax3d.set_xlabel("x (A)", fontsize=8)
+        ax3d.set_ylabel("y (A)", fontsize=8)
+        ax3d.set_zlabel("z (A)", fontsize=8)
+        ax3d.set_xlim(*xlim)
+        ax3d.set_ylim(*ylim)
+        ax3d.set_zlim(*zlim)
+        ax3d.view_init(elev=25, azim=-55)
+        try:
+            ax3d.set_box_aspect(
+                (
+                    max(xlim[1] - xlim[0], 1.0),
+                    max(ylim[1] - ylim[0], 1.0),
+                    max(zlim[1] - zlim[0], 1.0),
+                )
+            )
+        except Exception:
+            pass
+
+        projection_specs = [
+            (axes[1], 0, 1, "XY projection", "x (A)", "y (A)", xlim, ylim),
+            (axes[2], 0, 2, "XZ projection", "x (A)", "z (A)", xlim, zlim),
+            (axes[3], 1, 2, "YZ projection", "y (A)", "z (A)", ylim, zlim),
+        ]
+        for ax, dim_x, dim_y, title, xlabel, ylabel, limit_x, limit_y in projection_specs:
+            for label, _voxels, color, alpha, size in categories:
+                points = sampled[label]
+                if not points:
+                    continue
+                ax.scatter(
+                    [point[dim_x] for point in points],
+                    [point[dim_y] for point in points],
+                    s=size,
+                    c=color,
+                    alpha=alpha,
+                    linewidths=0,
+                )
+            ax.set_title(title, fontsize=10)
+            ax.set_xlabel(xlabel, fontsize=8)
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.set_xlim(*limit_x)
+            ax.set_ylim(*limit_y)
+            ax.set_aspect("equal", adjustable="box")
+            ax.grid(color="#e5e7eb", linewidth=0.5)
+
+        score = metrics.get("pocket_grid_score")
+        containment = metrics.get("pocket_grid_containment")
+        jaccard = metrics.get("pocket_grid_jaccard")
+        metric_text = ""
+        if score is not None and containment is not None and jaccard is not None:
+            metric_text = (
+                f"grid={score:.3f}  containment={containment:.3f}  "
+                f"jaccard={jaccard:.3f}"
+            )
+        fig.suptitle(f"{pair_id} pocket occupancy overlap\n{metric_text}", fontsize=12)
+        handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=color,
+                markersize=7,
+                label=label,
+            )
+            for label, _voxels, color, _alpha, _size in categories
+        ]
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=3,
+            frameon=False,
+            bbox_to_anchor=(0.5, 0.012),
+        )
+        fig.tight_layout(rect=(0.0, 0.055, 1.0, 0.925))
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, facecolor="white")
+        plt.close(fig)
+    except Exception as exc:
+        logger.debug(f"Could not write pocket-shape plot for {pair_id}: {exc}")
+        try:
+            plt.close("all")
+        except Exception:
+            pass
+        return False
+
+    return out_path.is_file()
+
+
+def _pocket_shape_network_score(mapping) -> float:
+    """Score receptor-frame pocket occupancy, with Kartograf shape as fallback.
+
+    This is intended for ``rbfe_septop`` where the whole ligand is in softcore
+    and atom mapping is not a common-core requirement. The dominant term rewards
+    overlapping ligand occupancy in the input receptor frame. A containment term
+    lets a smaller ligand that fills one subpocket connect to a larger ligand
+    spanning several subpockets, while the Jaccard term still ranks full
+    x/y-to-x/y overlap above x-to-x containment.
+    """
+    shape_score = _shape_difference_network_score(mapping)
+    mol_a = _rdkit_mol_from_component(_mapping_component(mapping, "componentA"))
+    mol_b = _rdkit_mol_from_component(_mapping_component(mapping, "componentB"))
+    if mol_a is None or mol_b is None:
+        return shape_score
+
+    grid_metrics = _pocket_grid_overlap_metrics(mol_a, mol_b)
+    if grid_metrics is None:
+        return shape_score
+
+    grid_score = grid_metrics["pocket_grid_score"]
+    if shape_score <= 0:
+        return grid_score
+    return max(0.0, min(1.0, 0.85 * grid_score + 0.15 * shape_score))
+
+
+def _mol_hash(mol: Chem.Mol, hash_name: str) -> str | None:
+    try:
+        from rdkit.Chem import rdMolHash
+
+        hash_func = getattr(rdMolHash.HashFunction, hash_name)
+        return str(rdMolHash.MolHash(mol, hash_func))
+    except Exception:
+        return None
+
+
+def _mol_without_hs(mol: Chem.Mol) -> Chem.Mol:
+    try:
+        return Chem.RemoveHs(Chem.Mol(mol))
+    except Exception:
+        return mol
+
+
+def _mol_formal_charge(mol: Chem.Mol) -> int | None:
+    try:
+        return int(sum(atom.GetFormalCharge() for atom in mol.GetAtoms()))
+    except Exception:
+        return None
+
+
+def _mapping_is_protonation_state_pair(mapping: Any) -> bool:
+    mol_a = _rdkit_mol_from_component(_mapping_component(mapping, "componentA"))
+    mol_b = _rdkit_mol_from_component(_mapping_component(mapping, "componentB"))
+    if mol_a is None or mol_b is None:
+        return False
+
+    heavy_mol_a = _mol_without_hs(mol_a)
+    heavy_mol_b = _mol_without_hs(mol_b)
+    element_graph_a = _mol_hash(heavy_mol_a, "ElementGraph")
+    element_graph_b = _mol_hash(heavy_mol_b, "ElementGraph")
+    if not element_graph_a or element_graph_a != element_graph_b:
+        return False
+
+    canonical_a = _mol_hash(heavy_mol_a, "CanonicalSmiles")
+    canonical_b = _mol_hash(heavy_mol_b, "CanonicalSmiles")
+    if canonical_a == canonical_b:
+        return False
+
+    charge_a = _mol_formal_charge(mol_a)
+    charge_b = _mol_formal_charge(mol_b)
+    formula_a = _mol_hash(mol_a, "MolFormula")
+    formula_b = _mol_hash(mol_b, "MolFormula")
+    return charge_a != charge_b or formula_a != formula_b
+
+
+def _with_protonation_state_priority(base_scorer):
+    def _scorer(mapping):
+        if _mapping_is_protonation_state_pair(mapping):
+            return _RBFE_PROTONATION_PRIORITY_SCORE
+        return base_scorer(mapping)
+
+    _scorer.__name__ = getattr(
+        base_scorer,
+        "__name__",
+        "protonation_state_priority_scorer",
+    )
+    return _scorer
+
+
+def _network_scorer_callable(
+    network_scorer: str | None = None,
+    *,
+    protocol: str | None = None,
+):
+    scorer_name = resolve_network_scorer_name(network_scorer, protocol=protocol)
+    if scorer_name == "pocket_shape":
+        return _with_protonation_state_priority(_pocket_shape_network_score)
+    if scorer_name == "shape_difference":
+        return _with_protonation_state_priority(_shape_difference_network_score)
+
+    from lomap.gufe_bindings.scorers import default_lomap_score
+
+    return _with_protonation_state_priority(default_lomap_score)
 
 
 def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
@@ -72,6 +740,7 @@ def _kartograf_mapper_kwargs(
     additional_mapping_filter_functions = []
     if use_element_filter:
         additional_mapping_filter_functions.append(filter_element_changes)
+    additional_mapping_filter_functions.append(filter_chirality_flips)
     if use_attached_h_filter:
         additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
     kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions
@@ -92,14 +761,90 @@ def _build_konnektor_atom_mapper(
 
         mapper = LomapAtomMapper(**_lomap_mapper_kwargs(lomap_options))
     else:
-        mapper = _build_current_kartograf_atom_mapper_for_network(
-            kartograf_options=kartograf_options
+        mapper = _wrap_kartograf_mapper_with_alignment(
+            _build_current_kartograf_atom_mapper_for_network(
+                kartograf_options=kartograf_options
+            )
         )
 
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
     if overrides:
         return _wrap_atom_mapper_with_overrides(mapper, overrides)
     return mapper
+
+
+class _AlignedKartografAtomMapper:
+    """Align componentB to componentA before Konnektor asks Kartograf for maps."""
+
+    def __init__(self, wrapped_mapper: Any):
+        self.wrapped_mapper = wrapped_mapper
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self.wrapped_mapper, name)
+
+    def suggest_mappings(self, componentA: Any, componentB: Any):
+        try:
+            from kartograf.atom_aligner import align_mol_shape
+
+            aligned_componentB = align_mol_shape(componentB, ref_mol=componentA)
+        except Exception:
+            aligned_componentB = componentB
+
+        for mapping in self.wrapped_mapper.suggest_mappings(
+            componentA,
+            aligned_componentB,
+        ):
+            mapped_count = _mapping_mapped_atom_count(mapping)
+            if mapped_count == 0:
+                continue
+            yield mapping
+
+    @classmethod
+    def _defaults(cls):
+        return {"wrapped_mapper": None}
+
+    @classmethod
+    def _from_dict(cls, d):
+        raise TypeError(
+            "AlignedKartografAtomMapper cannot be reconstructed without the "
+            "wrapped Kartograf mapper instance."
+        )
+
+    def _to_dict(self):
+        return {"wrapped_mapper_identity": self._wrapped_mapper_identity()}
+
+    def _wrapped_mapper_identity(self) -> str:
+        try:
+            return str(self.wrapped_mapper.key)
+        except Exception:
+            pass
+        identity = {
+            "class": self.wrapped_mapper.__class__.__qualname__,
+            "kwargs": getattr(self.wrapped_mapper, "kwargs", None),
+        }
+        return json.dumps(identity, sort_keys=True, default=str)
+
+    def _gufe_tokenize(self):
+        identity = f"{self.__class__.__qualname__}:{self._wrapped_mapper_identity()}"
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+try:
+    from gufe import AtomMapper as _GufeAtomMapper
+
+    class AlignedKartografAtomMapper(_AlignedKartografAtomMapper, _GufeAtomMapper):
+        pass
+
+except Exception:
+
+    class AlignedKartografAtomMapper(_AlignedKartografAtomMapper):
+        pass
+
+
+def _wrap_kartograf_mapper_with_alignment(delegate: Any):
+    return AlignedKartografAtomMapper(delegate)
 
 
 def _build_current_kartograf_atom_mapper_for_network(
@@ -223,6 +968,71 @@ def filter_mismatched_attached_h_count(
         filtered[i] = j
     return filtered
 
+
+def _assigned_tetrahedral_cip_labels(mol: Chem.Mol) -> dict[int, str]:
+    def _find_labels(work: Chem.Mol) -> dict[int, str]:
+        try:
+            Chem.AssignStereochemistry(work, cleanIt=True, force=True)
+        except Exception:
+            pass
+        try:
+            centers = Chem.FindMolChiralCenters(
+                work,
+                force=True,
+                includeUnassigned=False,
+                includeCIP=True,
+                useLegacyImplementation=False,
+            )
+        except TypeError:
+            centers = Chem.FindMolChiralCenters(
+                work,
+                includeUnassigned=False,
+                includeCIP=True,
+            )
+        return {
+            int(idx): str(label)
+            for idx, label in centers
+            if str(label) in {"R", "S"}
+        }
+
+    try:
+        tagged = Chem.Mol(mol)
+    except Exception:
+        return {}
+
+    labels = _find_labels(tagged)
+    if labels or tagged.GetNumConformers() == 0:
+        return labels
+
+    try:
+        from_3d = Chem.Mol(mol)
+        Chem.AssignStereochemistryFrom3D(from_3d, confId=-1, replaceExistingTags=True)
+        return _find_labels(from_3d)
+    except Exception:
+        return labels
+
+
+def filter_chirality_flips(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Reject Kartograf mappings that invert an assigned tetrahedral center."""
+    labels_a = _assigned_tetrahedral_cip_labels(molA)
+    labels_b = _assigned_tetrahedral_cip_labels(molB)
+    if not labels_a or not labels_b:
+        return dict(mapping)
+
+    for i, j in mapping.items():
+        label_a = labels_a.get(int(i))
+        label_b = labels_b.get(int(j))
+        if label_a is not None and label_b is not None and label_a != label_b:
+            logger.debug(
+                "Rejected Kartograf atom mapping with flipped chirality: "
+                f"molA atom {i} ({label_a}) -> molB atom {j} ({label_b})."
+            )
+            return {}
+
+    return dict(mapping)
+
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
 AtomIndexMapping = dict[int, int]
@@ -254,6 +1064,52 @@ def _component_num_atoms(component: Any) -> int | None:
         except Exception:
             return None
     return None
+
+
+def _mapping_mapped_atom_count(mapping: Any) -> int | None:
+    for attr_name in ("componentB_to_componentA", "componentA_to_componentB"):
+        try:
+            mapped = getattr(mapping, attr_name)
+        except Exception:
+            continue
+        if mapped is not None:
+            try:
+                return len(mapped)
+            except Exception:
+                pass
+    return None
+
+
+def _normalize_minimal_mapping_atom(value: int | None) -> int:
+    if value is None:
+        return 3
+    try:
+        minimum = int(value)
+    except Exception as exc:
+        raise ValueError("rbfe.minimal_mapping_atom must be an integer >= 1.") from exc
+    if minimum < 1:
+        raise ValueError("rbfe.minimal_mapping_atom must be an integer >= 1.")
+    return minimum
+
+
+def _validate_minimal_mapping_atom(
+    pair_id: str,
+    n_mapped: int | None,
+    minimal_mapping_atom: int | None,
+) -> None:
+    if n_mapped is None:
+        return
+    minimum = _normalize_minimal_mapping_atom(minimal_mapping_atom)
+    if n_mapped >= minimum:
+        return
+    atom_label = "atom" if n_mapped == 1 else "atoms"
+    raise ValueError(
+        f"RBFE atom mapping for planned pair {pair_id} maps only "
+        f"{n_mapped} {atom_label}, below rbfe.minimal_mapping_atom={minimum}. "
+        "You can lower rbfe.minimal_mapping_atom in the config if this "
+        "transformation is intentional, but a mapping this small is often "
+        "wrong; check the ligand pairing, ligand chemistry, and atom mapper."
+    )
 
 
 def _mol_num_atoms(mol: Any) -> int | None:
@@ -349,6 +1205,7 @@ def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
         return {}
 
     metric_calls: list[tuple[str, Any, str]] = []
+    mapped_count = _mapping_mapped_atom_count(mapping)
     try:
         from kartograf.mapping_metrics.metric_mapping_rmsd import MappingRMSDScorer
 
@@ -370,33 +1227,35 @@ def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
                 "get_score",
             )
         )
-        metric_calls.append(
-            ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
-        )
+        if mapped_count is None or mapped_count >= 4:
+            metric_calls.append(
+                ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
+            )
     except Exception:
         pass
-    try:
-        from kartograf.mapping_metrics.metric_shape_difference import (
-            MappingShapeMismatchScorer,
-            MappingShapeOverlapScorer,
-        )
+    if mapped_count is None or mapped_count >= 2:
+        try:
+            from kartograf.mapping_metrics.metric_shape_difference import (
+                MappingShapeMismatchScorer,
+                MappingShapeOverlapScorer,
+            )
 
-        metric_calls.append(
-            (
-                "mapping_score_shape_mismatch",
-                MappingShapeMismatchScorer(),
-                "get_score",
+            metric_calls.append(
+                (
+                    "mapping_score_shape_mismatch",
+                    MappingShapeMismatchScorer(),
+                    "get_score",
+                )
             )
-        )
-        metric_calls.append(
-            (
-                "mapping_score_shape_overlap",
-                MappingShapeOverlapScorer(),
-                "get_score",
+            metric_calls.append(
+                (
+                    "mapping_score_shape_overlap",
+                    MappingShapeOverlapScorer(),
+                    "get_score",
+                )
             )
-        )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     scores: dict[str, float] = {}
     for key, scorer, method_name in metric_calls:
@@ -926,6 +1785,30 @@ def _normalize_pair(pair: Any) -> RBFEPair:
     return (sanitize_ligand_name(str(left)), sanitize_ligand_name(str(right)))
 
 
+def validate_rbfe_network_ligand_coverage(
+    ligands: Sequence[str],
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    *,
+    context: str = "RBFE network",
+) -> None:
+    lig_list = [sanitize_ligand_name(str(lig)) for lig in ligands if str(lig)]
+    if not lig_list:
+        return
+
+    connected: set[str] = set()
+    for pair in pairs:
+        ref, alt = _normalize_pair(pair)
+        connected.add(ref)
+        connected.add(alt)
+
+    missing = [lig for lig in lig_list if lig not in connected]
+    if missing:
+        raise ValueError(
+            f"{context} does not include any mapping edge for ligand(s): "
+            + ", ".join(missing)
+        )
+
+
 def _pairs_from_data(data: Any) -> List[RBFEPair]:
     if isinstance(data, dict):
         if "pairs" in data:
@@ -1040,15 +1923,32 @@ def _mapping_png_data_uri(path: Path) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]:
+def _edge_asset_from_mapping_dir(
+    pair_id: str,
+    pair_dir: Path,
+    *,
+    prefer_pocket_shape: bool = False,
+) -> dict[str, Any]:
     asset: dict[str, Any] = {
         "mapping_path": (pair_dir / "mapping.json").as_posix(),
         "mapping_dir": pair_dir.as_posix(),
     }
-    png = pair_dir / "mapping.png"
-    if png.is_file():
-        asset["image_data_uri"] = _mapping_png_data_uri(png)
+    shape_png = pair_dir / "pocket_shape_overlap.png"
+    if shape_png.is_file():
+        asset["shape_overlap_path"] = shape_png.as_posix()
+    mapping_png = pair_dir / "mapping.png"
+    if mapping_png.is_file():
+        mapping_uri = _mapping_png_data_uri(mapping_png)
+        asset["atom_mapping_image_data_uri"] = mapping_uri
+        asset["atom_mapping_image_alt"] = f"Atom mapping for {pair_id}"
+    if prefer_pocket_shape and shape_png.is_file():
+        asset["image_data_uri"] = _mapping_png_data_uri(shape_png)
+        asset["image_alt"] = f"Pocket shape overlap for {pair_id}"
+        asset["image_kind"] = "pocket_shape_overlap"
+    elif mapping_png.is_file():
+        asset["image_data_uri"] = asset.get("atom_mapping_image_data_uri")
         asset["image_alt"] = f"Atom mapping for {pair_id}"
+        asset["image_kind"] = "atom_mapping"
     status = pair_dir / "mapping_status.json"
     if status.is_file():
         try:
@@ -1068,12 +1968,41 @@ def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]
                 "mapping_score_volume_ratio",
                 "mapping_score_shape_mismatch",
                 "mapping_score_shape_overlap",
+                "pocket_shape_score",
+                "pocket_grid_score",
+                "pocket_grid_containment",
+                "pocket_grid_jaccard",
+                "pocket_grid_overlap_voxels",
+                "pocket_grid_ref_voxels",
+                "pocket_grid_alt_voxels",
+                "pocket_shape_kartograf_score",
             ):
                 if key in status_payload:
                     asset[key] = status_payload[key]
         except Exception:
             pass
     return asset
+
+
+def _cached_pair_mapping_atom_count(
+    pair_dir: Path,
+    asset: Mapping[str, Any] | None = None,
+) -> int | None:
+    if asset is not None and asset.get("n_mapped") is not None:
+        try:
+            return int(asset["n_mapped"])
+        except Exception:
+            pass
+
+    mapping_json = pair_dir / "mapping.json"
+    if not mapping_json.is_file():
+        return None
+    try:
+        data = json.loads(mapping_json.read_text())
+        return len(_atom_mapping_payload_to_b_to_a(data, context=mapping_json.name))
+    except Exception:
+        logger.debug(f"Could not read cached RBFE mapping atom count: {mapping_json}")
+        return None
 
 
 def _serialize_atom_mapping(mapping: Mapping[Any, Any]) -> dict[int, int]:
@@ -1092,7 +2021,7 @@ def _mapping_status_was_manual(pair_dir: Path) -> bool:
 
 
 def _remove_optional_mapping_artifacts(pair_dir: Path) -> None:
-    for name in ("mapping.pkl", "mapping.png"):
+    for name in ("mapping.pkl", "mapping.png", "pocket_shape_overlap.png"):
         path = pair_dir / name
         if not path.exists():
             continue
@@ -1110,11 +2039,19 @@ def _write_manual_pair_mapping_artifacts(
     pair_dir: Path,
     map_b_to_a: Mapping[int, int],
     source_label: str,
+    include_pocket_shape: bool = False,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, Any]:
     pair_id = f"{ref}~{alt}"
     serialized = _serialize_atom_mapping(map_b_to_a)
     if not serialized:
         raise ValueError(f"Manual RBFE atom mapping for {pair_id} is empty.")
+    if not include_pocket_shape:
+        _validate_minimal_mapping_atom(
+            pair_id,
+            len(serialized),
+            minimal_mapping_atom,
+        )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     _remove_optional_mapping_artifacts(pair_dir)
@@ -1142,6 +2079,20 @@ def _write_manual_pair_mapping_artifacts(
             serialized,
         )
         metric_scores = _mapping_metric_scores(atom_mapping_obj)
+        if include_pocket_shape:
+            metric_scores.update(
+                _pocket_similarity_metric_scores(
+                    rdmol_ref,
+                    rdmol_alt,
+                    atom_mapping_obj,
+                )
+            )
+            _write_pocket_shape_overlap_png(
+                rdmol_ref,
+                rdmol_alt,
+                pair_dir / "pocket_shape_overlap.png",
+                pair_id=pair_id,
+            )
     except Exception as exc:
         logger.debug(
             f"Could not compute manual RBFE mapping coverage for {pair_id}: {exc}"
@@ -1177,7 +2128,11 @@ def _write_manual_pair_mapping_artifacts(
                 f"Could not draw manual RBFE atom-mapping image for {pair_id}: {exc}"
             )
 
-    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+    return _edge_asset_from_mapping_dir(
+        pair_id,
+        pair_dir,
+        prefer_pocket_shape=include_pocket_shape,
+    )
 
 
 def write_pair_mapping_artifacts(
@@ -1192,6 +2147,8 @@ def write_pair_mapping_artifacts(
     atom_mapper_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
     overwrite: bool = False,
+    include_pocket_shape: bool = False,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, Any]:
     """Generate reusable atom-mapping artifacts for one planned RBFE pair."""
     pair_id = f"{ref}~{alt}"
@@ -1208,6 +2165,8 @@ def write_pair_mapping_artifacts(
             pair_dir=pair_dir,
             map_b_to_a=manual_map,
             source_label=overrides.source_label(ref, alt) if overrides else "manual",
+            include_pocket_shape=include_pocket_shape,
+            minimal_mapping_atom=minimal_mapping_atom,
         )
 
     if mapping_json.is_file() and not overwrite:
@@ -1218,7 +2177,27 @@ def write_pair_mapping_artifacts(
             )
             _remove_optional_mapping_artifacts(pair_dir)
         else:
-            return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+            cached_asset = _edge_asset_from_mapping_dir(
+                pair_id,
+                pair_dir,
+                prefer_pocket_shape=include_pocket_shape,
+            )
+            if not include_pocket_shape:
+                _validate_minimal_mapping_atom(
+                    pair_id,
+                    _cached_pair_mapping_atom_count(pair_dir, cached_asset),
+                    minimal_mapping_atom,
+                )
+            if not include_pocket_shape:
+                return cached_asset
+            if "pocket_shape_score" in cached_asset and (
+                cached_asset.get("image_kind") == "pocket_shape_overlap"
+            ):
+                return cached_asset
+            logger.debug(
+                f"Prepared RBFE mapping for {pair_id} lacks pocket-shape "
+                "visualization metrics; refreshing mapping status."
+            )
 
     mapper_name = _normalize_atom_mapper(atom_mapper)
     if overwrite:
@@ -1254,7 +2233,18 @@ def write_pair_mapping_artifacts(
     map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
     map_b_to_a = _serialize_atom_mapping(map_b_to_a)
     if not map_b_to_a:
-        raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+        if not include_pocket_shape:
+            raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+        logger.debug(
+            f"No atom mapping found for planned RBFE Septop pair {pair_id}; "
+            "continuing with full-ligand softcore and pocket-shape metadata."
+        )
+    elif not include_pocket_shape:
+        _validate_minimal_mapping_atom(
+            pair_id,
+            len(map_b_to_a),
+            minimal_mapping_atom,
+        )
 
     pair_dir.mkdir(parents=True, exist_ok=True)
     mapping_json.write_text(json.dumps(map_b_to_a, indent=2, sort_keys=True))
@@ -1264,24 +2254,46 @@ def write_pair_mapping_artifacts(
         "target": alt,
         "mapper": mapper_name,
         "n_mapped": len(map_b_to_a),
+        "mapping_required": not include_pocket_shape,
     }
     status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
     status_payload.update(_mapping_metric_scores(atom_mapping_obj))
+    if include_pocket_shape:
+        status_payload.update(
+            _pocket_similarity_metric_scores(
+                rdmol_ref,
+                rdmol_alt,
+                atom_mapping_obj,
+            )
+        )
+        _write_pocket_shape_overlap_png(
+            rdmol_ref,
+            rdmol_alt,
+            pair_dir / "pocket_shape_overlap.png",
+            pair_id=pair_id,
+        )
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )
-    try:
-        with (pair_dir / "mapping.pkl").open("wb") as fh:
-            pickle.dump(atom_mapping_obj, fh)
-    except Exception as exc:
-        logger.debug(f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}")
+    if atom_mapping_obj is not None and map_b_to_a:
+        try:
+            with (pair_dir / "mapping.pkl").open("wb") as fh:
+                pickle.dump(atom_mapping_obj, fh)
+        except Exception as exc:
+            logger.debug(
+                f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}"
+            )
 
-    try:
-        atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
-    except Exception as exc:
-        logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
+        try:
+            atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
+        except Exception as exc:
+            logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
 
-    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+    return _edge_asset_from_mapping_dir(
+        pair_id,
+        pair_dir,
+        prefer_pocket_shape=include_pocket_shape,
+    )
 
 
 def write_planned_mapping_artifacts(
@@ -1295,26 +2307,53 @@ def write_planned_mapping_artifacts(
     atom_mapper_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
     overwrite: bool = False,
+    protocol: str | None = None,
+    minimal_mapping_atom: int | None = 3,
 ) -> dict[str, dict[str, Any]]:
     """
     Generate reusable atom-mapping artifacts for a planned RBFE network.
 
     Each edge gets ``mapping.json``, optional ``mapping.pkl``/``mapping.png``,
-    and ``mapping_status.json`` under ``out_dir``. The returned metadata is fed
-    directly into the interactive network HTML so users can inspect mapping
-    images, coverage, mapper identity, and metric scores before production.
+    and ``mapping_status.json`` under ``out_dir``. For ``rbfe_septop`` only,
+    pocket-shape overlap metrics and images are also generated. The returned
+    metadata is fed directly into the interactive network HTML so users can
+    inspect mapping coverage, mapper identity, and metric scores before
+    production.
     """
     assets: dict[str, dict[str, Any]] = {}
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
+    include_pocket_shape = _normalize_protocol(protocol) == "rbfe_septop"
     for ref_raw, alt_raw in pairs:
         ref = sanitize_ligand_name(str(ref_raw))
         alt = sanitize_ligand_name(str(alt_raw))
+        pair_id = f"{ref}~{alt}"
         missing = [name for name in (ref, alt) if name not in ligand_files]
         if missing:
             raise FileNotFoundError(
                 f"Missing ligand file(s) for RBFE mapping {ref}~{alt}: {missing}"
             )
-        assets[f"{ref}~{alt}"] = write_pair_mapping_artifacts(
+        reverse_pair_id = f"{alt}~{ref}"
+        reverse_asset = assets.get(reverse_pair_id)
+        if reverse_asset is not None:
+            reverse_mapping_path = Path(str(reverse_asset.get("mapping_path", "")))
+            if reverse_mapping_path.is_file():
+                reverse_map = _atom_mapping_payload_to_b_to_a(
+                    json.loads(reverse_mapping_path.read_text()),
+                    context=reverse_mapping_path.name,
+                )
+                assets[pair_id] = _write_manual_pair_mapping_artifacts(
+                    ref=ref,
+                    alt=alt,
+                    ligand_files=ligand_files,
+                    pair_dir=Path(out_dir) / pair_id,
+                    map_b_to_a=_invert_atom_mapping(reverse_map),
+                    source_label=f"inverse:{reverse_pair_id}",
+                    include_pocket_shape=include_pocket_shape,
+                    minimal_mapping_atom=minimal_mapping_atom,
+                )
+                continue
+
+        assets[pair_id] = write_pair_mapping_artifacts(
             ref=ref,
             alt=alt,
             ligand_files=ligand_files,
@@ -1325,6 +2364,8 @@ def write_planned_mapping_artifacts(
             atom_mapper_options=atom_mapper_options,
             atom_mapping_overrides=overrides,
             overwrite=overwrite,
+            include_pocket_shape=include_pocket_shape,
+            minimal_mapping_atom=minimal_mapping_atom,
         )
     return assets
 
@@ -1393,6 +2434,8 @@ def konnektor_pairs(
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
+    network_scorer: str | None = None,
+    protocol: str | None = None,
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
@@ -1404,11 +2447,10 @@ def konnektor_pairs(
     """
     try:
         from gufe import SmallMoleculeComponent
-        from lomap.gufe_bindings.scorers import default_lomap_score
 
     except ImportError as exc:
         raise RuntimeError(
-            "Konnektor mapping requires 'gufe' and 'lomap' dependencies."
+            "konnektor mapping requires 'gufe' to be installed."
         ) from exc
 
 
@@ -1425,8 +2467,9 @@ def konnektor_pairs(
         lomap_options=lomap_options,
         atom_mapping_overrides=atom_mapping_overrides,
     )
+    scorer = _network_scorer_callable(network_scorer, protocol=protocol)
 
-    generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
+    generator = generator_cls(mappers=mapper, scorer=scorer)
 
     components: List[SmallMoleculeComponent] = []
     for lig in ligands:
@@ -1470,6 +2513,8 @@ def draw_explicit_konnektor_network(
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
+    network_scorer: str | None = None,
+    protocol: str | None = None,
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
     mapper_name = _normalize_atom_mapper(atom_mapper)
@@ -1477,7 +2522,6 @@ def draw_explicit_konnektor_network(
         from konnektor.network_planners import ExplicitNetworkGenerator
         from konnektor.visualization import draw_ligand_network
         from gufe import SmallMoleculeComponent
-        from lomap.gufe_bindings.scorers import default_lomap_score
         align_mol_shape = None
         if mapper_name == "kartograf":
             from kartograf.atom_aligner import align_mol_shape as _align_mol_shape
@@ -1527,7 +2571,11 @@ def draw_explicit_konnektor_network(
         return
 
     nodes = list(nodes_by_name.values())
-    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=default_lomap_score)
+    try:
+        scorer = _network_scorer_callable(network_scorer, protocol=protocol)
+    except Exception:
+        return
+    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=scorer)
 
     try:
         network = generator.generate_ligand_network(edges=edges, nodes=nodes)

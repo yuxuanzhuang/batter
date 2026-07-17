@@ -27,8 +27,11 @@ MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
+    "abfe_diff": "uno_rest_diff",
     "rbfe": "relative",
+    "rbfe_septop": "relative_septop",
     "asfe": "asfe",
+    "ligand_rest": "ligand_rest",
     "md": "md",
 }
 
@@ -85,6 +88,8 @@ class SimulationConfig(BaseModel):
             "anion": create.anion,
             "solv_shell": float(create.solv_shell),
             "infer_disulfide_bonds": bool(create.infer_disulfide_bonds),
+            "fix_ring_penetration": bool(create.fix_ring_penetration),
+            "ring_penetration_fix_mode": create.ring_penetration_fix_mode,
             "protein_align": create.protein_align,
             "l1_range": float(l1_range),
             "min_adis": float(min_adis),
@@ -100,13 +105,15 @@ class SimulationConfig(BaseModel):
 
         resolved_fe_type = fe_type
         if resolved_fe_type is None and protocol:
-            resolved_fe_type = PROTOCOL_TO_FE_TYPE.get(protocol.lower())
+            resolved_fe_type = PROTOCOL_TO_FE_TYPE.get(
+                protocol.lower().replace("-", "_")
+            )
         if resolved_fe_type is None:
             resolved_fe_type = _fe_attr("fe_type", lambda: None)
         if resolved_fe_type is None:
             resolved_fe_type = "md"
 
-        proto_key = (protocol or "").lower()
+        proto_key = (protocol or "").lower().replace("-", "_")
 
         def _coerce_step_dict(name: str, mapping: Mapping[str, Any]) -> dict[str, int]:
             out: dict[str, int] = {}
@@ -145,7 +152,7 @@ class SimulationConfig(BaseModel):
             "n_steps",
             dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
-        if proto_key == "rbfe" and "x" not in n_steps:
+        if proto_key in {"rbfe", "rbfe_septop"} and "x" not in n_steps:
             n_steps["x"] = 300_000
 
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
@@ -163,8 +170,11 @@ class SimulationConfig(BaseModel):
 
         required_components = {
             "abfe": ["z"],
+            "abfe_diff": ["d"],
             "asfe": ["y", "m"],
+            "ligand_rest": ["l"],
             "rbfe": ["x"],
+            "rbfe_septop": ["x"],
         }.get(proto_key, [])
         for comp in required_components:
             if comp not in n_steps:
@@ -205,6 +215,45 @@ class SimulationConfig(BaseModel):
         if n_bootstraps_val < 0:
             raise ValueError("n_bootstraps must be >= 0.")
 
+        def _coerce_cinnabar_x_convergence_filter(value: Any):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                text = value.strip().lower()
+                if not text or text in {
+                    "none",
+                    "off",
+                    "false",
+                    "no",
+                    "disabled",
+                    "disable",
+                }:
+                    return None
+                parts = [part for part in re.split(r"[,\s]+", text) if part]
+            elif isinstance(value, (list, tuple)):
+                parts = list(value)
+            else:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter must be a two-value "
+                    "list/tuple, string, or null."
+                )
+            if len(parts) != 2:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter must contain exactly two "
+                    "values: (minimum_data_fraction, tolerance_kcal_mol)."
+                )
+            fraction = float(parts[0])
+            tolerance = float(parts[1])
+            if fraction <= 0.0 or fraction > 1.0:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+                )
+            if tolerance < 0.0:
+                raise ValueError(
+                    "fe_sim.cinnabar_x_convergence_filter tolerance must be non-negative."
+                )
+            return (fraction, tolerance)
+
         max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
         if max_fe_steps and analysis_start_step_val >= max_fe_steps:
             raise ValueError(
@@ -243,6 +292,24 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
+            "abfe_diff_pose_restraint_type": _fe_attr(
+                "abfe_diff_pose_restraint_type", lambda: "local_frame"
+            ),
+            "abfe_diff_pose_anchor_count": int(
+                _fe_attr("abfe_diff_pose_anchor_count", lambda: 3)
+            ),
+            "abfe_diff_pose_ligand_atom_count": int(
+                _fe_attr("abfe_diff_pose_ligand_atom_count", lambda: 6)
+            ),
+            "abfe_diff_pose_width": float(
+                _fe_attr("abfe_diff_pose_width", lambda: 0.5)
+            ),
+            "abfe_diff_pose_anchor_radius": float(
+                _fe_attr("abfe_diff_pose_anchor_radius", lambda: 8.0)
+            ),
+            "abfe_diff_pose_internal_restraints": coerce_yes_no(
+                _fe_attr("abfe_diff_pose_internal_restraints", lambda: "yes")
+            ),
             "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
             "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
@@ -261,6 +328,15 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
             "n_bootstraps": n_bootstraps_val,
+            "cinnabar_x_convergence_filter": _coerce_cinnabar_x_convergence_filter(
+                _fe_attr("cinnabar_x_convergence_filter", lambda: (0.8, 1.0))
+            ),
+            "cinnabar_x_convergence_fallback_filter": _coerce_cinnabar_x_convergence_filter(
+                _fe_attr(
+                    "cinnabar_x_convergence_fallback_filter",
+                    lambda: (0.5, 2.0),
+                )
+            ),
             "slurm_header_dir": Path(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -295,9 +371,12 @@ class SimulationConfig(BaseModel):
         "sdr-rest",
         "express",
         "relative",
+        "relative_septop",
         "uno",
         "uno_com",
         "uno_rest",
+        "uno_rest_diff",
+        "ligand_rest",
         "self",
         "uno_dd",
         "dd-rest",
@@ -371,6 +450,20 @@ class SimulationConfig(BaseModel):
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
+    cinnabar_x_convergence_filter: Optional[Tuple[float, float]] = Field(
+        (0.8, 1.0),
+        description=(
+            "RBFE Cinnabar x-component convergence filter as "
+            "(minimum_data_fraction, tolerance_kcal_mol). Set to null/off/no to disable."
+        ),
+    )
+    cinnabar_x_convergence_fallback_filter: Optional[Tuple[float, float]] = Field(
+        (0.5, 2.0),
+        description=(
+            "Looser RBFE Cinnabar x-component convergence filter used only to "
+            "restore skipped edges needed for network connectivity."
+        ),
+    )
 
     # --- Force constants ---
     lig_distance_force: float = Field(
@@ -384,6 +477,34 @@ class SimulationConfig(BaseModel):
     )
     rec_com_force: float = Field(0.0, description="Protein COM spring")
     lig_com_force: float = Field(0.0, description="Ligand COM spring")
+    abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
+        "local_frame",
+        description="ABFE_diff bound-dummy pose restraint style.",
+    )
+    abfe_diff_pose_anchor_count: int = Field(
+        3,
+        ge=3,
+        description="Number of receptor anchors used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_ligand_atom_count: int = Field(
+        6,
+        ge=3,
+        description="Number of ligand heavy atoms used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_width: float = Field(
+        0.5,
+        gt=0.0,
+        description="Flat-bottom half-width for ABFE_diff pose restraints (Å).",
+    )
+    abfe_diff_pose_anchor_radius: float = Field(
+        8.0,
+        gt=0.0,
+        description="Nearby C-alpha search radius for inferred ABFE_diff anchors.",
+    )
+    abfe_diff_pose_internal_restraints: Literal["yes", "no"] = Field(
+        "yes",
+        description="Add ligand-internal scaffold distance restraints for ABFE_diff.",
+    )
 
     # --- Solvent / box ---
     water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field(
@@ -396,6 +517,17 @@ class SimulationConfig(BaseModel):
     infer_disulfide_bonds: bool = Field(
         True,
         description="Infer missing disulfide bonds from close CYX SG-SG distances.",
+    )
+    fix_ring_penetration: bool = Field(
+        True,
+        description="Attempt local prepare_equil repair for detected ring penetration.",
+    )
+    ring_penetration_fix_mode: Literal["auto", "protein_sidechain", "ligand"] = Field(
+        "auto",
+        description=(
+            "Movable group for local ring-penetration repair; auto tries "
+            "protein sidechains first, then local ligand atom perturbations."
+        ),
     )
 
     # --- Ions ---
@@ -480,12 +612,33 @@ class SimulationConfig(BaseModel):
     def _lower_enums(cls, v: Any) -> Any:
         return v if v is None else str(v).lower()
 
+    @field_validator("ring_penetration_fix_mode", mode="before")
+    @classmethod
+    def _normalize_ring_penetration_fix_mode(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "auto": "auto",
+            "protein": "protein_sidechain",
+            "sidechain": "protein_sidechain",
+            "protein_side_chain": "protein_sidechain",
+            "protein_sidechain": "protein_sidechain",
+            "lig": "ligand",
+            "ligand": "ligand",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "ring_penetration_fix_mode must be 'auto', 'protein_sidechain', "
+                "or 'ligand'."
+            )
+        return aliases[text]
+
     @field_validator(
         "neutralize_only",
         "hmr",
         "rocklin_correction",
         "enable_mcwat",
         "remd",
+        "abfe_diff_pose_internal_restraints",
         mode="before",
     )
     @classmethod
@@ -505,6 +658,69 @@ class SimulationConfig(BaseModel):
             if s in {"false", "f", "0"}:
                 return "no"
         raise ValueError(f"Invalid yes/no: {v!r}")
+
+    @field_validator("abfe_diff_pose_restraint_type", mode="before")
+    @classmethod
+    def _normalize_abfe_diff_pose_restraint_type(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "local": "local_frame",
+            "local_frame": "local_frame",
+            "frame": "local_frame",
+            "sparse": "local_frame",
+            "dense": "dense",
+            "cage": "dense",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
+            )
+        return aliases[text]
+
+    @field_validator(
+        "cinnabar_x_convergence_filter",
+        "cinnabar_x_convergence_fallback_filter",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cinnabar_x_convergence_filter(cls, value: Any):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text or text in {
+                "none",
+                "off",
+                "false",
+                "no",
+                "disabled",
+                "disable",
+            }:
+                return None
+            parts = [part for part in re.split(r"[,\s]+", text) if part]
+        elif isinstance(value, (list, tuple)):
+            parts = list(value)
+        else:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must be a two-value list/tuple, "
+                "string, or null."
+            )
+        if len(parts) != 2:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must contain exactly two values: "
+                "(minimum_data_fraction, tolerance_kcal_mol)."
+            )
+        fraction = float(parts[0])
+        tolerance = float(parts[1])
+        if fraction <= 0.0 or fraction > 1.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+            )
+        if tolerance < 0.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter tolerance must be non-negative."
+            )
+        return (fraction, tolerance)
 
     @field_validator("lambdas", mode="before")
     @classmethod
@@ -618,10 +834,22 @@ class SimulationConfig(BaseModel):
                 ], "dd"
             case "relative":
                 self.components, self.dec_method = ["x"], "exchange"
+            case "relative_septop":
+                self.components, self.dec_method = ["x"], "exchange"
             case "uno":
                 self.components, self.dec_method = ["m", "n", "o"], "sdr"
             case "uno_rest":
                 self.components, self.dec_method = ["z"], "sdr"
+            case "uno_rest_diff":
+                self.components, self.dec_method = ["d"], "sdr"
+                if self.dic_n_steps.get("l", 0) > 0 or self.component_windows.get("l"):
+                    self.components.append("l")
+            case "ligand_rest":
+                self.components, self.dec_method = ["l"], "sdr"
+                if self.lig_dihcf_force <= 0.0:
+                    raise ValueError(
+                        "ligand_rest requires positive lig_dihcf_force for ligand dihedral restraints."
+                    )
             case "uno_com":
                 self.components, self.dec_method = ["o"], "sdr"
             case "self":
@@ -652,7 +880,7 @@ class SimulationConfig(BaseModel):
             if not lambdas:
                 lambdas = self.lambdas
                 if not lambdas:
-                    if self.fe_type == "relative" and comp == "x":
+                    if self.fe_type in {"relative", "relative_septop"} and comp == "x":
                         raise ValueError(
                             "RBFE requires a lambda schedule for component 'x'. "
                             "Set fe_sim.lambdas (or fe_sim.component_lambdas.x / x_lambdas)."

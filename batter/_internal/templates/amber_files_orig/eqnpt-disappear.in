@@ -33,7 +33,7 @@ Equil no ligand
   nmc = 1000,
   mcwatmask = ":_lig_name_",
   mcwatretry = 3000,
-  mcligshift = 20,
+  mcligshift = 10,
   mcresstr = "WAT",
   infe = _enable_infe_,
   clambda  = 0,

@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 def _write_file(path: Path, text: str, executable: bool = False) -> None:
+    if path.suffix == ".rst7" and text == "rst\n":
+        text = "Stub Amber restart\n    1  0.00000000\n  0.0  0.0  0.0\n"
     path.write_text(text)
     if executable:
         path.chmod(0o755)
@@ -29,6 +31,21 @@ done
 if [[ -n "${CALL_LOG:-}" && -n "$out" ]]; then
   echo "$out" >> "$CALL_LOG"
 fi
+if [[ -n "${SHAKE_FAIL_OUT_ONCE:-}" && "$out" == "$SHAKE_FAIL_OUT_ONCE" ]]; then
+  marker="${SHAKE_FAIL_MARKER:-shake_failed_once}"
+  if [[ ! -f "$marker" ]]; then
+    touch "$marker"
+    if [[ -n "$out" ]]; then
+      cat > "$out" <<'EOF'
+     Coordinate resetting cannot be accomplished,
+     deviation is too large
+  *** Especially for minimization, try ntc=1 (no shake)
+EOF
+    fi
+    printf "Coordinate resetting cannot be accomplished\\n"
+    exit "${SHAKE_FAIL_EXIT_STATUS:-1}"
+  fi
+fi
 if [[ -n "${FAIL_OUT:-}" && "$out" == "$FAIL_OUT" ]]; then
   printf "segmentation fault\\n"
   fail_status=${FAIL_EXIT_STATUS:-0}
@@ -42,7 +59,7 @@ if [[ -n "$out" ]]; then
     printf "ok\\n" > "$out"
   fi
 fi
-[[ -n "$rst" ]] && printf "rst\\n" > "$rst"
+[[ -n "$rst" ]] && printf "Stub Amber restart\\n    1  0.00000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && printf "nc\\n" > "$nc"
 exit "$fail_status"
 """,
@@ -124,6 +141,37 @@ def _setup_run_local_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
     return env, cmd
 
 
+def _setup_run_local_rbfe_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
+    repo_root = _repo_root()
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local-rbfe.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    script_text = (
+        script.read_text()
+        .replace("LAMBDA_EQ_LIST", "0.0000")
+        .replace("LAMBDA_SET_LIST", "0.0000")
+        .replace("NWINDOWS", "0")
+        .replace("COMPONENT", "x")
+    )
+    _write_file(work / "run-local.bash", script_text)
+    _write_file(work / "check_run.bash", check_run.read_text())
+
+    for name in [
+        "full.hmr.prmtop",
+        "full_merged.prmtop",
+        "full.prmtop",
+        "full.inpcrd",
+        "mini.in",
+        "eq.in",
+    ]:
+        _write_file(work / name, "x\n")
+
+    env = _common_env(work)
+    env["ONLY_EQ"] = "1"
+    cmd = ["bash", "run-local.bash"]
+    return env, cmd
+
+
 def _setup_run_equil_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
     repo_root = _repo_root()
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-equil.bash"
@@ -165,7 +213,7 @@ def _setup_run_equil_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
 
 
 def _rst_with_time(time_ps: float) -> str:
-    return f"restart\n    1  {time_ps:.8f}\n"
+    return f"restart\n    1  {time_ps:.8f}\n  0.0  0.0  0.0\n"
 
 
 def _setup_run_equil_production(work: Path) -> tuple[dict[str, str], list[str]]:
@@ -227,7 +275,8 @@ def test_run_local_only_eq_reruns_existing_steps_after_failure_when_enabled(tmp_
 
     calls = _read_calls(tmp_path)
     assert "mini.out" in calls
-    assert "mini2.out" in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "mini2.rst7").exists()
     assert "eqnpt_pre.out" in calls
     assert "eqnpt00.out" in calls
 
@@ -242,7 +291,8 @@ def test_run_local_only_eq_explicit_rerun_flag_reruns_without_marker(tmp_path: P
 
     calls = _read_calls(tmp_path)
     assert "mini.out" in calls
-    assert "mini2.out" in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "mini2.rst7").exists()
     assert "eqnpt_pre.out" in calls
     assert "eqnpt00.out" in calls
 
@@ -274,6 +324,32 @@ def test_run_local_only_eq_auto_preserves_existing_steps_on_wrapper_retry(tmp_pa
     assert "eqnpt01.out" in calls
 
 
+def test_run_local_only_eq_prior_failure_before_pre_equil_reruns_minimization(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_local_only_eq(tmp_path)
+    env["RETRY_COUNT"] = "2"
+    for name in ["mini.rst7", "mini2.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+    _write_file(tmp_path / "ATTEMPT_FAILED", "FAILED\n")
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "rerunning minimization instead of reusing mini.rst7/mini2.rst7" in result.stdout
+    assert "mini.out" in calls
+    assert "mini2.out" not in calls
+    assert "eqnpt_pre.out" in calls
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+
+
 def test_run_equil_skips_existing_steps(tmp_path: Path) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
     for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
@@ -302,7 +378,8 @@ def test_run_equil_reruns_existing_steps_after_failure_when_enabled(tmp_path: Pa
 
     calls = _read_calls(tmp_path)
     assert "mini.out" in calls
-    assert "mini2.out" in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "mini2.rst7").exists()
     assert "eqnpt_pre.out" in calls
     assert "eqnpt00.out" in calls
 
@@ -317,9 +394,104 @@ def test_run_equil_explicit_rerun_flag_reruns_without_marker(tmp_path: Path) -> 
 
     calls = _read_calls(tmp_path)
     assert "mini.out" in calls
-    assert "mini2.out" in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "mini2.rst7").exists()
     assert "eqnpt_pre.out" in calls
     assert "eqnpt00.out" in calls
+
+
+def test_run_equil_retries_minimization_without_shake_after_shake_error(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["SHAKE_FAIL_OUT_ONCE"] = "mini.out"
+    env["SHAKE_FAIL_MARKER"] = str(tmp_path / ".shake_failed_once")
+    _write_file(
+        tmp_path / "mini.in",
+        "&cntrl\n"
+        "  ntf = 2,\n"
+        "  ntc = 2,\n"
+        "/\n",
+    )
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    fallback_text = (tmp_path / "mini_noshake.in").read_text()
+    assert calls.count("mini.out") == 2
+    assert "retrying with ntf=1, ntc=1" in result.stdout
+    assert "  ntf = 1," in fallback_text
+    assert "  ntc = 1," in fallback_text
+
+
+def test_run_local_only_eq_retries_minimization_without_shake_after_shake_error(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_local_only_eq(tmp_path)
+    env["SHAKE_FAIL_OUT_ONCE"] = "mini.out"
+    env["SHAKE_FAIL_MARKER"] = str(tmp_path / ".shake_failed_once")
+    _write_file(
+        tmp_path / "mini.in",
+        "&cntrl\n"
+        "  ntf = 2,\n"
+        "  ntc = 2,\n"
+        "/\n",
+    )
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    fallback_text = (tmp_path / "mini_noshake.in").read_text()
+    assert calls.count("mini.out") == 2
+    assert "retrying with ntf=1, ntc=1" in result.stdout
+    assert "  ntf = 1," in fallback_text
+    assert "  ntc = 1," in fallback_text
+
+
+def test_run_local_rbfe_only_eq_retries_seed_minimization_without_shake_after_shake_error(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_local_rbfe_only_eq(tmp_path)
+    env["SHAKE_FAIL_OUT_ONCE"] = "mini.in.out"
+    env["SHAKE_FAIL_MARKER"] = str(tmp_path / ".shake_failed_once")
+    _write_file(
+        tmp_path / "mini.in",
+        "&cntrl\n"
+        "  ntf = 1,\n"
+        "  ntc = 2,\n"
+        "/\n",
+    )
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    fallback_text = (tmp_path / "mini_noshake.in").read_text()
+    assert calls.count("mini.in.out") == 2
+    assert "RBFE minimization with ntc=2 failed; retrying with ntc=1" in result.stdout
+    assert "  ntf = 1," in fallback_text
+    assert "  ntc = 1," in fallback_text
+    assert (tmp_path / "EQ_FINISHED").exists()
 
 
 def test_run_equil_auto_preserves_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
@@ -344,6 +516,32 @@ def test_run_equil_auto_preserves_existing_steps_on_wrapper_retry(tmp_path: Path
     assert "eqnpt_pre.out" not in calls
     assert "eqnpt00.out" not in calls
     assert "eqnpt01.out" in calls
+
+
+def test_run_equil_prior_failure_before_pre_equil_reruns_minimization(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["RETRY_COUNT"] = "2"
+    for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+    _write_file(tmp_path / "ATTEMPT_FAILED", "FAILED\n")
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "rerunning minimization instead of reusing mini.rst7/mini2.rst7" in result.stdout
+    assert "mini.out" in calls
+    assert "mini2.out" not in calls
+    assert "eqnpt_pre.out" in calls
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
 
 
 def test_run_equil_prior_failure_with_complete_md_marks_finished_without_rerun(
@@ -470,33 +668,12 @@ def test_run_equil_direct_step_failure_leaves_failed_marker(
     assert (tmp_path / "ATTEMPT_FAILED").exists()
 
 
-def test_run_local_only_eq_reruns_minimization_after_mini2_failure(
+def test_run_local_only_eq_skips_cpu_minimization2(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_local_only_eq(tmp_path)
-    env["RETRY_COUNT"] = "0"
-    env["FAIL_OUT"] = "mini2.out"
-    env["FAIL_EXIT_STATUS"] = "139"
 
-    failed_run = subprocess.run(
-        cmd,
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert failed_run.returncode != 0
-    assert "Removing previous restart file mini.rst7" in failed_run.stdout
-    assert not (tmp_path / "mini.rst7").exists()
-    assert (tmp_path / "ATTEMPT_FAILED").exists()
-
-    (tmp_path / "call.log").unlink(missing_ok=True)
-    env.pop("FAIL_OUT")
-    env.pop("FAIL_EXIT_STATUS")
-
-    rerun = subprocess.run(
+    result = subprocess.run(
         cmd,
         cwd=tmp_path,
         env=env,
@@ -506,39 +683,19 @@ def test_run_local_only_eq_reruns_minimization_after_mini2_failure(
     )
 
     calls = _read_calls(tmp_path)
-    assert "Prior failure marker found; preserving completed equilibration stages" in rerun.stdout
-    assert calls[0:2] == ["mini.out", "mini2.out"]
+    assert "Skipping CPU Minimization 2" in result.stdout
+    assert calls[0] == "mini.out"
+    assert "mini2.out" not in calls
     assert (tmp_path / "mini.rst7").exists()
     assert (tmp_path / "mini2.rst7").exists()
 
 
-def test_run_equil_reruns_minimization_after_mini2_failure(
+def test_run_equil_skips_cpu_minimization2(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
-    env["RETRY_COUNT"] = "0"
-    env["FAIL_OUT"] = "mini2.out"
-    env["FAIL_EXIT_STATUS"] = "139"
 
-    failed_run = subprocess.run(
-        cmd,
-        cwd=tmp_path,
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert failed_run.returncode != 0
-    assert "Removing previous restart file mini.rst7" in failed_run.stdout
-    assert not (tmp_path / "mini.rst7").exists()
-    assert (tmp_path / "ATTEMPT_FAILED").exists()
-
-    (tmp_path / "call.log").unlink(missing_ok=True)
-    env.pop("FAIL_OUT")
-    env.pop("FAIL_EXIT_STATUS")
-
-    rerun = subprocess.run(
+    result = subprocess.run(
         cmd,
         cwd=tmp_path,
         env=env,
@@ -548,8 +705,9 @@ def test_run_equil_reruns_minimization_after_mini2_failure(
     )
 
     calls = _read_calls(tmp_path)
-    assert "Prior failure marker found; preserving completed equilibration stages" in rerun.stdout
-    assert calls[0:2] == ["mini.out", "mini2.out"]
+    assert "Skipping CPU Minimization 2" in result.stdout
+    assert calls[0] == "mini.out"
+    assert "mini2.out" not in calls
     assert (tmp_path / "mini.rst7").exists()
     assert (tmp_path / "mini2.rst7").exists()
 
@@ -562,8 +720,22 @@ def test_run_equil_reruns_nvt_after_direct_failure_when_enabled(
         _write_file(tmp_path / name, "rst\n")
     _write_file(
         tmp_path / "check_penetration.py",
+        "import sys\n"
         "from pathlib import Path\n"
-        "Path('RING_PENETRATION').write_text('ring\\n')\n",
+        "marker = Path('RING_PENETRATION')\n"
+        "mini2_repaired = Path('mini2_repaired')\n"
+        "repaired = Path('RING_PENETRATION_REPAIRED')\n"
+        "rst = sys.argv[-1]\n"
+        "if '--repair' in sys.argv and rst == 'mini2.rst7':\n"
+        "    mini2_repaired.write_text('yes\\n')\n"
+        "    repaired.write_text('mini2\\n')\n"
+        "    marker.unlink(missing_ok=True)\n"
+        "elif rst == 'mini2.rst7' and not mini2_repaired.exists():\n"
+        "    marker.write_text('ring\\n')\n"
+        "elif rst == 'mini2.rst7':\n"
+        "    marker.unlink(missing_ok=True)\n"
+        "elif rst == 'eqnvt.rst7':\n"
+        "    marker.write_text('ring\\n')\n",
     )
 
     failed_run = subprocess.run(cmd, cwd=tmp_path, env=env, check=False)
@@ -590,8 +762,77 @@ def test_run_equil_reruns_nvt_after_direct_failure_when_enabled(
 
     calls = _read_calls(tmp_path)
     assert "Skipping NVT preparation" not in rerun.stdout
-    assert "rerunning NVT preparation despite existing artifact eqnvt.rst7" in rerun.stdout
+    assert "rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7" in rerun.stdout
     assert "eqnpt_pre.out" in calls
+
+
+def test_run_equil_repairs_mini2_ring_penetration_before_nvt(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    for name in ["mini.rst7", "mini2.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+    _write_file(
+        tmp_path / "check_penetration.py",
+        "import sys\n"
+        "from pathlib import Path\n"
+        "marker = Path('RING_PENETRATION')\n"
+        "repair_called = Path('repair_called')\n"
+        "repaired = Path('RING_PENETRATION_REPAIRED')\n"
+        "if '--repair' in sys.argv:\n"
+        "    repair_called.write_text('yes\\n')\n"
+        "    repaired.write_text('yes\\n')\n"
+        "    marker.unlink(missing_ok=True)\n"
+        "elif repair_called.exists():\n"
+        "    marker.unlink(missing_ok=True)\n"
+        "else:\n"
+        "    marker.write_text('ring\\n')\n",
+    )
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "attempting local repair before NVT" in result.stdout
+    assert "repaired before NVT" in result.stdout
+    assert (tmp_path / "repair_called").exists()
+    assert not (tmp_path / "RING_PENETRATION").exists()
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+    assert "eqnvt.out" in calls
+    assert "eqnpt_pre.out" in calls
+
+
+def test_run_equil_penetration_checker_import_failure_is_fatal(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    for name in ["mini.rst7", "mini2.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+    _write_file(
+        tmp_path / "check_penetration.py",
+        "raise ModuleNotFoundError(\"No module named 'batter'\")\n",
+    )
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Ring penetration check could not run" in result.stdout
+    assert "No module named 'batter'" in result.stderr
+    assert (tmp_path / "ATTEMPT_FAILED").exists()
+    assert not (tmp_path / "eqnvt.rst7").exists()
 
 
 def test_consume_prior_failure_marker_preserves_terminal_failed(tmp_path: Path) -> None:
@@ -663,5 +904,6 @@ def test_run_equil_explicit_rerun_flag_preserves_terminal_failed_marker(
 
     calls = _read_calls(tmp_path)
     assert "mini.out" in calls
-    assert "mini2.out" in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "mini2.rst7").exists()
     assert (tmp_path / "FAILED").exists()

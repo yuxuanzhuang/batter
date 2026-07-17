@@ -16,6 +16,7 @@ packages results in a portable artifact store.
    developer_guide/pipeline_payloads_and_metadata
    developer_guide/authoring_pipelines
    developer_guide/internal_builders
+   developer_guide/storage_cleanup
 
 .. contents::
    :depth: 2
@@ -210,7 +211,9 @@ Orchestration
 :func:`~batter.orchestrate.run.run_from_yaml` wires every layer together:
 
 1. Load the run YAML and apply optional overrides.
-2. Instantiate a system builder inferred from the selected protocol (``abfe``/``rbfe``/``md`` → ``MABFE``, ``asfe`` → ``MASFE``; overrides via ``run.system_type`` remain for backward compatibility).
+2. Instantiate a system builder inferred from the selected protocol
+   (MABFE-family protocols use ``MABFE``; ``asfe`` uses ``MASFE``; overrides via
+   ``run.system_type`` remain for backward compatibility).
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
 4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.

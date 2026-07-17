@@ -165,10 +165,12 @@ class CreateArgs(BaseModel):
     anchor_atoms: list[str] = Field(
         default_factory=list,
         description=(
-            "Optional list of three receptor anchor atom selections used for "
-            "restraint placement and binding-site geometry. If omitted, BATTER "
-            "auto-selects anchors heuristically: from the first real ligand pose "
-            "when one is available, or from protein-only geometry for apo MD."
+            "Optional list of receptor anchor atom selections used for restraint "
+            "placement and binding-site geometry. Provide three selections for "
+            "explicit P1/P2/P3, one selection to pin P1 and let BATTER "
+            "auto-select P2/P3, or omit the field for full auto-selection from "
+            "the first real ligand pose when available, or from protein-only "
+            "geometry for apo MD."
         ),
     )
     lipid_mol: list[str] = Field(
@@ -239,6 +241,20 @@ class CreateArgs(BaseModel):
         description=(
             "Infer missing disulfide bonds from close CYX SG-SG distances during "
             "box preparation."
+        ),
+    )
+    fix_ring_penetration: bool = Field(
+        True,
+        description=(
+            "Attempt a local coordinate repair when ring penetration is detected "
+            "during prepare_equil box preparation."
+        ),
+    )
+    ring_penetration_fix_mode: Literal["auto", "protein_sidechain", "ligand"] = Field(
+        "auto",
+        description=(
+            "Movable group used for local ring-penetration repair: auto tries "
+            "protein sidechains first, then local ligand atom perturbations."
         ),
     )
 
@@ -315,6 +331,26 @@ class CreateArgs(BaseModel):
     @classmethod
     def _coerce_create_yes_no(cls, v):
         return coerce_yes_no(v)
+
+    @field_validator("ring_penetration_fix_mode", mode="before")
+    @classmethod
+    def _normalize_ring_penetration_fix_mode(cls, value):
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "auto": "auto",
+            "protein": "protein_sidechain",
+            "sidechain": "protein_sidechain",
+            "protein_side_chain": "protein_sidechain",
+            "protein_sidechain": "protein_sidechain",
+            "lig": "ligand",
+            "ligand": "ligand",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "ring_penetration_fix_mode must be 'auto', 'protein_sidechain', "
+                "or 'ligand'."
+            )
+        return aliases[text]
 
     @field_validator("ligand_input", mode="before")
     @classmethod
@@ -464,6 +500,38 @@ class FESimArgs(BaseModel):
         10.0,
         description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
     )
+    abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
+        "local_frame",
+        description=(
+            "ABFE_diff bound-dummy pose restraint style. local_frame uses a sparse "
+            "receptor-anchor frame plus ligand scaffold restraints; dense restores "
+            "the all-selected-CA to all-ligand-heavy-atom distance network."
+        ),
+    )
+    abfe_diff_pose_anchor_count: int = Field(
+        3,
+        ge=3,
+        description="Number of receptor C-alpha anchors used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_ligand_atom_count: int = Field(
+        6,
+        ge=3,
+        description="Number of ligand heavy atoms used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_width: float = Field(
+        0.5,
+        gt=0.0,
+        description="Flat-bottom half-width for ABFE_diff pose distance restraints (Å).",
+    )
+    abfe_diff_pose_anchor_radius: float = Field(
+        8.0,
+        gt=0.0,
+        description="Nearby C-alpha search radius used when ABFE_diff anchors must be inferred.",
+    )
+    abfe_diff_pose_internal_restraints: Literal["yes", "no"] = Field(
+        "yes",
+        description="Add ligand-internal scaffold distance restraints for ABFE_diff.",
+    )
 
     # Box padding (used by some builders)
     buffer_x: float = Field(20.0, description="Box padding along X (Å).")
@@ -510,11 +578,94 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
+    cinnabar_x_convergence_filter: Optional[Tuple[float, float]] = Field(
+        (0.8, 1.0),
+        description=(
+            "RBFE Cinnabar x-component convergence filter as "
+            "(minimum_data_fraction, tolerance_kcal_mol). Set to null/off/no to disable."
+        ),
+    )
+    cinnabar_x_convergence_fallback_filter: Optional[Tuple[float, float]] = Field(
+        (0.5, 2.0),
+        description=(
+            "Looser RBFE Cinnabar x-component convergence filter used only to "
+            "restore skipped edges needed for network connectivity."
+        ),
+    )
 
-    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @field_validator(
+        "rocklin_correction",
+        "hmr",
+        "enable_mcwat",
+        "abfe_diff_pose_internal_restraints",
+        mode="before",
+    )
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
+
+    @field_validator("abfe_diff_pose_restraint_type", mode="before")
+    @classmethod
+    def _normalize_abfe_diff_pose_restraint_type(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "local": "local_frame",
+            "local_frame": "local_frame",
+            "frame": "local_frame",
+            "sparse": "local_frame",
+            "dense": "dense",
+            "cage": "dense",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
+            )
+        return aliases[text]
+
+    @field_validator(
+        "cinnabar_x_convergence_filter",
+        "cinnabar_x_convergence_fallback_filter",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_cinnabar_x_convergence_filter(cls, value: Any):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text or text in {
+                "none",
+                "off",
+                "false",
+                "no",
+                "disabled",
+                "disable",
+            }:
+                return None
+            parts = [part for part in re.split(r"[,\s]+", text) if part]
+        elif isinstance(value, (list, tuple)):
+            parts = list(value)
+        else:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must be a two-value list/tuple, "
+                "string, or null."
+            )
+        if len(parts) != 2:
+            raise ValueError(
+                "cinnabar_x_convergence_filter must contain exactly two values: "
+                "(minimum_data_fraction, tolerance_kcal_mol)."
+            )
+        fraction = float(parts[0])
+        tolerance = float(parts[1])
+        if fraction <= 0.0 or fraction > 1.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter data fraction must be in (0, 1]."
+            )
+        if tolerance < 0.0:
+            raise ValueError(
+                "cinnabar_x_convergence_filter tolerance must be non-negative."
+            )
+        return (fraction, tolerance)
 
     @field_validator("remd", mode="before")
     @classmethod
@@ -769,6 +920,14 @@ class RBFENetworkArgs(BaseModel):
         "kartograf",
         description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
     )
+    network_scorer: str = Field(
+        "auto",
+        description=(
+            "Konnektor edge scorer: 'auto', 'lomap', 'shape_difference', or "
+            "'pocket_shape'. The 'auto' default uses Lomap for RBFE and "
+            "receptor-frame pocket occupancy plus shape scoring for rbfe_septop."
+        ),
+    )
     kartograf: KartografMapperArgs = Field(
         default_factory=KartografMapperArgs,
         description="KartografAtomMapper option overrides.",
@@ -785,11 +944,28 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    direction_policy: Literal["larger_volume", "preserve"] = Field(
+        "larger_volume",
+        description=(
+            "How BATTER orients generated RBFE edges. 'larger_volume' chooses "
+            "the ligand with the larger grid-occupied heavy-atom volume as "
+            "the reference; 'preserve' keeps the mapper/network edge order. "
+            "Explicit rbfe.mapping_file directions are always preserved."
+        ),
+    )
     add_atom_mapping_edges: bool = Field(
         False,
         description=(
             "When true, append valid pairs from rbfe.atom_mapping_file that are "
             "not already present in the planned network in either direction."
+        ),
+    )
+    minimal_mapping_atom: int = Field(
+        3,
+        ge=1,
+        description=(
+            "Minimum number of atoms that each planned RBFE pair mapping must "
+            "include before BATTER accepts the edge."
         ),
     )
     mapping_file: Optional[Path] = Field(
@@ -832,6 +1008,43 @@ class RBFENetworkArgs(BaseModel):
         if v is None:
             return "kartograf"
         return str(v).strip().lower()
+
+    @field_validator("network_scorer", mode="before")
+    @classmethod
+    def _lower_network_scorer(cls, v):
+        if v is None:
+            return "auto"
+        text = str(v).strip().lower().replace("-", "_")
+        allowed = {
+            "auto",
+            "default",
+            "lomap",
+            "default_lomap",
+            "shape",
+            "shape_difference",
+            "shape_mismatch",
+            "kartograf_shape",
+            "kartograf_shape_difference",
+            "pocket",
+            "pocket_shape",
+            "grid_shape",
+            "pocket_grid",
+            "receptor_grid",
+            "receptor_shape",
+            "receptor_frame_shape",
+        }
+        if text not in allowed:
+            raise ValueError(
+                "rbfe.network_scorer must be one of: auto, lomap, shape_difference, pocket_shape"
+            )
+        return text
+
+    @field_validator("direction_policy", mode="before")
+    @classmethod
+    def _lower_direction_policy(cls, v):
+        if v is None:
+            return "larger_volume"
+        return str(v).strip().lower().replace("-", "_")
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":
@@ -902,6 +1115,14 @@ class RunSection(BaseModel):
     clean_failures: bool = Field(
         False,
         description="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
+    )
+    store_debug_files: bool = Field(
+        False,
+        description=(
+            "Keep intermediate build, LEaP, ParmEd, and trajectory debug files. "
+            "When false, successful preparation/analysis stages prune files not "
+            "needed to run simulations, resume, or prepare downstream stages."
+        ),
     )
     remd: Literal["yes", "no"] = Field(
         "no",
@@ -982,7 +1203,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "rbfe", "asfe", "md"] = Field(
+    protocol: Literal["abfe", "abfe_diff", "rbfe", "rbfe_septop", "asfe", "ligand_rest", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
@@ -1007,7 +1228,7 @@ class RunConfig(BaseModel):
             return data
 
         payload = dict(data)
-        proto = str(payload.get("protocol", "abfe")).lower()
+        proto = str(payload.get("protocol", "abfe")).lower().replace("-", "_")
         target_fields = (
             set(MDSimArgs.model_fields)
             if proto == "md"
@@ -1061,18 +1282,19 @@ class RunConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_rbfe_section(self) -> "RunConfig":
-        if self.rbfe is not None and self.protocol != "rbfe":
-            raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
-        if self.run.only_rbfe_network and self.protocol != "rbfe":
+        rbfe_protocols = {"rbfe", "rbfe_septop"}
+        if self.rbfe is not None and self.protocol not in rbfe_protocols:
+            raise ValueError("The 'rbfe' section is only valid for RBFE protocols.")
+        if self.run.only_rbfe_network and self.protocol not in rbfe_protocols:
             raise ValueError(
-                "run.only_rbfe_network is only valid when protocol='rbfe'."
+                "run.only_rbfe_network is only valid for RBFE protocols."
             )
         return self
 
     @field_validator("protocol", mode="before")
     @classmethod
     def _lower_protocol(cls, v):
-        return str(v).lower() if v else v
+        return str(v).lower().replace("-", "_") if v else v
 
     @field_validator("backend", mode="before")
     @classmethod

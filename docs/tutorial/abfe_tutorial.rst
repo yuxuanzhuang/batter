@@ -130,19 +130,19 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – Optional three atoms that define the binding site and
-     restraint geometry. If omitted, BATTER auto-selects stable backbone anchors
-     from the first ligand pose with the guidelines below. Apo-only MD uses a
-     protein-only heuristic instead of dummy ligand coordinates.
+   - ``create.anchor_atoms`` – Optional receptor-anchor override. In most runs
+     this can be omitted; BATTER will choose anchors automatically and write the
+     prepared-system selections to each ligand's ``equil/anchors.json``.
 
-     Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
-     ∠(P1–P2–P3) near 90°.
+     If you know the interaction that should define the Boresch reference, you
+     can provide one atom. BATTER treats that atom as P1 and chooses P2/P3
+     automatically. Prefer the binding-site Cα of a residue associated with a
+     conserved ligand interaction, such as the residue forming a salt bridge.
 
-     P1 should preferably form a consistent electrostatics interaction with available
-     bound ligands (e.g., a salt bridge).
-
-     For GPCR orthosteric sites, a common choice is P1=3x32,
-     P2=2x53, P3=7x42.
+     Provide three atoms only when you need fully manual geometry. In that case,
+     anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å,
+     and target ∠(P1–P2–P3) near 90°. For GPCR orthosteric sites, a common
+     choice is P1=3x32, P2=2x53, P3=7x42.
 
    Additional field that may need adjustment based on your cluster environment:
 

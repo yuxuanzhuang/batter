@@ -175,7 +175,14 @@ def _prepare_apo_dummy_params(
         ) from exc
 
 
-def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str) -> None:
+def copy_ligand_params(
+    src_dir: Path,
+    child_dir: Path,
+    residue_name: str,
+    *,
+    ligand_name: str | None = None,
+    input_path: str | Path | None = None,
+) -> None:
     """Copy ``lig.*`` artifacts into ``child_dir/params`` using ``residue_name``."""
     child_params = child_dir / "params"
     child_params.mkdir(parents=True, exist_ok=True)
@@ -192,6 +199,28 @@ def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str) -> Non
             logger.debug(f"Copied {src.name} → {dst}")
         except Exception as e:
             logger.warning(f"Failed to copy {src} to {dst}: {e}")
+
+    meta_src = src_dir / "metadata.json"
+    if meta_src.exists():
+        for dst in (child_params / "metadata.json", child_params / f"{residue_name}.metadata.json"):
+            if dst.exists():
+                continue
+            try:
+                meta = json.loads(meta_src.read_text())
+                if input_path:
+                    original_input = meta.get("input_path")
+                    if original_input and original_input != str(input_path):
+                        meta.setdefault("parameter_input_path", original_input)
+                    meta["input_path"] = str(Path(input_path).expanduser().resolve())
+                if ligand_name:
+                    aliases = list(meta.get("aliases") or [])
+                    if ligand_name not in aliases:
+                        aliases.append(ligand_name)
+                    meta["aliases"] = aliases
+                    meta["title"] = ligand_name
+                dst.write_text(json.dumps(meta, indent=2))
+            except Exception as e:
+                logger.warning(f"Failed to copy {meta_src} to {dst}: {e}")
 
 
 def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
@@ -414,7 +443,15 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             continue
         title = meta.get("title", name)
 
-        copy_ligand_params(src_dir, lig_root / Path(name), residue_name)
+        staged_input_path = str(Path(str(d)).expanduser().resolve())
+
+        copy_ligand_params(
+            src_dir,
+            lig_root / Path(name),
+            residue_name,
+            ligand_name=name,
+            input_path=staged_input_path,
+        )
 
         linked.append((name, hid, residue_name))
         index_entries.append(
@@ -425,6 +462,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
                 "linked_dir": str(lig_root / Path(name) / "params"),
                 "residue_name": residue_name,
                 "title": title,
+                "input_path": staged_input_path,
             }
         )
 

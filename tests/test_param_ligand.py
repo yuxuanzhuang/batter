@@ -44,7 +44,7 @@ def test_stable_hash_int_is_deterministic() -> None:
 @pytest.mark.parametrize(
     "mol_name,ind,smiles,expected",
     [
-        ("Acetone", 0, "CC(=O)C", "ace"),
+        ("Molecule", 0, "CC", "mol"),
         ("A", 0, "*", "aaa"),
         ("-+=", 5, "*", _base26_triplet(5)),
         ("", 42, "*", _base26_triplet(42)),

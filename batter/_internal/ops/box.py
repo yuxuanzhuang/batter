@@ -8,16 +8,17 @@ import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Dict, Iterator, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
-import parmed as pmd
 
 from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
+from batter.utils.lipid_hydrogen_repair import repair_lipid_hydrogen_geometry
+from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import (
@@ -28,8 +29,213 @@ from batter._internal.ops.helpers import (
     merge_first_n_molecules_in_prmtop,
     save_anchors,
 )
+from batter._internal.ops.ring_repair import (
+    repair_ring_penetrations,
+)
+
+pmd = import_parmed()
 
 
+def _pdb_residue_records(path: Path) -> list[tuple[str, str, int]]:
+    records: list[tuple[str, str, int]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for line in path.read_text(errors="ignore").splitlines():
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+        resname = line[17:20].strip()
+        chain = line[21].strip() or "_"
+        resid_text = line[22:26].strip()
+        try:
+            resid = int(resid_text)
+        except ValueError:
+            fields = line.split()
+            if len(fields) < 5:
+                continue
+            resname = fields[3]
+            if len(fields) >= 6 and re.fullmatch(r"-?\d+", fields[5]):
+                chain = fields[4]
+                resid_text = fields[5]
+            else:
+                chain = "_"
+                resid_text = fields[4]
+            try:
+                resid = int(resid_text)
+            except ValueError:
+                continue
+        key = (resname, chain, resid)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(key)
+    return records
+
+
+def _write_identity_amber_renum(input_pdb: Path, renum_path: Path) -> None:
+    lines = []
+    for resname, chain, resid in _pdb_residue_records(input_pdb):
+        lines.append(f"{resname} {chain} {resid:5d} {resname} {resid:5d}\n")
+    renum_path.write_text("".join(lines))
+
+
+def _run_pdb4amber_for_box_or_copy(
+    input_pdb: Path, output_pdb: Path, *, working_dir: Path
+) -> None:
+    if shutil.which("pdb4amber"):
+        run_with_log(
+            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
+            working_dir=working_dir,
+        )
+        return
+
+    shutil.copy2(input_pdb, output_pdb)
+    _write_identity_amber_renum(input_pdb, working_dir / "build_amber_renum.txt")
+    (working_dir / "build_amber_sslink").write_text("")
+    logger.warning(
+        "pdb4amber was not found; copying {} to {} and writing identity "
+        "build_amber_renum.txt without additional cleanup.",
+        input_pdb,
+        output_pdb,
+    )
+
+
+_PRE_RING_REPAIR_FILES = {
+    "full_inpcrd": "full.inpcrd.pre_ring_repair",
+    "full_pdb": "full.pdb.pre_ring_repair",
+    "vac_inpcrd": "vac.inpcrd.pre_ring_repair",
+    "vac_pdb": "vac.pdb.pre_ring_repair",
+}
+_MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+_WATER_RESNAMES = {
+    "WAT",
+    "HOH",
+    "TIP3",
+    "TIP3P",
+    "TIP4P",
+    "SPC",
+    "SPCE",
+    "OPC",
+    "SOL",
+}
+_WATER_OXYGEN_NAMES = {"O", "OW", "OH2"}
+_PERIODIC_WATER_CLASH_DISTANCE = 1.8
+
+
+def _repair_lipid_hydrogens_in_amber_files(
+    window_dir: Path,
+    *,
+    prefix: str,
+    report_name: str,
+) -> None:
+    prmtop = window_dir / f"{prefix}.prmtop"
+    inpcrd = window_dir / f"{prefix}.inpcrd"
+    pdb = window_dir / f"{prefix}.pdb"
+    if not prmtop.exists() or not inpcrd.exists():
+        return
+    result = repair_lipid_hydrogen_geometry(
+        prmtop,
+        inpcrd,
+        pdb if pdb.exists() else None,
+        write_report=window_dir / report_name,
+    )
+    if result.repaired:
+        logger.debug(
+            "Repaired {} lipid hydrogen(s) on {} carbon center(s) in {}.",
+            result.repaired_hydrogens,
+            result.repaired_centers,
+            prmtop.name,
+        )
+
+
+def _repair_lipid_hydrogens_after_tleap_lipids(window_dir: Path) -> None:
+    _repair_lipid_hydrogens_in_amber_files(
+        window_dir,
+        prefix="solvate_others",
+        report_name="lipid_hydrogen_repair_solvate_others.json",
+    )
+
+
+def _repair_parmed_molecule_table_for_combine(structure: pmd.Structure) -> pmd.Structure:
+    """Repair stale Amber molecule metadata before ParmEd Structure addition."""
+    parm_data = getattr(structure, "parm_data", None)
+    if parm_data is None or not hasattr(structure, "rediscover_molecules"):
+        return structure
+
+    def _table_is_valid() -> bool:
+        solvent_pointers = parm_data.get("SOLVENT_POINTERS")
+        atoms_per_molecule = parm_data.get("ATOMS_PER_MOLECULE")
+        if (
+            solvent_pointers is None
+            or atoms_per_molecule is None
+            or len(solvent_pointers) < 2
+        ):
+            return True
+        expected_molecules = int(solvent_pointers[1])
+        atom_count = len(getattr(structure, "atoms", []))
+        return (
+            len(atoms_per_molecule) == expected_molecules
+            and sum(atoms_per_molecule) == atom_count
+        )
+
+    solvent_pointers = parm_data.get("SOLVENT_POINTERS")
+    atoms_per_molecule = parm_data.get("ATOMS_PER_MOLECULE")
+    if solvent_pointers is None or atoms_per_molecule is None or len(solvent_pointers) < 2:
+        return structure
+
+    if not _table_is_valid():
+        structure.rediscover_molecules()
+    if not _table_is_valid():
+        from parmed.utils import tag_molecules
+
+        molecule_atom_counts = [len(molecule) for molecule in tag_molecules(structure)]
+        atom_count = len(getattr(structure, "atoms", []))
+        if not molecule_atom_counts or sum(molecule_atom_counts) != atom_count:
+            molecule_atom_counts = [atom_count] if atom_count else []
+        parm_data["SOLVENT_POINTERS"] = [
+            len(getattr(structure, "residues", [])),
+            len(molecule_atom_counts),
+            len(molecule_atom_counts) + 1,
+        ]
+        parm_data["ATOMS_PER_MOLECULE"] = molecule_atom_counts
+    return structure
+
+
+def _save_coordinate_snapshot(
+    structure: pmd.Structure,
+    coordinates: np.ndarray,
+    *,
+    inpcrd_path: Path,
+    pdb_path: Path,
+) -> None:
+    current_coordinates = np.asarray(structure.coordinates, dtype=float).copy()
+    try:
+        structure.coordinates = np.asarray(coordinates, dtype=float).copy()
+        structure.save(str(inpcrd_path), format="rst7", overwrite=True)
+        structure.save(str(pdb_path), format="pdb", overwrite=True)
+    finally:
+        structure.coordinates = current_coordinates
+
+
+def _save_pre_ring_repair_snapshots(
+    window_dir: Path,
+    *,
+    vac: pmd.Structure,
+    vac_coordinates: np.ndarray,
+    combined: pmd.Structure,
+    combined_coordinates: np.ndarray,
+) -> dict[str, str]:
+    _save_coordinate_snapshot(
+        vac,
+        vac_coordinates,
+        inpcrd_path=window_dir / _PRE_RING_REPAIR_FILES["vac_inpcrd"],
+        pdb_path=window_dir / _PRE_RING_REPAIR_FILES["vac_pdb"],
+    )
+    _save_coordinate_snapshot(
+        combined,
+        combined_coordinates,
+        inpcrd_path=window_dir / _PRE_RING_REPAIR_FILES["full_inpcrd"],
+        pdb_path=window_dir / _PRE_RING_REPAIR_FILES["full_pdb"],
+    )
+    return dict(_PRE_RING_REPAIR_FILES)
 
 
 _HY36_DIGITS_UPPER = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -206,6 +412,880 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
                 lines += [ln for ln in f if ln.startswith("ATOM")]
             prev = res.resid
     out_pdb.write_text("".join(lines))
+
+
+def _pdb_line_resname(line: str) -> str:
+    return line[17:20].strip() if len(line) >= 20 else ""
+
+
+def _pdb_line_atom_name(line: str) -> str:
+    return line[12:16].strip() if len(line) >= 16 else ""
+
+
+def _renumber_pdb_atom_line(
+    line: str,
+    *,
+    serial: int,
+    resid: int,
+    chain: str = "W",
+) -> str:
+    line = line.rstrip("\n")
+    if len(line) < 54:
+        line = line.ljust(54)
+    xyz = _pdb_atom_xyz(line)
+    resid_field = ((int(resid) - 1) % 9999) + 1
+    if xyz is None:
+        return (
+            f"{line[:6]}{serial:5d}"
+            f"{line[11:21]}{chain[:1]}{resid_field:4d} {line[27:]}\n"
+        )
+    return (
+        f"{line[:6]}{serial:5d}"
+        f"{line[11:21]}{chain[:1]}{resid_field:4d}    "
+        f"{xyz[0]:8.3f}{xyz[1]:8.3f}{xyz[2]:8.3f}{line[54:]}\n"
+    )
+
+
+def _iter_water_blocks_from_pdb(pdb_path: Path) -> Iterator[list[str]]:
+    current: list[str] = []
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if _pdb_line_resname(line).upper() not in _WATER_RESNAMES:
+            continue
+        atom_name = _pdb_line_atom_name(line).upper()
+        if atom_name in _WATER_OXYGEN_NAMES and current:
+            yield current
+            current = []
+        current.append(line)
+    if current:
+        yield current
+
+
+def _pdb_atom_xyz(line: str) -> np.ndarray | None:
+    try:
+        return np.asarray(
+            [float(line[30:38]), float(line[38:46]), float(line[46:54])],
+            dtype=float,
+        )
+    except Exception:
+        normalized = _normalize_decimal_resid_overflow_line(line)
+        if normalized is None:
+            return None
+        try:
+            return np.asarray(
+                [
+                    float(normalized[30:38]),
+                    float(normalized[38:46]),
+                    float(normalized[46:54]),
+                ],
+                dtype=float,
+            )
+        except Exception:
+            return None
+
+
+def _pdb_atom_name_is_hydrogen(name: str) -> bool:
+    stripped = name.strip().upper()
+    return stripped.startswith("H") or (
+        len(stripped) > 1 and stripped[0].isdigit() and stripped[1] == "H"
+    )
+
+
+def _extra_ligand_heavy_coords_from_build(
+    build_pdb: Path,
+    ligand_resname: str,
+) -> np.ndarray:
+    ligand_blocks: list[list[np.ndarray]] = []
+    current_key: tuple[str, str, str] | None = None
+    current_coords: list[np.ndarray] = []
+    for line in build_pdb.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if _pdb_line_resname(line) != ligand_resname:
+            continue
+        key = (line[21:22], line[22:26], line[26:27])
+        if current_key is not None and key != current_key:
+            ligand_blocks.append(current_coords)
+            current_coords = []
+        current_key = key
+        if not _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
+            xyz = _pdb_atom_xyz(line)
+            if xyz is not None:
+                current_coords.append(xyz)
+    if current_key is not None:
+        ligand_blocks.append(current_coords)
+    if len(ligand_blocks) <= 1:
+        return np.empty((0, 3), dtype=float)
+    coords = [coord for block in ligand_blocks[1:] for coord in block]
+    if not coords:
+        return np.empty((0, 3), dtype=float)
+    return np.asarray(coords, dtype=float)
+
+
+def _water_block_overlaps_coords(
+    block: Sequence[str],
+    coords: np.ndarray,
+    *,
+    box: np.ndarray,
+    cutoff: float,
+) -> bool:
+    if coords.size == 0:
+        return False
+    cutoff2 = float(cutoff) * float(cutoff)
+    for line in block:
+        if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
+            continue
+        water_xyz = _pdb_atom_xyz(line)
+        if water_xyz is None:
+            continue
+        delta = coords - water_xyz
+        if box.shape == (3,) and np.all(np.isfinite(box)) and np.all(box > 0.0):
+            delta = delta - box * np.round(delta / box)
+        if float(np.min(np.sum(delta * delta, axis=1))) < cutoff2:
+            return True
+    return False
+
+
+def _box_array_is_valid(box: Sequence[float] | np.ndarray) -> bool:
+    box_array = np.asarray(box, dtype=float)
+    return (
+        box_array.shape == (3,)
+        and np.all(np.isfinite(box_array))
+        and np.all(box_array > 0.0)
+    )
+
+
+def _periodic_cells(
+    coords: np.ndarray,
+    box: np.ndarray,
+    *,
+    bin_width: float,
+) -> tuple[dict[tuple[int, int, int], list[int]], np.ndarray]:
+    wrapped = coords - box * np.floor(coords / box)
+    n_bins = np.maximum(np.floor(box / max(float(bin_width), 1.0e-6)).astype(int), 1)
+    cell_width = box / n_bins
+    bins = np.floor(wrapped / cell_width).astype(int)
+    bins = np.minimum(bins, n_bins - 1)
+    cells: dict[tuple[int, int, int], list[int]] = {}
+    for atom_i, key in enumerate(map(tuple, bins)):
+        cells.setdefault(key, []).append(atom_i)
+    return cells, n_bins
+
+
+def _neighbor_periodic_cell_keys(
+    key: tuple[int, int, int],
+    n_bins: np.ndarray,
+) -> Iterator[tuple[int, int, int]]:
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                yield (
+                    (key[0] + dx) % int(n_bins[0]),
+                    (key[1] + dy) % int(n_bins[1]),
+                    (key[2] + dz) % int(n_bins[2]),
+                )
+
+
+def _minimum_image_distance(
+    coord_a: np.ndarray,
+    coord_b: np.ndarray,
+    box: np.ndarray,
+) -> tuple[float, float]:
+    raw_delta = coord_b - coord_a
+    raw_distance = float(np.sqrt(np.dot(raw_delta, raw_delta)))
+    delta = raw_delta - box * np.round(raw_delta / box)
+    return raw_distance, float(np.sqrt(np.dot(delta, delta)))
+
+
+def _water_block_record(path: Path, block_index: int, block: Sequence[str]) -> dict[str, Any]:
+    atom_coords: list[np.ndarray] = []
+    atom_is_hydrogen: list[bool] = []
+    oxygen_coord: np.ndarray | None = None
+    for line in block:
+        coord = _pdb_atom_xyz(line)
+        if coord is None:
+            continue
+        atom_coords.append(coord)
+        atom_is_hydrogen.append(_pdb_atom_is_hydrogen(line))
+        if oxygen_coord is None and _pdb_line_atom_name(line).upper() in _WATER_OXYGEN_NAMES:
+            oxygen_coord = coord
+    return {
+        "path": path,
+        "block_index": block_index,
+        "lines": list(block),
+        "atom_coords": np.asarray(atom_coords, dtype=float),
+        "atom_is_hydrogen": np.asarray(atom_is_hydrogen, dtype=bool),
+        "oxygen_coord": oxygen_coord,
+    }
+
+
+def _read_nonwater_pdb_atoms(paths: Sequence[Path]) -> tuple[np.ndarray, np.ndarray]:
+    coords: list[np.ndarray] = []
+    is_hydrogen: list[bool] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            if not line.startswith(("ATOM  ", "HETATM")):
+                continue
+            if _pdb_line_resname(line).upper() in _WATER_RESNAMES:
+                continue
+            coord = _pdb_atom_xyz(line)
+            if coord is None:
+                continue
+            coords.append(coord)
+            is_hydrogen.append(_pdb_atom_is_hydrogen(line))
+    if not coords:
+        return np.empty((0, 3), dtype=float), np.empty((0,), dtype=bool)
+    return np.asarray(coords, dtype=float), np.asarray(is_hydrogen, dtype=bool)
+
+
+def _rewrite_cleaned_water_pdbs(
+    water_pdbs: Sequence[Path],
+    water_blocks: Sequence[dict[str, Any]],
+    remove_blocks: set[tuple[Path, int]],
+) -> dict[str, int]:
+    blocks_by_path: dict[Path, list[dict[str, Any]]] = {Path(path): [] for path in water_pdbs}
+    for block in water_blocks:
+        blocks_by_path.setdefault(Path(block["path"]), []).append(block)
+
+    kept_by_path: dict[str, int] = {}
+    for path in water_pdbs:
+        retained = [
+            block
+            for block in blocks_by_path.get(Path(path), [])
+            if (Path(block["path"]), int(block["block_index"])) not in remove_blocks
+        ]
+        if not retained:
+            Path(path).unlink(missing_ok=True)
+            kept_by_path[Path(path).name] = 0
+            continue
+
+        serial = 1
+        lines: list[str] = []
+        for resid, block in enumerate(retained, start=1):
+            for atom_line in block["lines"]:
+                lines.append(
+                    _renumber_pdb_atom_line(atom_line, serial=serial, resid=resid)
+                )
+                serial += 1
+            lines.append("TER\n")
+        lines.append("END\n")
+        Path(path).write_text("".join(lines))
+        kept_by_path[Path(path).name] = len(retained)
+    return kept_by_path
+
+
+def _cleanup_periodic_water_pdbs(
+    water_pdbs: Sequence[Path],
+    *,
+    nonwater_pdbs: Sequence[Path] = (),
+    box: Sequence[float] | np.ndarray,
+    cutoff: float = _PERIODIC_WATER_CLASH_DISTANCE,
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    """Remove water residues that clash before LEaP consumes water PDBs.
+
+    The cleanup is intentionally water-only. It removes duplicate waters whose
+    atoms overlap under the minimum-image convention, and removes waters whose
+    atoms overlap non-water atoms. Protein, ligand, lipid, ion, and dummy atoms
+    are left untouched.
+    """
+    water_paths = [Path(path) for path in water_pdbs if Path(path).exists()]
+    summary: dict[str, Any] = {
+        "water_files": [path.name for path in water_paths],
+        "nonwater_files": [Path(path).name for path in nonwater_pdbs if Path(path).exists()],
+        "removed_water_residues": 0,
+        "removed_water_water": 0,
+        "removed_water_nonwater": 0,
+        "kept_water_residues_by_file": {},
+    }
+    if report_path is not None:
+        report_path.unlink(missing_ok=True)
+    if not water_paths:
+        return summary
+
+    box_array = np.asarray(box, dtype=float)
+    if not _box_array_is_valid(box_array):
+        return summary
+
+    water_blocks: list[dict[str, Any]] = []
+    for path in water_paths:
+        for block_index, block in enumerate(_iter_water_blocks_from_pdb(path)):
+            record = _water_block_record(path, block_index, block)
+            if record["oxygen_coord"] is not None and record["atom_coords"].size:
+                water_blocks.append(record)
+
+    if not water_blocks:
+        return summary
+
+    remove_blocks: set[tuple[Path, int]] = set()
+    oxygen_coords = np.asarray(
+        [block["oxygen_coord"] for block in water_blocks],
+        dtype=float,
+    )
+    cells, n_bins = _periodic_cells(
+        oxygen_coords,
+        box_array,
+        bin_width=cutoff,
+    )
+    water_oxygen_cutoff2 = float(cutoff) * float(cutoff)
+    visited_oxygen_pairs: set[tuple[int, int]] = set()
+    for key, indices in cells.items():
+        for neighbor_key in _neighbor_periodic_cell_keys(key, n_bins):
+            for atom_i in indices:
+                for atom_j in cells.get(neighbor_key, []):
+                    if atom_j <= atom_i:
+                        continue
+                    pair = (atom_i, atom_j)
+                    if pair in visited_oxygen_pairs:
+                        continue
+                    visited_oxygen_pairs.add(pair)
+                    _, pbc_distance = _minimum_image_distance(
+                        oxygen_coords[atom_i],
+                        oxygen_coords[atom_j],
+                        box_array,
+                    )
+                    if pbc_distance * pbc_distance >= water_oxygen_cutoff2:
+                        continue
+                    block = water_blocks[atom_j]
+                    block_key = (Path(block["path"]), int(block["block_index"]))
+                    if block_key not in remove_blocks:
+                        remove_blocks.add(block_key)
+                        summary["removed_water_water"] += 1
+
+    water_atom_coords: list[np.ndarray] = []
+    water_atom_hydrogen: list[bool] = []
+    water_atom_blocks: list[int] = []
+    for block_index, block in enumerate(water_blocks):
+        for atom_coord, is_hydrogen in zip(
+            block["atom_coords"],
+            block["atom_is_hydrogen"],
+        ):
+            water_atom_coords.append(atom_coord)
+            water_atom_hydrogen.append(bool(is_hydrogen))
+            water_atom_blocks.append(block_index)
+
+    if water_atom_coords:
+        all_water_coords = np.asarray(water_atom_coords, dtype=float)
+        all_water_hydrogen = np.asarray(water_atom_hydrogen, dtype=bool)
+        atom_cells, atom_n_bins = _periodic_cells(
+            all_water_coords,
+            box_array,
+            bin_width=cutoff,
+        )
+        heavy_hydrogen_cutoff = min(float(cutoff), 1.2)
+        hydrogen_hydrogen_cutoff = min(float(cutoff), 1.0)
+        heavy_heavy_cutoff = min(float(cutoff), 1.5)
+        visited_atom_pairs: set[tuple[int, int]] = set()
+        for key, atom_indices in atom_cells.items():
+            for neighbor_key in _neighbor_periodic_cell_keys(key, atom_n_bins):
+                for atom_i in atom_indices:
+                    block_i = water_atom_blocks[atom_i]
+                    block_i_key = (
+                        Path(water_blocks[block_i]["path"]),
+                        int(water_blocks[block_i]["block_index"]),
+                    )
+                    if block_i_key in remove_blocks:
+                        continue
+                    for atom_j in atom_cells.get(neighbor_key, []):
+                        if atom_j <= atom_i:
+                            continue
+                        pair = (atom_i, atom_j)
+                        if pair in visited_atom_pairs:
+                            continue
+                        visited_atom_pairs.add(pair)
+                        block_j = water_atom_blocks[atom_j]
+                        if block_i == block_j:
+                            continue
+                        block_j_key = (
+                            Path(water_blocks[block_j]["path"]),
+                            int(water_blocks[block_j]["block_index"]),
+                        )
+                        if block_j_key in remove_blocks:
+                            continue
+                        _, pbc_distance = _minimum_image_distance(
+                            all_water_coords[atom_i],
+                            all_water_coords[atom_j],
+                            box_array,
+                        )
+                        if all_water_hydrogen[atom_i] and all_water_hydrogen[atom_j]:
+                            pair_cutoff = hydrogen_hydrogen_cutoff
+                        elif all_water_hydrogen[atom_i] or all_water_hydrogen[atom_j]:
+                            pair_cutoff = heavy_hydrogen_cutoff
+                        else:
+                            pair_cutoff = heavy_heavy_cutoff
+                        if pbc_distance < pair_cutoff:
+                            remove_blocks.add(block_j_key)
+                            summary["removed_water_water"] += 1
+
+    other_coords, other_hydrogen = _read_nonwater_pdb_atoms(nonwater_pdbs)
+    if other_coords.size:
+        other_cells, other_n_bins = _periodic_cells(
+            other_coords,
+            box_array,
+            bin_width=cutoff,
+        )
+        heavy_hydrogen_cutoff = min(float(cutoff), 1.2)
+        hydrogen_hydrogen_cutoff = min(float(cutoff), 1.0)
+        heavy_heavy_cutoff = min(float(cutoff), 1.5)
+
+        for block_index, block in enumerate(water_blocks):
+            block_key = (Path(block["path"]), int(block["block_index"]))
+            if block_key in remove_blocks:
+                continue
+            atom_coords = block["atom_coords"]
+            atom_hydrogen = block["atom_is_hydrogen"]
+            water_cells, water_n_bins = _periodic_cells(
+                atom_coords,
+                box_array,
+                bin_width=cutoff,
+            )
+            if not np.array_equal(water_n_bins, other_n_bins):
+                raise RuntimeError("Internal periodic water cleanup bin mismatch.")
+
+            removed = False
+            for key, water_atom_indices in water_cells.items():
+                for neighbor_key in _neighbor_periodic_cell_keys(key, other_n_bins):
+                    other_indices = other_cells.get(neighbor_key)
+                    if not other_indices:
+                        continue
+                    for water_atom_i in water_atom_indices:
+                        for other_atom_i in other_indices:
+                            _, pbc_distance = _minimum_image_distance(
+                                atom_coords[water_atom_i],
+                                other_coords[other_atom_i],
+                                box_array,
+                            )
+                            if atom_hydrogen[water_atom_i] and other_hydrogen[other_atom_i]:
+                                pair_cutoff = hydrogen_hydrogen_cutoff
+                            elif atom_hydrogen[water_atom_i] or other_hydrogen[other_atom_i]:
+                                pair_cutoff = heavy_hydrogen_cutoff
+                            else:
+                                pair_cutoff = heavy_heavy_cutoff
+                            if pbc_distance < pair_cutoff:
+                                remove_blocks.add(block_key)
+                                summary["removed_water_nonwater"] += 1
+                                removed = True
+                                break
+                        if removed:
+                            break
+                    if removed:
+                        break
+                if removed:
+                    break
+
+    if not remove_blocks:
+        summary["kept_water_residues_by_file"] = _rewrite_cleaned_water_pdbs(
+            water_paths,
+            water_blocks,
+            remove_blocks,
+        )
+        return summary
+
+    summary["removed_water_residues"] = len(remove_blocks)
+    summary["kept_water_residues_by_file"] = _rewrite_cleaned_water_pdbs(
+        water_paths,
+        water_blocks,
+        remove_blocks,
+    )
+    if report_path is not None:
+        report_path.write_text(json.dumps(summary, indent=2, sort_keys=True))
+    logger.debug(
+        "Removed {} water residue(s) with periodic clashes from {}.",
+        summary["removed_water_residues"],
+        ", ".join(path.name for path in water_paths),
+    )
+    return summary
+
+
+def _pdb_min_z(pdb_path: Path) -> float:
+    min_z = float("inf")
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        xyz = _pdb_atom_xyz(line)
+        if xyz is None:
+            continue
+        min_z = min(min_z, float(xyz[2]))
+    if not np.isfinite(min_z):
+        raise ValueError(f"No readable atom z coordinates found in {pdb_path}")
+    return min_z
+
+
+def _write_membrane_water_chunks_from_build(
+    window_dir: Path,
+    *,
+    ligand_resname: str,
+    box: Sequence[float],
+    z_max: float | None = None,
+    ligand_clash_cutoff: float = 2.2,
+    max_waters_per_chunk: int = 8000,
+) -> list[Path]:
+    for pattern in (
+        "solvate_pre_wat_*.pdb",
+        "solvate_wat_*.pdb",
+        "solvate_wat_*.prmtop",
+        "solvate_wat_*.inpcrd",
+        "tleap_solvate_wat_*.in",
+        "tleap_solvate_wat_*.log",
+    ):
+        for old_path in window_dir.glob(pattern):
+            old_path.unlink(missing_ok=True)
+
+    chunks: list[Path] = []
+    current_blocks: list[list[str]] = []
+    build_pdb = window_dir / "build.pdb"
+    extra_ligand_coords = _extra_ligand_heavy_coords_from_build(
+        build_pdb, ligand_resname
+    )
+    box_array = np.asarray(box, dtype=float)
+    skipped_z = 0
+    skipped_overlap = 0
+
+    def flush() -> None:
+        if not current_blocks:
+            return
+        chunk_index = len(chunks)
+        out_pdb = window_dir / f"solvate_pre_wat_{chunk_index:02d}.pdb"
+        serial = 1
+        lines: list[str] = []
+        for resid, block in enumerate(current_blocks, start=1):
+            for atom_line in block:
+                lines.append(
+                    _renumber_pdb_atom_line(atom_line, serial=serial, resid=resid)
+                )
+                serial += 1
+            lines.append("TER\n")
+        lines.append("END\n")
+        out_pdb.write_text("".join(lines))
+        chunks.append(out_pdb)
+        current_blocks.clear()
+
+    for block in _iter_water_blocks_from_pdb(build_pdb):
+        if z_max is not None:
+            keep_block = True
+            for line in block:
+                if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
+                    continue
+                water_xyz = _pdb_atom_xyz(line)
+                if water_xyz is not None and float(water_xyz[2]) > float(z_max):
+                    keep_block = False
+                    break
+            if not keep_block:
+                skipped_z += 1
+                continue
+        if _water_block_overlaps_coords(
+            block,
+            extra_ligand_coords,
+            box=box_array,
+            cutoff=ligand_clash_cutoff,
+        ):
+            skipped_overlap += 1
+            continue
+        current_blocks.append(block)
+        if len(current_blocks) >= max_waters_per_chunk:
+            flush()
+    flush()
+    if not chunks:
+        raise ValueError(f"No membrane waters found in {build_pdb}")
+    if skipped_z:
+        logger.debug(
+            "Removed {} membrane water(s) outside the SDR z extent in {}.",
+            skipped_z,
+            window_dir,
+        )
+    if skipped_overlap:
+        logger.debug(
+            "Removed {} membrane water(s) overlapping extra ligand copy/copies in {}.",
+            skipped_overlap,
+            window_dir,
+        )
+    return chunks
+
+
+_REFERENCE_PROTON_RESTORE_EXCLUDED_RESNAMES = {
+    "WAT",
+    "HOH",
+    "TIP3",
+    "TIP3P",
+    "TIP4P",
+    "SPC",
+    "SPCE",
+    "OPC",
+    "SOL",
+    "NA",
+    "NA+",
+    "SOD",
+    "K",
+    "K+",
+    "POT",
+    "CL",
+    "CL-",
+    "CLA",
+    "MG",
+    "MG2",
+    "CA",
+    "CA2",
+    "ZN",
+    "DUM",
+}
+
+
+def _pdb_atom_coord(line: str) -> np.ndarray | None:
+    if len(line) < 54:
+        return None
+    try:
+        return np.asarray(
+            [float(line[30:38]), float(line[38:46]), float(line[46:54])],
+            dtype=float,
+        )
+    except ValueError:
+        return None
+
+
+def _pdb_atom_is_hydrogen(line: str) -> bool:
+    element = line[76:78].strip().upper() if len(line) >= 78 else ""
+    if element:
+        return element == "H"
+    atom_name = line[12:16].strip().upper()
+    return atom_name.startswith("H") or (
+        len(atom_name) > 1 and atom_name[0].isdigit() and atom_name[1] == "H"
+    )
+
+
+def _replace_pdb_coord(line: str, coord: np.ndarray) -> str:
+    return f"{line[:30]}{coord[0]:8.3f}{coord[1]:8.3f}{coord[2]:8.3f}{line[54:]}"
+
+
+def _kabsch_transform(mobile: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mobile_center = mobile.mean(axis=0)
+    reference_center = reference.mean(axis=0)
+    mobile_centered = mobile - mobile_center
+    reference_centered = reference - reference_center
+    covariance = mobile_centered.T @ reference_centered
+    u, _s, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1
+        rotation = vt.T @ u.T
+    translation = reference_center - mobile_center @ rotation
+    return rotation, translation
+
+
+def _read_pdb_residue_blocks(
+    lines: Sequence[str],
+) -> list[dict[str, Any]]:
+    residues: list[dict[str, Any]] = []
+    current_key: tuple[str, str, str, str] | None = None
+    current: dict[str, Any] | None = None
+    for line_index, line in enumerate(lines):
+        if line.startswith("TER"):
+            current_key = None
+            current = None
+            continue
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        coord = _pdb_atom_coord(line)
+        if coord is None:
+            continue
+        key = (line[17:20].strip(), line[21:22], line[22:26], line[26:27])
+        if current is None or key != current_key:
+            current = {
+                "resname": key[0],
+                "atoms": {},
+                "duplicate_atom_names": set(),
+            }
+            residues.append(current)
+            current_key = key
+
+        atom_name = line[12:16].strip()
+        atoms = current["atoms"]
+        if atom_name in atoms:
+            current["duplicate_atom_names"].add(atom_name)
+            continue
+        atoms[atom_name] = {
+            "line_index": line_index,
+            "coord": coord,
+            "is_hydrogen": _pdb_atom_is_hydrogen(line),
+        }
+    return residues
+
+
+def _restore_reference_hydrogen_coordinates(
+    target_pdb: Path,
+    reference_pdb: Path,
+    *,
+    residue_names: Sequence[str] | None = None,
+    exclude_residue_names: Sequence[str] | None = None,
+    min_common_heavy_atoms: int = 3,
+    heavy_rmsd_cutoff: float = 0.25,
+) -> int:
+    """Restore target hydrogen coordinates from an equilibrated reference.
+
+    Residues are paired by occurrence within each residue name. For each pair,
+    common heavy atoms are locally fit from reference to target, and matching
+    target hydrogen coordinates are replaced by the transformed reference
+    hydrogen coordinates. This preserves the target heavy-atom coordinates and
+    avoids mapping newly solvated molecules onto the old reference.
+    """
+    if not target_pdb.exists() or not reference_pdb.exists():
+        return 0
+
+    include = {name.strip().upper() for name in residue_names or [] if name}
+    exclude = {
+        name.strip().upper()
+        for name in (
+            exclude_residue_names
+            if exclude_residue_names is not None
+            else _REFERENCE_PROTON_RESTORE_EXCLUDED_RESNAMES
+        )
+        if name
+    }
+
+    target_lines = target_pdb.read_text().splitlines(True)
+    reference_lines = reference_pdb.read_text().splitlines(True)
+    target_residues = _read_pdb_residue_blocks(target_lines)
+    reference_by_name: dict[str, list[dict[str, Any]]] = {}
+    for residue in _read_pdb_residue_blocks(reference_lines):
+        reference_by_name.setdefault(str(residue["resname"]).upper(), []).append(residue)
+
+    reference_indices: dict[str, int] = {}
+    restored = 0
+    skipped_rmsd = 0
+    for target_residue in target_residues:
+        resname = str(target_residue["resname"]).upper()
+        if include and resname not in include:
+            continue
+        if resname in exclude:
+            continue
+
+        reference_residues = reference_by_name.get(resname)
+        if not reference_residues:
+            continue
+        reference_index = reference_indices.get(resname, 0)
+        reference_indices[resname] = reference_index + 1
+        if reference_index >= len(reference_residues):
+            continue
+        reference_residue = reference_residues[reference_index]
+
+        target_atoms = target_residue["atoms"]
+        reference_atoms = reference_residue["atoms"]
+        target_duplicates = target_residue["duplicate_atom_names"]
+        reference_duplicates = reference_residue["duplicate_atom_names"]
+
+        common_heavy_names = [
+            name
+            for name in sorted(set(target_atoms) & set(reference_atoms))
+            if name not in target_duplicates
+            and name not in reference_duplicates
+            and not target_atoms[name]["is_hydrogen"]
+            and not reference_atoms[name]["is_hydrogen"]
+        ]
+        if len(common_heavy_names) < min_common_heavy_atoms:
+            continue
+
+        reference_heavy = np.asarray(
+            [reference_atoms[name]["coord"] for name in common_heavy_names],
+            dtype=float,
+        )
+        target_heavy = np.asarray(
+            [target_atoms[name]["coord"] for name in common_heavy_names],
+            dtype=float,
+        )
+        rotation, translation = _kabsch_transform(reference_heavy, target_heavy)
+        aligned_reference_heavy = reference_heavy @ rotation + translation
+        rmsd = float(
+            np.sqrt(np.mean(np.sum((aligned_reference_heavy - target_heavy) ** 2, axis=1)))
+        )
+        if not np.isfinite(rmsd) or rmsd > heavy_rmsd_cutoff:
+            skipped_rmsd += 1
+            continue
+
+        for atom_name, target_atom in target_atoms.items():
+            if atom_name in target_duplicates or atom_name in reference_duplicates:
+                continue
+            if not target_atom["is_hydrogen"]:
+                continue
+            reference_atom = reference_atoms.get(atom_name)
+            if reference_atom is None or not reference_atom["is_hydrogen"]:
+                continue
+            new_coord = reference_atom["coord"] @ rotation + translation
+            target_lines[target_atom["line_index"]] = _replace_pdb_coord(
+                target_lines[target_atom["line_index"]],
+                new_coord,
+            )
+            restored += 1
+
+    if restored:
+        target_pdb.write_text("".join(target_lines))
+        logger.debug(
+            "Restored {} existing hydrogen coordinate(s) in {} from {}.",
+            restored,
+            target_pdb.name,
+            reference_pdb.name,
+        )
+    if skipped_rmsd:
+        logger.debug(
+            "Skipped {} residue(s) while restoring hydrogens in {} because heavy-atom RMSD exceeded {:.3f} Å.",
+            skipped_rmsd,
+            target_pdb.name,
+            heavy_rmsd_cutoff,
+        )
+    return restored
+
+
+def _restore_existing_protons_from_reference(window_dir: Path, target_pdb: Path) -> int:
+    for reference_name in ("equil-reference.pdb", "rec_file.pdb"):
+        reference_pdb = window_dir / reference_name
+        if reference_pdb.exists():
+            return _restore_reference_hydrogen_coordinates(target_pdb, reference_pdb)
+    return 0
+
+
+def _parmed_reference_translation(
+    structure: pmd.Structure,
+    reference_pdb: Path,
+    *,
+    selection: str = "protein and name CA",
+) -> np.ndarray | None:
+    if not reference_pdb.exists() or structure.coordinates is None:
+        return None
+    current_indices = [
+        atom.idx
+        for atom in structure.atoms
+        if str(atom.name).strip() == "CA"
+    ]
+    if not current_indices:
+        return None
+    reference = mda.Universe(str(reference_pdb))
+    reference_atoms = reference.select_atoms(selection)
+    if reference_atoms.n_atoms != len(current_indices):
+        logger.debug(
+            "Could not compute reference-frame translation: {} current CA atoms, "
+            "{} reference atoms from {!r}.",
+            len(current_indices),
+            reference_atoms.n_atoms,
+            selection,
+        )
+        return None
+    current = np.asarray(structure.coordinates, dtype=float)[current_indices]
+    translation = np.median(reference_atoms.positions - current, axis=0)
+    if not np.all(np.isfinite(translation)):
+        return None
+    return np.asarray(translation, dtype=float)
+
+
+def _translate_parmed_structure(structure: pmd.Structure, translation: Sequence[float]) -> None:
+    if structure.coordinates is None:
+        return
+    vector = np.asarray(translation, dtype=float)
+    if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+        return
+    if float(np.linalg.norm(vector)) <= 1.0e-4:
+        return
+    structure.coordinates = np.asarray(structure.coordinates, dtype=float) + vector
 
 
 _TERMINAL_AMIDE_CAP_ATOMS = {"N1": "N", "H1": "HN1", "H2": "HN2"}
@@ -446,7 +1526,11 @@ def _rewrite_separate_terminal_methylamide_cap(
     return rewritten, changed
 
 
-def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
+def _rewrite_terminal_amide_caps_for_leap(
+    pdb_path: Path,
+    *,
+    exclude_residue_names: Sequence[str] | None = None,
+) -> int:
     """
     Rewrite terminal amide caps into Amber residue/atom names.
 
@@ -456,6 +1540,11 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
     standard aminoct library type the cap and bond it to the preceding residue.
     """
     lines = pdb_path.read_text().splitlines(True)
+    excluded = {
+        str(name).strip()
+        for name in (exclude_residue_names or ())
+        if str(name).strip()
+    }
     rewritten: list[str] = []
     block: list[str] = []
     cap_count = 0
@@ -497,6 +1586,12 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
             block.clear()
             return
 
+        terminal_key = residue_keys[-1]
+        if terminal_key[2] in excluded:
+            rewritten.extend(block)
+            block.clear()
+            return
+
         separate_methylamide = _rewrite_separate_terminal_methylamide_cap(
             block, residue_keys
         )
@@ -508,7 +1603,6 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
             block.clear()
             return
 
-        terminal_key = residue_keys[-1]
         terminal_atom_names = _atom_names_for_residue(block, terminal_key)
         if (
             "N1" not in terminal_atom_names
@@ -591,6 +1685,14 @@ def _chain_id_from_renum(
 def _renum_resname(row: pd.Series) -> str:
     new_resname = str(row.get("new_resname", "")).strip()
     return new_resname or str(row.get("old_resname", "")).strip()
+
+
+def _renum_row_is_protein_like(row: pd.Series) -> bool:
+    resname = _renum_resname(row)
+    return (
+        _is_amber_protein_resname(resname)
+        or resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+    )
 
 
 def _resnames_match_for_renum(residue_resname: str, row: pd.Series) -> bool:
@@ -683,6 +1785,11 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
         if resname in ["HIS", "HIE", "HIP", "HID"]:
             resname = "HIS"
 
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+
         if row_pos < len(rows) and _resnames_match_for_renum(
             resname, rows.iloc[row_pos]
         ):
@@ -698,6 +1805,10 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
             rows.iloc[row_pos]
         ) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
             row_pos += 1
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
         if row_pos < len(rows):
             old_resids.append(int(rows.iloc[row_pos]["old_resid"]))
             row_pos += 1
@@ -705,6 +1816,53 @@ def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int
             old_resids.append(int(residue.resid))
 
     return old_resids
+
+
+def _renum_chain_ids_for_residues(residues, renum_df: pd.DataFrame) -> list[str]:
+    rows = renum_df.reset_index(drop=True)
+    row_pos = 0
+    chain_ids: list[str] = []
+    last_chain = "A"
+
+    for residue in residues:
+        resname = str(residue.resname).strip()
+        if resname in ["HIS", "HIE", "HIP", "HID"]:
+            resname = "HIS"
+
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+
+        if row_pos < len(rows) and _resnames_match_for_renum(
+            resname, rows.iloc[row_pos]
+        ):
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            chain_ids.append(last_chain)
+            row_pos += 1
+            continue
+
+        if resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            chain_ids.append(last_chain)
+            continue
+
+        while row_pos < len(rows) and _renum_resname(
+            rows.iloc[row_pos]
+        ) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            row_pos += 1
+        while row_pos < len(rows) and not _renum_row_is_protein_like(
+            rows.iloc[row_pos]
+        ):
+            row_pos += 1
+        if row_pos < len(rows):
+            last_chain = str(rows.iloc[row_pos]["old_chain"]).strip() or last_chain
+            chain_ids.append(last_chain)
+            row_pos += 1
+        else:
+            chain_ids.append(last_chain)
+
+    return chain_ids
 
 
 def _restore_protein_resids_from_renum(atom_group, renum_df: pd.DataFrame) -> None:
@@ -970,6 +2128,174 @@ def _sync_ligand_anchor_residue_with_pdb(
     )
 
 
+def _write_abfe_diff_charge_ligand_from_ref_vac(
+    window_dir: Path,
+    ligand_resname: str,
+) -> Path:
+    """Write a one-ligand PDB copied from the equilibrated pre_fe bulk ligand."""
+    ref_vac_pdb = window_dir / "ref_vac.pdb"
+    u_ref_vac = mda.Universe(ref_vac_pdb.as_posix())
+    ligands = u_ref_vac.select_atoms(f"resname {ligand_resname}").residues
+    if len(ligands) < 2:
+        raise ValueError(
+            f"ABFE_diff d construction requires two pre_fe ligand residues in "
+            f"{ref_vac_pdb}; found {len(ligands)} for resname {ligand_resname!r}."
+        )
+    out_pdb = window_dir / "charge_ligand_aligned_solvent.pdb"
+    ligands[1].atoms.write(out_pdb.as_posix())
+    return out_pdb
+
+
+def _rename_parmed_residues(
+    structure: pmd.Structure,
+    residue_indices: list[int] | tuple[int, ...],
+    residue_name: str,
+) -> None:
+    """Rename residues in both ParmEd objects and AmberParm metadata."""
+    labels = getattr(structure, "parm_data", {}).get("RESIDUE_LABEL")
+    for index in residue_indices:
+        if index < 0 or index >= len(structure.residues):
+            continue
+        residue = structure.residues[index]
+        residue.name = residue_name
+        for atom in residue.atoms:
+            atom.residue.name = residue_name
+        if labels is not None and index < len(labels):
+            labels[index] = residue_name
+
+
+def _make_residues_nonsteric(
+    structure: pmd.Structure,
+    residue_indices: list[int] | tuple[int, ...],
+) -> None:
+    """Give selected residues a private zero-LJ atom type while preserving charges."""
+    selected = [0] * len(structure.atoms)
+    for index in residue_indices:
+        if index < 0 or index >= len(structure.residues):
+            continue
+        for atom in structure.residues[index].atoms:
+            selected[atom.idx] = 1
+
+    if not any(selected):
+        return
+
+    from parmed.tools.addljtype import AddLJType
+
+    if getattr(structure, "chamber", False):
+        AddLJType(structure, selected, 0.0, 0.0, 0.0, 0.0)
+    else:
+        AddLJType(structure, selected, 0.0, 0.0, None, None)
+    structure.load_atom_info()
+
+
+def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
+    """
+    Build ABFE_diff d by reusing pre_fe topology pieces and appending one
+    charge-balancing ligand copy, analogous to the x-component ParmEd combine.
+    """
+    sim = ctx.sim
+    build_dir = ctx.build_dir
+    window_dir = ctx.window_dir
+    amber_dir = ctx.amber_dir
+    mol = ctx.residue_name
+
+    required = [
+        window_dir / "ref_vac.prmtop",
+        window_dir / "ref_vac.pdb",
+        window_dir / "other_parts.prmtop",
+        window_dir / "other_parts.pdb",
+        window_dir / f"{mol}.prmtop",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "ABFE_diff d x-style topology construction is missing required "
+            "pre_fe piece(s): " + ", ".join(missing)
+        )
+
+    charge_ligand_pdb = _write_abfe_diff_charge_ligand_from_ref_vac(window_dir, mol)
+
+    vac_p = pmd.load_file(
+        str(window_dir / "ref_vac.prmtop"),
+        str(window_dir / "ref_vac.pdb"),
+    )
+    other_part_p = pmd.load_file(
+        str(window_dir / "other_parts.prmtop"),
+        str(window_dir / "other_parts.pdb"),
+    )
+    charge_ligand_p = pmd.load_file(
+        str(window_dir / f"{mol}.prmtop"),
+        str(charge_ligand_pdb),
+    )
+    _rename_parmed_residues(charge_ligand_p, [0], mol)
+    _repair_parmed_molecule_table_for_combine(charge_ligand_p)
+
+    charge_ligand_index = len(vac_p.residues)
+    combined = vac_p + charge_ligand_p + other_part_p
+    vac = vac_p + charge_ligand_p
+    _rename_parmed_residues(combined, [charge_ligand_index], mol)
+    _rename_parmed_residues(vac, [charge_ligand_index], mol)
+    _make_residues_nonsteric(combined, [charge_ligand_index])
+    _make_residues_nonsteric(vac, [charge_ligand_index])
+
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+    combined.save(str(window_dir / "full_pre.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+    _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
+    if work != build_dir:
+        _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
+
+    u_full = mda.Universe(str(window_dir / "full.pdb"))
+    u_vac = mda.Universe(str(window_dir / "vac.pdb"))
+
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        renum_txt = build_dir.parent / build_dir.name / "protein_renum.txt"
+    if renum_txt.exists():
+        renum_df2 = pd.read_csv(
+            renum_txt,
+            sep=r"\s+",
+            header=None,
+            names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+        )
+        renum_df2["old_resname"] = renum_df2["old_resname"].replace(
+            ["HIS", "HIE", "HIP", "HID"], "HIS"
+        )
+        renum_df2["new_resname"] = renum_df2["new_resname"].replace(
+            ["HIS", "HIE", "HIP", "HID"], "HIS"
+        )
+        _restore_protein_resids_from_renum(u_full, renum_df2)
+        _restore_protein_resids_from_renum(u_vac, renum_df2)
+
+        chain_list = renum_df2.old_chain.values
+        chain_segments = {ch: u_full.add_Segment(segid=ch) for ch in chain_list}
+        for res, ch in zip(u_full.residues[: len(chain_list)], chain_list):
+            res.segment = chain_segments[ch]
+
+    u_full.atoms.write(str(window_dir / "full.pdb"))
+    u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
+
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    hmr_enabled = str(getattr(sim, "hmr", "no")).lower() == "yes"
+    full_prmtop = (
+        str(window_dir / "full.hmr.prmtop")
+        if hmr_enabled
+        else str(window_dir / "full.prmtop")
+    )
+    merge_first_n_molecules_in_prmtop(
+        full_prmtop,
+        6,
+        str(window_dir / "full_merged.prmtop"),
+    )
+
+
+@register_create_box("d")
+@register_create_box("l")
 @register_create_box("z")
 def create_box(ctx: BuildContext) -> None:
     """
@@ -985,6 +2311,7 @@ def create_box(ctx: BuildContext) -> None:
     window_dir.mkdir(parents=True, exist_ok=True)
 
     membrane_builder = sim.membrane_simulation
+    use_membrane_reference_box = membrane_builder and comp != "q"
     lipid_mol = sim.lipid_mol
     other_mol = sim.other_mol
 
@@ -1015,10 +2342,50 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z = max(0.0, buffer_z - solv_shell)
 
 
-    if comp != "q":
+    sdr_abs_z: float | None = None
+    if comp == "l":
+        buffer_z_left = buffer_z
+    elif comp != "q":
         sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+        sdr_abs_z = abs_z
+        if buffer_z_left < _MIN_SDR_SOLVATION_BUFFER_Z:
+            logger.debug(
+                "[create_box:{}] SDR solvation z buffer {:.3f} Å is below {:.1f} Å; using {:.1f} Å.",
+                comp,
+                buffer_z_left,
+                _MIN_SDR_SOLVATION_BUFFER_Z,
+                _MIN_SDR_SOLVATION_BUFFER_Z,
+            )
+            buffer_z_left = _MIN_SDR_SOLVATION_BUFFER_Z
     else:
         buffer_z_left = buffer_z
+
+    reference_dimensions = None
+    membrane_dimensions = None
+    membrane_water_z_max = None
+    if use_membrane_reference_box:
+        reference_pdb = window_dir / "equil-reference.pdb"
+        if not reference_pdb.exists():
+            raise FileNotFoundError(
+                f"Membrane FE box creation requires {reference_pdb} to preserve "
+                "the equilibrated coordinate frame."
+            )
+        reference_universe = mda.Universe(str(reference_pdb))
+        if reference_universe.dimensions is None:
+            raise ValueError(f"{reference_pdb} does not contain box dimensions.")
+        reference_dimensions = np.asarray(reference_universe.dimensions[:3], dtype=float)
+        if reference_dimensions.shape != (3,) or not np.all(np.isfinite(reference_dimensions)):
+            raise ValueError(f"{reference_pdb} contains invalid box dimensions.")
+        membrane_dimensions = reference_dimensions.copy()
+        if comp in {"e", "v", "o", "z", "d"}:
+            if sdr_abs_z is None:
+                raise ValueError(
+                    f"Component {comp} requires SDR z information for membrane box creation."
+                )
+            membrane_dimensions[2] = float(sdr_abs_z)
+            solvated_build_pdb = window_dir / "build.pdb"
+            if solvated_build_pdb.exists():
+                membrane_water_z_max = _pdb_min_z(solvated_build_pdb) + float(sdr_abs_z)
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
@@ -1035,6 +2402,14 @@ def create_box(ctx: BuildContext) -> None:
     if not hasattr(sim, "dec_method"):
         raise AttributeError("SimulationConfig missing 'dec_method'.")
     dec_method = str(sim.dec_method)
+
+    if (
+        comp == "d"
+        and dec_method == "sdr"
+        and getattr(sim, "fe_type", None) == "uno_rest_diff"
+    ):
+        _create_box_d_abfe_diff_from_pre_fe(ctx)
+        return
 
     # ---- copy FF artifacts (resolve ff/ relative to window_dir: ../../param) ----
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
@@ -1066,7 +2441,10 @@ def create_box(ctx: BuildContext) -> None:
     else:
         water_box = f"{water_model}BOX"
 
-    build_cap_count = _rewrite_terminal_amide_caps_for_leap(window_dir / "build.pdb")
+    build_cap_count = _rewrite_terminal_amide_caps_for_leap(
+        window_dir / "build.pdb",
+        exclude_residue_names=[mol],
+    )
     if build_cap_count:
         logger.debug(
             "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before pre-solvation LEaP.",
@@ -1088,10 +2466,20 @@ def create_box(ctx: BuildContext) -> None:
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
-        f.write("model = loadpdb build.pdb\n\n")
-        f.write(
-            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
-        )
+        build_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
+        f.write(f"model = loadpdb {build_input}\n\n")
+        if use_membrane_reference_box:
+            assert membrane_dimensions is not None
+            f.write(
+                "set model box "
+                f"{{{membrane_dimensions[0]:.6f} "
+                f"{membrane_dimensions[1]:.6f} "
+                f"{membrane_dimensions[2]:.6f}}}\n\n"
+            )
+        else:
+            f.write(
+                f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
+            )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
         f.write("quit\n")
@@ -1099,14 +2487,67 @@ def create_box(ctx: BuildContext) -> None:
         f"{tleap} -s -f {tleap_solv_pre.name} > tleap_solvate_pre.log",
         working_dir=window_dir,
     )
+    _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
+
+    def _remove_stale_generated_files(patterns: tuple[str, ...]) -> None:
+        for pattern in patterns:
+            for path in window_dir.glob(pattern):
+                if path.is_file():
+                    path.unlink()
+
+    if use_membrane_reference_box:
+        _remove_stale_generated_files(
+            (
+                "solvate_pre_outside_wat.pdb",
+                "solvate_outside_wat.pdb",
+                "solvate_outside_wat.prmtop",
+                "solvate_outside_wat.inpcrd",
+                "tleap_solvate_outside_wat.in",
+                "tleap_outside_wat.log",
+                "solvate_pre_around_water.pdb",
+                "solvate_around_wat.pdb",
+                "solvate_around_wat.prmtop",
+                "solvate_around_wat.inpcrd",
+                "tleap_solvate_around_wat.in",
+                "tleap_around_wat.log",
+            )
+        )
+    else:
+        _remove_stale_generated_files(
+            (
+                "solvate_pre_wat_*.pdb",
+                "solvate_wat_*.pdb",
+                "solvate_wat_*.prmtop",
+                "solvate_wat_*.inpcrd",
+                "tleap_solvate_wat_*.in",
+                "tleap_solvate_wat_*.log",
+            )
+        )
+
+    water_chunk_paths = (
+        _write_membrane_water_chunks_from_build(
+            window_dir,
+            ligand_resname=mol,
+            box=membrane_dimensions,
+            z_max=membrane_water_z_max,
+        )
+        if use_membrane_reference_box
+        else []
+    )
 
     # Count waters in build.pdb
     num_waters = sum(
         1 for ln in (window_dir / "build.pdb").read_text().splitlines() if "WAT" in ln
     )
 
-    # pdb4amber
-    run_with_log("pdb4amber -i build.pdb -o build_amber.pdb -y", working_dir=window_dir)
+    # pdb4amber is only used here for residue-renumbering and disulfide metadata.
+    # For membrane FE systems, do not send the full solvent box through pdb4amber.
+    pdb4amber_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
+    _run_pdb4amber_for_box_or_copy(
+        window_dir / pdb4amber_input,
+        window_dir / "build_amber.pdb",
+        working_dir=window_dir,
+    )
     renum_df = pd.read_csv(
         window_dir / "build_amber_renum.txt",
         sep=r"\s+",
@@ -1138,36 +2579,56 @@ def create_box(ctx: BuildContext) -> None:
     with _mdanalysis_pdb_path(window_dir / "full_pre.pdb") as full_pre_pdb:
         u = mda.Universe(str(full_pre_pdb))
         final_system = u.atoms
-        system_dimensions = u.dimensions[:3]
+        system_dimensions = np.asarray(u.dimensions[:3], dtype=float).copy()
 
-        if membrane_builder:
-            u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))
-            u.dimensions[0] = u_ref.dimensions[0]
-            u.dimensions[1] = u_ref.dimensions[1]
-            u.dimensions[2] = u.dimensions[2] - 3
-            u.atoms.positions[:, 2] -= 3
-
-            membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
-            memb_z_max = membrane_region.select_atoms("type P").positions[:, 2].max() - 10
-            memb_z_min = membrane_region.select_atoms("type P").positions[:, 2].min() + 10
-            water_in_mem = u.select_atoms(
-                f"byres (resname WAT and prop z > {memb_z_min} and prop z < {memb_z_max})"
+        if use_membrane_reference_box:
+            assert membrane_dimensions is not None
+            u.dimensions[:3] = membrane_dimensions
+            system_dimensions = membrane_dimensions.copy()
+            final_system = u.atoms
+        elif membrane_builder:
+            reference_pdb = window_dir / "equil-reference.pdb"
+            if not reference_pdb.exists():
+                raise FileNotFoundError(
+                    f"Membrane equil box creation requires {reference_pdb} to trim "
+                    "the LEaP-solvated box back to the reference x/y frame."
+                )
+            reference_universe = mda.Universe(str(reference_pdb))
+            if reference_universe.dimensions is None:
+                raise ValueError(f"{reference_pdb} does not contain box dimensions.")
+            reference_dimensions_q = np.asarray(
+                reference_universe.dimensions[:3],
+                dtype=float,
             )
-            final_system = final_system - water_in_mem
+            if (
+                reference_dimensions_q.shape != (3,)
+                or not np.all(np.isfinite(reference_dimensions_q))
+            ):
+                raise ValueError(f"{reference_pdb} contains invalid box dimensions.")
+            u.dimensions[0] = reference_dimensions_q[0]
+            u.dimensions[1] = reference_dimensions_q[1]
+            u.dimensions[2] = float(u.dimensions[2]) - 3.0
+            u.atoms.positions[:, 2] -= 3.0
+            system_dimensions = np.asarray(u.dimensions[:3], dtype=float).copy()
+            final_system = u.atoms
 
-        box_xy = [u.dimensions[0], u.dimensions[1]]
-        water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
-        final_system = final_system | water_around_prot
+            if lipid_mol:
+                membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
+                membrane_phosphates = membrane_region.select_atoms("type P")
+                if len(membrane_phosphates):
+                    memb_z_max = membrane_phosphates.positions[:, 2].max() - 10.0
+                    memb_z_min = membrane_phosphates.positions[:, 2].min() + 10.0
+                    water_in_mem = u.select_atoms(
+                        "byres (resname WAT and "
+                        f"prop z > {memb_z_min} and prop z < {memb_z_max})"
+                    )
+                    final_system = final_system - water_in_mem
 
-        if membrane_builder:
-            outside_wat = final_system.select_atoms(
-                "byres (resname WAT and "
-                f"((prop x > {box_xy[0]/2}) or (prop x < -{box_xy[0]/2}) or "
-                f"(prop y > {box_xy[1]/2}) or (prop y < -{box_xy[1]/2})))"
-            )
-            final_system = final_system - outside_wat
+        if not use_membrane_reference_box:
+            water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
+            final_system = final_system | water_around_prot
 
-        if comp in ["e", "v", "o", "z"]:
+        if comp in ["e", "v", "o", "z", "d"] and not membrane_builder:
             min_pos = final_system.positions[:, 2].min()
             system_dimensions[2] = abs_z
 
@@ -1176,6 +2637,16 @@ def create_box(ctx: BuildContext) -> None:
                 f"(prop z > {abs_z + min_pos}))"
             )
             final_system = final_system - outside_wat_z
+
+        if membrane_builder and not use_membrane_reference_box:
+            half_x = float(system_dimensions[0]) / 2.0
+            half_y = float(system_dimensions[1]) / 2.0
+            outside_wat_xy = final_system.select_atoms(
+                "byres (resname WAT and "
+                f"((prop x > {half_x}) or (prop x < {-half_x}) or "
+                f"(prop y > {half_y}) or (prop y < {-half_y})))"
+            )
+            final_system = final_system - outside_wat_xy
 
         # renumber residues
         revised_resids = np.array(revised_resids)
@@ -1212,33 +2683,34 @@ def create_box(ctx: BuildContext) -> None:
         # partitions
         final_system_dum = final_system.select_atoms("resname DUM")
         final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
-        if comp == 'z':
-            final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
+        ligand_residues = final_system.select_atoms(f"resname {mol}").residues
+        if comp in {"z", "d"} and len(ligand_residues) > 1:
+            final_system_dum[1].position = ligand_residues[1].atoms.center_of_mass()
         final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
         final_system_ligs = final_system.select_atoms(f"resname {mol}")
         final_system_other_mol = (
             final_system_others.select_atoms("not resname WAT") - final_system_ligs
         )
-        final_system_water = final_system_others.select_atoms("resname WAT")
-        final_system_water_notaround = final_system.select_atoms(
-            f"byres (resname WAT and not (around 6 {_PROTEIN_WITH_TERMINAL_CAPS}))"
-        )
-        final_system_water_around = final_system_water - final_system_water_notaround
+        if use_membrane_reference_box:
+            final_system_water_notaround = None
+            final_system_water_around = None
+        else:
+            final_system_water = final_system_others.select_atoms("resname WAT")
+            final_system_water_notaround = final_system.select_atoms(
+                f"byres (resname WAT and not (around 6 {_PROTEIN_WITH_TERMINAL_CAPS}))"
+            )
+            final_system_water_around = final_system_water - final_system_water_notaround
 
         # write parts
         _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
 
         # set chainIDs using renum_df and write protein by chains
-        for residue in final_system_prot.residues:
-            resid_resname = (
-                "HIS"
-                if residue.resname in ["HIS", "HIE", "HIP", "HID"]
-                else residue.resname
-            )
-            residue.atoms.chainIDs = _chain_id_from_renum(
-                renum_df, resid=residue.resid, resname=resid_resname
-            )
+        for residue, chain_id in zip(
+            final_system_prot.residues,
+            _renum_chain_ids_for_residues(final_system_prot.residues, renum_df),
+        ):
+            residue.atoms.chainIDs = chain_id
         _collapse_terminal_cap_resids_in_place(final_system_prot.residues)
         prot_lines = []
         for chain_name in np.unique(final_system_prot.atoms.chainIDs):
@@ -1257,7 +2729,7 @@ def create_box(ctx: BuildContext) -> None:
         solvate_pre_prot.write_text("".join(prot_lines))
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:
-            logger.info(
+            logger.debug(
                 "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before LEaP.",
                 cap_count,
             )
@@ -1271,16 +2743,54 @@ def create_box(ctx: BuildContext) -> None:
         if other_lines_exist:
             _write_res_blocks(final_system_other_mol, window_dir / "solvate_pre_others.pdb")
 
-        outside_wat_exist = len(final_system_water_notaround.residues) != 0
+        outside_wat_exist = (
+            final_system_water_notaround is not None
+            and len(final_system_water_notaround.residues) != 0
+        )
         if outside_wat_exist:
             _write_res_blocks(
                 final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
             )
 
-        around_wat_exist = len(final_system_water_around.residues) != 0
+        around_wat_exist = (
+            final_system_water_around is not None
+            and len(final_system_water_around.residues) != 0
+        )
         if around_wat_exist:
             _write_res_blocks(
                 final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
+            )
+
+    nonwater_pre_pdbs = [
+        window_dir / "solvate_pre_dum.pdb",
+        window_dir / "solvate_pre_prot.pdb",
+        window_dir / "solvate_pre_ligands.pdb",
+    ]
+    if other_lines_exist:
+        nonwater_pre_pdbs.append(window_dir / "solvate_pre_others.pdb")
+    water_pre_pdbs = (
+        list(water_chunk_paths)
+        if use_membrane_reference_box
+        else [
+            path
+            for path in (
+                window_dir / "solvate_pre_outside_wat.pdb",
+                window_dir / "solvate_pre_around_water.pdb",
+            )
+            if path.exists()
+        ]
+    )
+    water_cleanup = _cleanup_periodic_water_pdbs(
+        water_pre_pdbs,
+        nonwater_pdbs=nonwater_pre_pdbs,
+        box=system_dimensions,
+        report_path=window_dir / "periodic_water_cleanup.json",
+    )
+    if use_membrane_reference_box:
+        water_chunk_paths = [path for path in water_chunk_paths if path.exists()]
+        if not water_chunk_paths:
+            raise ValueError(
+                f"All membrane water chunks were removed during periodic cleanup in {window_dir}."
             )
 
     # --- tleap parts (all with working_dir=window_dir) ---
@@ -1357,6 +2867,7 @@ def create_box(ctx: BuildContext) -> None:
             f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
             working_dir=window_dir,
         )
+        _repair_lipid_hydrogens_after_tleap_lipids(window_dir)
 
     # charge accounting
     def _sum_unit_charge_from_log(logfile: Path) -> Tuple[int, int]:
@@ -1398,8 +2909,37 @@ def create_box(ctx: BuildContext) -> None:
         num_ions = neu_cat
         num_ani = 0
 
+    water_part_prefixes: list[str] = []
+    if use_membrane_reference_box:
+        for chunk_index, chunk_path in enumerate(water_chunk_paths):
+            unit_name = f"wat{chunk_index:02d}"
+            prefix = f"solvate_wat_{chunk_index:02d}"
+            water_part_prefixes.append(prefix)
+            tleap_chunk = window_dir / f"tleap_{prefix}.in"
+            _cp(window_dir / "tleap.in", tleap_chunk)
+            with tleap_chunk.open("a") as f:
+                if water_model != "TIP3PF":
+                    f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+                else:
+                    f.write("source leaprc.water.fb3\n\n")
+                f.write(f"{unit_name} = loadpdb {chunk_path.name}\n\n")
+                f.write(
+                    f"set {unit_name} box "
+                    f"{{{system_dimensions[0]:.6f} "
+                    f"{system_dimensions[1]:.6f} "
+                    f"{system_dimensions[2]:.6f}}}\n"
+                )
+                f.write(f"savepdb {unit_name} {prefix}.pdb\n")
+                f.write(
+                    f"saveamberparm {unit_name} {prefix}.prmtop {prefix}.inpcrd\nquit\n"
+                )
+            run_with_log(
+                f"{tleap} -s -f {tleap_chunk.name} > tleap_{prefix}.log",
+                working_dir=window_dir,
+            )
+
     # outside water — ionization
-    if (window_dir / "solvate_pre_outside_wat.pdb").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_pre_outside_wat.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_outside_wat.in")
         with (window_dir / "tleap_solvate_outside_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -1428,7 +2968,7 @@ def create_box(ctx: BuildContext) -> None:
         )
 
     # around water
-    if (window_dir / "solvate_pre_around_water.pdb").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_pre_around_water.pdb").exists():
         _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_around_wat.in")
         with (window_dir / "tleap_solvate_around_wat.in").open("a") as f:
             if water_model != "TIP3PF":
@@ -1461,11 +3001,14 @@ def create_box(ctx: BuildContext) -> None:
     ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
 
     lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
-    if dec_method == "dd" or comp == "q":
+    if dec_method == "dd" or comp in {"q", "l"}:
         ligands_p = ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["z", "o", "s", "v"] and dec_method == "sdr":
         ligands_p = ligand_p_1 + ligand_p_1
+        ligands_p.coordinates = lig_inp
+    elif comp == "d" and dec_method == "sdr":
+        ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["e"] and dec_method == "sdr":
         ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
@@ -1486,14 +3029,22 @@ def create_box(ctx: BuildContext) -> None:
         )
         combined += others_p
         other_parts.append(others_p)
-    if (window_dir / "solvate_outside_wat.prmtop").exists():
+    if use_membrane_reference_box:
+        for prefix in water_part_prefixes:
+            water_pmd = pmd.load_file(
+                str(window_dir / f"{prefix}.prmtop"),
+                str(window_dir / f"{prefix}.inpcrd"),
+            )
+            combined += water_pmd
+            other_parts.append(water_pmd)
+    elif (window_dir / "solvate_outside_wat.prmtop").exists():
         out_wat_pmd =  pmd.load_file(
             str(window_dir / "solvate_outside_wat.prmtop"),
             str(window_dir / "solvate_outside_wat.inpcrd"),
         )
         combined += out_wat_pmd
         other_parts.append(out_wat_pmd)
-    if (window_dir / "solvate_around_wat.prmtop").exists():
+    if (not use_membrane_reference_box) and (window_dir / "solvate_around_wat.prmtop").exists():
         around_wat_pmd = pmd.load_file(
             str(window_dir / "solvate_around_wat.prmtop"),
             str(window_dir / "solvate_around_wat.inpcrd"),
@@ -1501,14 +3052,60 @@ def create_box(ctx: BuildContext) -> None:
         combined += around_wat_pmd
         other_parts.append(around_wat_pmd)
 
-    if len(other_parts) == 1:
-        other_parts_pmd = other_parts[0]
-    elif len(other_parts) == 2:
-        other_parts_pmd = other_parts[0] + other_parts[1]
-    elif len(other_parts) == 3:
-        other_parts_pmd = other_parts[0] + other_parts[1] + other_parts[2]
-    else:
-        raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
+    if not other_parts:
+        raise ValueError("No non-vacuum solvent/other parts were generated.")
+    other_parts_pmd = other_parts[0]
+    for part in other_parts[1:]:
+        other_parts_pmd = other_parts_pmd + part
+
+    if comp == "q" and bool(getattr(sim, "fix_ring_penetration", True)):
+        pre_repair_vac_coordinates = np.asarray(vac.coordinates, dtype=float).copy()
+        pre_repair_combined_coordinates = np.asarray(
+            combined.coordinates, dtype=float
+        ).copy()
+        repair_result = repair_ring_penetrations(
+            vac,
+            fix_mode=getattr(sim, "ring_penetration_fix_mode", "auto"),
+            ligand_resname=mol,
+            ligand_label=ligand,
+        )
+        if repair_result.initial_penetrations:
+            pre_repair_files = _save_pre_ring_repair_snapshots(
+                window_dir,
+                vac=vac,
+                vac_coordinates=pre_repair_vac_coordinates,
+                combined=combined,
+                combined_coordinates=pre_repair_combined_coordinates,
+            )
+            repair_metadata = repair_result.to_dict()
+            repair_metadata["pre_repair_files"] = pre_repair_files
+            (window_dir / "ring_penetration_repair.json").write_text(
+                json.dumps(repair_metadata, indent=2, sort_keys=True)
+            )
+        if repair_result.repaired:
+            combined_coordinates = np.asarray(combined.coordinates, dtype=float).copy()
+            combined_coordinates[: len(vac.atoms)] = np.asarray(
+                vac.coordinates, dtype=float
+            )
+            combined.coordinates = combined_coordinates
+
+    if use_membrane_reference_box:
+        reference_translation = _parmed_reference_translation(
+            combined,
+            window_dir / "equil-reference.pdb",
+        )
+        if reference_translation is not None:
+            _translate_parmed_structure(combined, reference_translation)
+            _translate_parmed_structure(vac, reference_translation)
+            _translate_parmed_structure(other_parts_pmd, reference_translation)
+            logger.debug(
+                "Translated final {} system back to equil-reference frame by "
+                "[{:.3f}, {:.3f}, {:.3f}] Å.",
+                comp,
+                float(reference_translation[0]),
+                float(reference_translation[1]),
+                float(reference_translation[2]),
+            )
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
@@ -1518,6 +3115,8 @@ def create_box(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
     _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
+    if work != build_dir:
+        _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
 
     other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
     other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)
@@ -1563,8 +3162,11 @@ def create_box(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    # merge DUM + DUM + PROT + LIG1 + LIG2 
-    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
+    # merge DUM + DUM + PROT plus all ligand copies before applying AMBER masks.
+    merge_molecule_count = 6 if comp == "d" and dec_method == "sdr" else 5
+    merge_first_n_molecules_in_prmtop(
+        full_prmtop, merge_molecule_count, str(window_dir / "full_merged.prmtop")
+    )
     return
 
 
@@ -1650,10 +3252,12 @@ def create_box_x(ctx: BuildContext) -> None:
         str(window_dir / f"{res_alt}.prmtop"),
         str(window_dir / "alter_ligand_aligned_site.pdb"),
     )
+    _repair_parmed_molecule_table_for_combine(alter_ligands_p_site)
     alter_ligands_p_solvent = pmd.load_file(
         str(window_dir / f"{res_alt}.prmtop"),
         str(window_dir / "alter_ligand_aligned_solvent.pdb"),
     )
+    _repair_parmed_molecule_table_for_combine(alter_ligands_p_solvent)
     combined = vac_p + alter_ligands_p_site + alter_ligands_p_solvent + other_part_p
 
     # build the ion prmtop if exists
@@ -1923,6 +3527,7 @@ def create_box_y(ctx: BuildContext) -> None:
     run_with_log(
         f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir
     )
+    _restore_existing_protons_from_reference(window_dir, window_dir / "full_pre.pdb")
 
     # --- process full_pre.pdb into final full.{prmtop,inpcrd,pdb} ---
     #
@@ -1988,6 +3593,7 @@ def create_box_y(ctx: BuildContext) -> None:
         f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
         working_dir=window_dir,
     )
+    _repair_lipid_hydrogens_after_tleap_lipids(window_dir)
 
     # combine with ParmEd
     dum_p = pmd.load_file(

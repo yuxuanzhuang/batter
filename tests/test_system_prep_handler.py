@@ -55,6 +55,29 @@ def _make_protein_pdb(path: Path) -> None:
     )
 
 
+def _make_protein_pdb_with_incomplete_residue(path: Path) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line(1, "N", "ALA", "A", 1, 0.0, 0.0, 0.0, "N"),
+            _atom_line(2, "CA", "ALA", "A", 1, 1.0, 0.0, 0.0, "C"),
+            _atom_line(3, "C", "ALA", "A", 1, 1.5, 1.0, 0.0, "C"),
+            _atom_line(4, "O", "ALA", "A", 1, 1.5, 2.0, 0.0, "O"),
+            _atom_line(5, "N", "ASP", "A", 2, 2.5, 0.5, 0.0, "N"),
+            _atom_line(6, "H", "ASP", "A", 2, 2.2, 0.4, 0.0, "H"),
+            _atom_line(7, "N", "GLY", "A", 3, 3.5, 0.5, 0.0, "N"),
+            _atom_line(8, "CA", "GLY", "A", 3, 4.5, 1.0, 0.0, "C"),
+            _atom_line(9, "C", "GLY", "A", 3, 5.5, 0.0, 0.0, "C"),
+            _atom_line(10, "O", "GLY", "A", 3, 6.5, 0.5, 0.0, "O"),
+            "TER\n",
+            _atom_line(11, "N", "SER", "B", 1, 8.0, 0.0, 0.0, "N"),
+            _atom_line(12, "CA", "SER", "B", 1, 9.0, 0.0, 0.0, "C"),
+            _atom_line(13, "C", "SER", "B", 1, 9.5, 1.0, 0.0, "C"),
+            _atom_line(14, "O", "SER", "B", 1, 9.5, 2.0, 0.0, "O"),
+        ],
+    )
+
+
 def _make_fragmented_protein_pdb(
     path: Path,
     *,
@@ -205,7 +228,7 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     runner._protein_input = str(protein)
     runner.ligands_folder.mkdir(parents=True, exist_ok=True)
 
-    expected = np.array([["H", "E", "-"]], dtype="<U1")
+    expected = np.array([["H", "E"]], dtype="<U1")
 
     class DummyDSSP:
         def __init__(self, _u):
@@ -219,8 +242,8 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
 
     result = runner._run_input_protein_dssp()
 
-    assert result["shape"] == [1, 3]
-    assert result["results"] == [["H", "E", "-"]]
+    assert result["shape"] == [1, 2]
+    assert result["results"] == [["H", "E"]]
 
     dssp_npy = Path(result["npy"])
     dssp_json = Path(result["json"])
@@ -228,7 +251,58 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     assert dssp_json.exists()
 
     np.testing.assert_array_equal(np.load(dssp_npy, allow_pickle=False), expected)
-    assert json.loads(dssp_json.read_text()) == [["H", "E", "-"]]
+    assert json.loads(dssp_json.read_text()) == [["H", "E"]]
+
+
+def test_run_input_protein_dssp_splits_chains_and_skips_incomplete_residues(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    protein = tmp_path / "protein.pdb"
+    _make_protein_pdb_with_incomplete_residue(protein)
+    runner._protein_input = str(protein)
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    calls = []
+
+    class DummyDSSP:
+        def __init__(self, atoms):
+            self.residues = list(atoms.residues)
+            self.results = {}
+            calls.append(
+                (
+                    self.residues[0].atoms.chainIDs[0],
+                    tuple(int(residue.resid) for residue in self.residues),
+                )
+            )
+
+        def run(self):
+            code_by_residue = {
+                ("A", 1): "H",
+                ("A", 3): "E",
+                ("B", 1): "H",
+            }
+            self.results["dssp"] = np.array(
+                [
+                    [
+                        code_by_residue[
+                            (residue.atoms.chainIDs[0], int(residue.resid))
+                        ]
+                        for residue in self.residues
+                    ]
+                ],
+                dtype="<U1",
+            )
+            return self
+
+    monkeypatch.setattr(system_prep_mod, "DSSP", DummyDSSP)
+
+    result = runner._run_input_protein_dssp()
+
+    assert calls == [("A", (1,)), ("A", (3,)), ("B", (1,))]
+    assert result["shape"] == [1, 4]
+    assert result["results"] == [["H", "-", "E", "H"]]
 
 
 def test_find_min_xy_box_rotation_reduces_diagonal_xy_area() -> None:
@@ -369,6 +443,79 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
         anchor_atoms=[],
     )
 
+    assert seen["protein_dssp"] == fake_dssp["results"]
+    assert seen["anchor_atoms"] == selected
+    assert manifest["anchor_atom_selections"] == selected
+
+
+def test_run_auto_completes_anchor_atoms_when_only_p1_provided(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+
+    protein = tmp_path / "protein.pdb"
+    ligand = tmp_path / "ligand.pdb"
+    _make_protein_pdb(protein)
+    _make_ligand_pdb(ligand)
+
+    fake_dssp = {
+        "npy": str(system.root / "all-ligands" / "protein_input_dssp.npy"),
+        "json": str(system.root / "all-ligands" / "protein_input_dssp.json"),
+        "shape": [1, 2],
+        "results": [["H", "E"]],
+    }
+    pinned_p1 = "resid 1 and name CA"
+    selected = [
+        pinned_p1,
+        "resid 2 and name CA",
+        "resid 3 and name CA",
+    ]
+    seen = {}
+
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_run_input_protein_dssp", lambda self: fake_dssp
+    )
+    monkeypatch.setattr(_SystemPrepRunner, "_get_alignment", lambda self: None)
+
+    def _fake_process_system(self) -> None:
+        self.ligands_folder.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(self.ligands_folder / "reference.pdb")
+        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+
+    def _fake_prepare_all_ligands(self) -> None:
+        out = self.ligands_folder / "LIG1.pdb"
+        _make_ligand_pdb(out)
+        self.ligand_dict = {"LIG1": str(out)}
+
+    def _fake_select_receptor_anchor_atoms(*args, **kwargs):
+        seen["preferred_p1_selection"] = kwargs.get("preferred_p1_selection")
+        seen["protein_dssp"] = kwargs.get("protein_dssp")
+        return selected
+
+    def _fake_find_anchor_atoms(*args, **kwargs):
+        seen["anchor_atoms"] = args[3]
+        return (1.0, 2.0, 3.0, ":1@CA", ":2@CA", ":3@CA", 4.0)
+
+    monkeypatch.setattr(_SystemPrepRunner, "_process_system", _fake_process_system)
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_prepare_all_ligands", _fake_prepare_all_ligands
+    )
+    monkeypatch.setattr(
+        system_prep_mod,
+        "select_receptor_anchor_atoms",
+        _fake_select_receptor_anchor_atoms,
+    )
+    monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
+
+    manifest = runner.run(
+        system_name="SYS",
+        protein_input=str(protein),
+        ligand_paths={"LIG1": str(ligand)},
+        anchor_atoms=[pinned_p1],
+    )
+
+    assert seen["preferred_p1_selection"] == pinned_p1
     assert seen["protein_dssp"] == fake_dssp["results"]
     assert seen["anchor_atoms"] == selected
     assert manifest["anchor_atom_selections"] == selected

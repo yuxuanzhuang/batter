@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from loguru import logger
 
+from batter._internal.ops.cleanup import cleanup_fe_after_analysis
 from batter.analysis.analysis import analyze_lig_task
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
@@ -205,6 +206,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         required=[[analyze_rel, results_rel]],
         success=[[analyze_rel, results_rel]],
     )
+    if not bool(payload.get("store_debug_files", False)):
+        cleanup_fe_after_analysis(fe_root, components=components)
 
     logger.debug(f"[analyze:{lig}] FE analysis done. Artifacts: {', '.join(p.name for p in arts.values()) or 'none'}")
     return ExecResult(job_ids=[], artifacts=arts)

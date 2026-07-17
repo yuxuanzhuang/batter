@@ -10,8 +10,11 @@ from .step import Step
 
 __all__ = [
     "make_abfe_pipeline",
+    "make_abfe_diff_pipeline",
     "make_asfe_pipeline",
+    "make_ligand_rest_pipeline",
     "make_rbfe_pipeline",
+    "make_rbfe_septop_pipeline",
     "make_md_pipeline",
 ]
 
@@ -157,6 +160,181 @@ def make_abfe_pipeline(
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
+
+
+def make_abfe_diff_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    ABFE_diff pipeline:
+
+    system_prep → param_ligands → prepare_equil → equil → equil_analysis
+    → pre_prepare_fe → pre_fe_equil → prepare_fe → prepare_fe_windows
+    → fe_equil → fe → analyze
+
+    The pre-FE stage builds and equilibrates the standard SDR two-ligand
+    ``z-1`` precursor before the final ``d`` component adds the third ligand
+    copy used for charge-balanced ABFE_diff.
+    """
+    steps: List[Step] = []
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams.model_validate(sys_params or {})
+    )
+
+    steps.append(
+        _step(
+            name="system_prep",
+            requires=[],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            name="param_ligands",
+            requires=["system_prep"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_equil",
+            requires=["param_ligands"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "equil",
+            requires=["prepare_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "equil_analysis",
+            requires=["equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "pre_prepare_fe",
+            requires=["equil_analysis"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "pre_fe_equil",
+            requires=["pre_prepare_fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe",
+            requires=["pre_fe_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe_windows",
+            requires=["prepare_fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "fe_equil",
+            requires=["prepare_fe_windows"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "fe",
+            requires=["fe_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "analyze",
+            requires=["fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+
+    if only_fe_preparation:
+        keep = {
+            "system_prep",
+            "param_ligands",
+            "prepare_equil",
+            "equil",
+            "equil_analysis",
+            "pre_prepare_fe",
+            "pre_fe_equil",
+            "prepare_fe",
+            "prepare_fe_windows",
+            "fe_equil",
+        }
+        steps = [s for s in steps if s.name in keep]
+
+    return Pipeline(steps)
+
+
+def make_ligand_rest_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    Ligand conformational-restraint pipeline:
+
+    system_prep → param_ligands → prepare_equil → equil → equil_analysis
+    → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
+
+    The FE leg contains only component ``l``.
+    """
+    return make_abfe_pipeline(
+        sim,
+        sys_params=sys_params,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_rbfe_pipeline(
@@ -318,6 +496,27 @@ def make_rbfe_pipeline(
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
+
+
+def make_rbfe_septop_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """SEPTOP RBFE uses the standard RBFE system-preparation graph."""
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams.model_validate(sys_params or {})
+    ).copy_with(protocol="rbfe_septop")
+    return make_rbfe_pipeline(
+        sim,
+        sys_params=params_model,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_asfe_pipeline(
