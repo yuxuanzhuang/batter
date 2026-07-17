@@ -19,21 +19,23 @@ The run YAML file is divided into three sections grouped inside
     notification preferences, and artifact destination. ``run.output_folder`` is
     required and becomes the base path for ``<run.output_folder>/executions/<run_id>/``.
     ``run.system_type`` optionally overrides the builder selection inferred from the
-    protocol (``MABFE`` for ABFE/MD, ``MASFE`` for ASFE). This section is validated
-    by :class:`batter.config.run.RunSection`. Set ``run.clean_failures: true`` to
-    remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress
-    caches before rerunning an existing execution.
+    protocol (``MABFE`` for ABFE/RBFE/MD-family runs, ``MASFE`` for ASFE). This
+    section is validated by :class:`batter.config.run.RunSection`. Set
+    ``run.clean_failures: true`` to remove ``FAILED`` sentinels,
+    ``job_attempt.txt`` retry counters, and progress caches before rerunning an
+    existing execution. Set ``run.store_debug_files: true`` to preserve
+    intermediate scratch files that are otherwise pruned after successful stages.
 ``create``
     Inputs required for system staging (protein/topology paths, ligands, force fields,
     optional anchors/restraints). The structure maps directly to
     :class:`batter.config.run.CreateArgs`.
 ``fe_sim``
-    Overrides and controls for free-energy simulation stages. For ABFE/ASFE runs
-    these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
-    coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
-    ``lambdas`` or SDR restraints are no longer required. Equilibration controls
-    are expressed via ``eq_steps`` which now represents the **total** equilibration
-    steps. The value is written into ``mdin-template`` as ``! total_steps=<total>``,
+    Overrides and controls for simulation stages. FE protocols map this section to
+    :class:`batter.config.run.FESimArgs`. MD-only runs automatically coerce it into
+    :class:`batter.config.run.MDSimArgs`, so fields like ``lambdas`` or SDR
+    restraints are no longer required. Equilibration controls are expressed via
+    ``eq_steps`` which now represents the **total** equilibration steps. The value
+    is written into ``mdin-template`` as ``! total_steps=<total>``,
     letting runtime scripts determine the target length without regenerating inputs.
     Legacy production extend knobs (``num_fe_extends``) are rejected; set
     ``n_steps`` to total steps instead. ``analysis_range`` is likewise
@@ -52,9 +54,10 @@ Per-component steps and lambdas
 
 Component steps are supplied via ``fe_sim.n_steps`` as dicts keyed by the
 single-letter component (e.g. ``z: 100000``). Keys like ``y_n_steps`` are also
-accepted and folded into this map automatically. Each protocol enforces the
-required components: ABFE fills ``z`` defaults if omitted, and ASFE fills
-``y``/``m`` defaults.
+accepted and folded into this map automatically. Each FE protocol enforces the
+components it needs: ABFE requires ``z``, standard and SEPTOP RBFE require ``x``,
+and ASFE requires ``y``/``m``. Set the corresponding ``<comp>_n_steps`` or
+``fe_sim.n_steps`` entry explicitly in production YAMLs.
 
 Lambda schedules can be customized per component using ``fe_sim.component_lambdas``
 (or ``<comp>_lambdas`` keys). When a component is missing from that map, it
@@ -64,12 +67,23 @@ or comma/space separated strings; validation ensures ascending order.
 RBFE mapping options
 --------------------
 
-For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom mapping.
+For ``protocol: rbfe`` or ``protocol: rbfe_septop``, the ``rbfe`` block controls
+network planning and atom mapping/scoring.
 
 * ``rbfe.mapping`` – mapping strategy (for example ``default`` or ``konnektor``).
 * ``rbfe.mapping_file`` – explicit pair list file; takes precedence over ``mapping``.
 * ``rbfe.atom_mapping_file`` – optional JSON/YAML atom mapping overrides for
   selected pairs; uncovered pairs use ``rbfe.atom_mapper``.
+* ``rbfe.network_scorer`` – edge scorer for Konnektor planning. ``auto`` uses the
+  LoMap scorer for standard RBFE and pocket-shape scoring for ``rbfe_septop``.
+  Other accepted values include ``lomap``, ``shape_difference`` and
+  ``pocket_shape``.
+* ``rbfe.direction_policy`` – ``larger_volume`` (default) or ``preserve``. Generated
+  networks are oriented with the larger grid-volume ligand as reference unless a
+  mapping file explicitly fixes the direction.
+* ``rbfe.minimal_mapping_atom`` – minimum mapped-atom count required for standard
+  RBFE edges. This check is not used to reject ``rbfe_septop`` edges because SEPTOP
+  uses full-ligand softcore setup.
 * ``rbfe.add_atom_mapping_edges`` – default ``false``; append valid
   atom-mapping override pairs when neither direction was selected by network
   planning.
@@ -101,18 +115,22 @@ See :doc:`rbfe` for RBFE-specific examples.
 Anchor selection
 ----------------
 
-``create.anchor_atoms`` is optional. If it is omitted, BATTER resolves the
-anchor triplet during ``system_prep`` and records the selections in
-``executions/<run_id>/all-ligands/manifest.json``:
+``create.anchor_atoms`` is optional. If it is omitted, BATTER resolves the anchor
+triplet during ``system_prep`` and stores the resolved global selections in
+``executions/<run_id>/all-ligands/manifest.json``. Prepared-system anchor masks
+used by later equilibration/FE setup are also written per ligand to
+``equil/anchors.json``.
 
 * For runs with real ligands, the first available real ligand pose drives a
   ligand-guided receptor-anchor heuristic.
 * For apo-only MD, BATTER switches to a protein-only heuristic so dummy ligand
   coordinates do not determine the anchor geometry.
 
-Use explicit ``create.anchor_atoms`` only when you need to pin a known
-binding-site geometry or override the heuristic. The value must contain exactly
-three MDAnalysis selection strings, ordered as P1, P2, and P3.
+If you know the receptor interaction that should define the Boresch reference,
+provide one selection. BATTER treats that atom as P1 and chooses P2/P3
+automatically. Prefer the binding-site Cα of a residue associated with a
+conserved ligand interaction, such as the residue forming a salt bridge. Provide
+three selections only when you need fully manual P1/P2/P3 geometry.
 
 Component-Specific Inputs
 -------------------------
@@ -153,8 +171,9 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
      - JSON specification for conformational restraints.
    * - ``anchor_atoms``
      - ``system_prep`` / restraint ops
-     - Optional P1/P2/P3 receptor-anchor override. Empty means BATTER selects
-       anchors heuristically and stores the resolved selections in the manifest.
+     - Optional receptor-anchor override. Empty means BATTER selects anchors
+       heuristically; one selection pins P1 and auto-selects P2/P3; three
+       selections provide explicit P1/P2/P3 geometry.
    * - ``lipid_mol``
      - Build/ops helpers
      - Identifies membrane residues when trimming waters.

@@ -151,29 +151,39 @@ RBFE-Specific Additions
 
 RBFE records use the same top-level pattern, but the payload is slightly different::
 
+   results/<run_id>/
+   ├── rbfe_network.json
+   ├── rbfe_network.png
+   ├── rbfe_network.html
+   └── <ligand_ref~ligand_alt>/
+       ├── record.json
+       ├── Results/
+       │   ├── Results.dat
+       │   ├── mapping.json
+       │   ├── mapping.pkl
+       │   └── mapping.png
+       ├── Equil_ref/
+       └── Equil_alt/
+
+``results/<run_id>/rbfe_network.*``
+   Run-level copies of the resolved RBFE network artifacts from
+   ``executions/<run_id>/artifacts/config/``. The HTML dashboard is generated
+   during ``prepare_rbfe`` and includes pan/zoom controls, clickable ligand and
+   edge notes, collapsed reverse-direction edges, prepared atom-mapping or
+   pocket-shape images when drawing succeeds, and selectable edge coloring by
+   graph redundancy or available mapping metrics.
+
+Per-pair RBFE result records live under::
+
    results/<run_id>/<ligand_ref~ligand_alt>/
    ├── record.json
    ├── Results/
    │   ├── Results.dat
-   │   ├── rbfe_network.png
-   │   ├── rbfe_network.html
    │   ├── mapping.json
    │   ├── mapping.pkl
    │   └── mapping.png
    ├── Equil_ref/
    └── Equil_alt/
-
-``Results/rbfe_network.png``
-   Copy of the resolved RBFE network plot from
-   ``executions/<run_id>/artifacts/config/rbfe_network.png``.
-
-``Results/rbfe_network.html``
-   Copy of the planned RBFE network dashboard from
-   ``executions/<run_id>/artifacts/config/rbfe_network.html``. The dashboard is
-   generated during ``prepare_rbfe`` and includes pan/zoom controls, clickable
-   ligand and edge notes, collapsed reverse-direction edges, prepared
-   atom-mapping images when drawing succeeds, and selectable edge coloring by
-   graph redundancy or available mapping metrics.
 
 ``Results/mapping.*``
    Atom-mapping artifacts copied into the transformation setup directory from

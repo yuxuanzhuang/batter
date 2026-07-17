@@ -265,7 +265,7 @@ def _require_rbfe_network_has_pairs(config_dir: Path) -> None:
     if not payload.get("pairs"):
         raise RuntimeError(
             "Prepared RBFE network contains no ligand pairs after removing identical "
-            "ligands and full-atom-map edges."
+            "duplicate ligands."
         )
 
 
@@ -530,8 +530,8 @@ def _build_rbfe_network_plan(
     Resolve and persist the RBFE ligand network before equilibration.
 
     This phase deduplicates identical ligands, resolves explicit or generated
-    transformation pairs, prepares per-edge atom-mapping artifacts, filters
-    full-coverage mappings, and writes ``rbfe_network.json`` plus the
+    transformation pairs, prepares per-edge atom-mapping artifacts, records
+    mapping coverage metadata, and writes ``rbfe_network.json`` plus the
     interactive ``rbfe_network.html`` review page under ``config_dir``.
     """
     from batter.rbfe import (

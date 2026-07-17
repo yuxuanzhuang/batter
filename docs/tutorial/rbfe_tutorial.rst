@@ -53,7 +53,9 @@ Network planning schemes
 
 RBFE mappings can be created in a few ways:
 
-* **Default** – maps the first ligand to all others (star topology).
+* **Default** – builds a star topology from the first ligand to all others, then
+  applies ``rbfe.direction_policy`` unless an explicit mapping file fixed the
+  directions.
 * **Konnektor** – uses the ``konnektor`` library to build a network; configure with
   ``rbfe.mapping: konnektor`` and optionally ``rbfe.konnektor_layout``.
   Choose atom mapping backend via ``rbfe.atom_mapper`` (``kartograf`` or ``lomap``).
@@ -341,6 +343,18 @@ Use the CLI helpers to inspect them::
     batter fe list <run.output_folder>
     batter fe show <run.output_folder> <run_id> --ligand <ligand_pair>
 
+For large RBFE or ``rbfe_septop`` runs, re-analysis is usually easier as a SLURM
+array with one task per transformation pair::
+
+    batter fe analyze <run.output_folder> <run_id> --job-array --array-limit 128 --workers 2
+    sbatch <generated>_array.sbatch
+
+The generated ``*.tasks.tsv`` has one ``run_id``/pair target per line. Use
+``--ligand LIG1~LIG2`` for one pair, or ``--ligand LIG1`` for all pairs touching
+that endpoint ligand. Omit ``run_id`` to generate tasks for every execution under
+``<run.output_folder>/executions``. ``--job-array`` only writes the array script;
+it is submitted separately with ``sbatch``.
+
 For cross-run RBFE benchmarking or Cinnabar plotting, convert stored BATTER
 records into a Cinnabar bundle. The recommended form treats each run as an atomic
 ``WORK_DIR`` + ``RUN_ID`` input, so runs from different work directories can be
@@ -379,14 +393,20 @@ If you have experimental absolute affinities, pass them with
 ``--experimental-csv`` so Cinnabar can emit DG/DDG comparison plots. BATTER merges
 ``A~B`` and ``B~A`` into one canonical edge by default; add ``--split-directions``
 if you want to keep the two stored directions separate in the Cinnabar export.
+By default, Cinnabar export filters RBFE edges whose x-component forward/backward
+convergence has not reached 1 kcal/mol by 80% of the production data. Edges
+needed to preserve network connectivity can be restored with the fallback
+0.5/2 kcal/mol criterion. Use ``--no-x-convergence-filter`` or adjust
+``--x-convergence-filter`` / ``--x-convergence-fallback-filter`` when you need a
+different policy; BATTER also writes an ``unskipped/`` bundle for comparison.
 BATTER also writes ``cinnabar_absolute_sorted.png`` from the Cinnabar MLE absolute
 values; use ``--absolute-offset`` if you want to shift that ranking plot onto a
 chosen absolute reference level.
 
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file
-description of the portable repository, including the RBFE-only ``mapping.*``,
-``rbfe_network.png``, ``rbfe_network.html``, and ``Equil_ref`` / ``Equil_alt``
+description of the portable repository, including per-pair ``mapping.*``,
+run-level ``rbfe_network.*`` artifacts, and ``Equil_ref`` / ``Equil_alt``
 exports, see
 :doc:`../cookbook/results_folder`.
 
@@ -418,7 +438,8 @@ enough, using a simple evenly spaced schedule:
              0.65217391, 0.69565217, 0.73913043, 0.7826087, 0.82608696,
              0.86956522, 0.91304348, 0.95652174, 1.0]
 
-For more complex transformations, 48 windows has worked well in testing:
+For more complex transformations, or for ``rbfe_septop``, 48 windows has worked
+well in testing:
 
 .. code-block:: yaml
 

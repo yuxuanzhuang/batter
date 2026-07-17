@@ -20,6 +20,8 @@ The most useful files are:
 * ``cinnabar_dashboard.html`` - interactive network and absolute-ranking dashboard.
 * ``edge_summary.csv`` - combined edge-level ``DDG`` estimates and uncertainties.
 * ``raw_signed.csv`` - signed per-measurement rows after edge-direction handling.
+* ``x_convergence_filter.csv`` - convergence-filter decisions when the default
+  x-component filter is enabled.
 * ``cinnabar_relative.csv`` - relative measurements exported from the Cinnabar ``FEMap``.
 * ``cinnabar_absolute.csv`` - MLE-derived absolute values when the network is connected.
 * ``cinnabar_network.png`` - static network plot.
@@ -31,6 +33,15 @@ This per-run folder is the first place to look after a normal RBFE run. For exam
 
 For a static example of the interactive dashboard layout, open or download the
 :download:`sample Cinnabar dashboard <../assets/cinnabar_dashboard.html>`.
+
+By default, RBFE Cinnabar export filters edge measurements whose x-component
+forward/backward convergence has not reached 1 kcal/mol by 80% of the production
+data. If filtering would disconnect the network, BATTER tries to restore needed
+edges with the fallback 0.5/2 kcal/mol criterion. Whenever this filter is active,
+BATTER also writes an ``unskipped/`` bundle beside the filtered output so you can
+compare the filtered and unfiltered FEMaps. Use ``--no-x-convergence-filter`` or
+custom ``--x-convergence-filter FRACTION KCAL`` /
+``--x-convergence-fallback-filter FRACTION KCAL`` values to change this behavior.
 
 Combine replicates and connect networks
 ---------------------------------------
