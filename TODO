@@ -1,5 +1,3 @@
-- add support of running protein only simulations
-- better choice of atoms for Boresch restraints based on interactions
 - add flat-bottom restraint aside from Boresch to have a well-defined binding site
 - add supports and documentation to build membrane protein systems without dabble.
 - correction for symmetry.
