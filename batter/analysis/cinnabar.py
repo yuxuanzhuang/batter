@@ -570,6 +570,7 @@ def _restore_connectivity_with_fallback_edges(
     default_work_dir: str | Path | None,
     edge_separator: str,
 ) -> np.ndarray:
+    keep_mask = np.array(keep_mask, dtype=bool, copy=True)
     if fallback_threshold is None or rbfe_df.empty or not np.any(~keep_mask):
         return keep_mask
 
@@ -679,7 +680,7 @@ def _filter_by_x_convergence(
     summary = pd.DataFrame.from_records(records)
     summary["primary_reason"] = summary["reason"]
     summary["restored_for_connectivity"] = False
-    keep_mask = summary["included"].astype(bool).to_numpy()
+    keep_mask = summary["included"].astype(bool).to_numpy(copy=True)
     keep_mask = _restore_connectivity_with_fallback_edges(
         rbfe_df,
         summary,
