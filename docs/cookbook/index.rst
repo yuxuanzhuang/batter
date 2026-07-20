@@ -11,7 +11,7 @@ need a full tutorial.
    configuration
    slurm_headers
    production_runs
-   remd_submission
+   remote_bundled_jobs
    amber_compilation
    results_folder
    rbfe

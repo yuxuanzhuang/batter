@@ -73,7 +73,7 @@ working on internal builders or pipelines:
    developer_guide/parameterisation
 
 For Slurm header customisation, see :doc:`cookbook/slurm_headers`.
-For REMD operational details, see :doc:`cookbook/remd_submission`.
+For REMD operational details, see :doc:`cookbook/remote_bundled_jobs`.
 
 High-Level Execution Flow
 =========================
