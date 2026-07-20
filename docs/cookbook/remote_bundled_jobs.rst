@@ -62,7 +62,9 @@ Useful options for very large batches:
    allocation you want.
 
 ``--time-limit`` / ``--partition``
-   Override the corresponding SLURM header values for this batch.
+   Set the corresponding SLURM allocation values for this batch. The default
+   batch time limit is ``00:15:00``. If auto-resubmit is enabled, ``--signal-mins``
+   must be at least 1 minute shorter than ``--time-limit``.
 
 ``--force-job-attempt N``
    Run every queued component with the same retry-attempt setting instead of each

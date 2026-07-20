@@ -67,6 +67,76 @@ def _hash_path_list(paths: Sequence[Path]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
 
 
+def _parse_slurm_time_limit_minutes(value: str) -> float:
+    """Parse common Slurm time-limit formats into minutes."""
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("empty time limit")
+
+    days = 0
+    rest = raw
+    has_days = "-" in raw
+    if has_days:
+        day_text, rest = raw.split("-", 1)
+        if not day_text.isdigit() or not rest:
+            raise ValueError(f"invalid Slurm time limit: {value!r}")
+        days = int(day_text)
+
+    parts = rest.split(":")
+    if not 1 <= len(parts) <= 3 or any(not item.isdigit() for item in parts):
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+    nums = [int(item) for item in parts]
+
+    hours = 0
+    minutes = 0
+    seconds = 0
+    if has_days:
+        if len(nums) == 1:
+            hours = nums[0]
+        elif len(nums) == 2:
+            hours, minutes = nums
+        else:
+            hours, minutes, seconds = nums
+    elif len(nums) == 1:
+        minutes = nums[0]
+    elif len(nums) == 2:
+        minutes, seconds = nums
+    else:
+        hours, minutes, seconds = nums
+
+    minutes_is_subfield = (has_days and len(nums) >= 2) or (
+        not has_days and len(nums) == 3
+    )
+    if (minutes_is_subfield and minutes >= 60) or seconds >= 60:
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+
+    total = days * 24 * 60 + hours * 60 + minutes + seconds / 60.0
+    if total <= 0:
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+    return total
+
+
+def _validate_signal_before_time_limit(
+    *,
+    time_limit: str | None,
+    signal_mins: float,
+) -> None:
+    if not time_limit:
+        return
+    try:
+        time_limit_mins = _parse_slurm_time_limit_minutes(time_limit)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Could not parse --time-limit {time_limit!r}; use a Slurm time "
+            "format such as 00:15:00."
+        ) from exc
+    if time_limit_mins - float(signal_mins) < 1.0:
+        raise click.ClickException(
+            "--signal-mins must be at least 1 minute shorter than --time-limit "
+            f"(got signal={signal_mins:g} min, time-limit={time_limit})."
+        )
+
+
 def _execution_root_for_path(path: Path) -> Path | None:
     """Return the execution root for paths accepted by ``batter batch``."""
     path = path.resolve()
@@ -617,6 +687,11 @@ def _run_remd_batch(
         raise click.ClickException(
             "--signal-mins must be > 0 when auto-resubmit is enabled."
         )
+    if auto_resubmit:
+        _validate_signal_before_time_limit(
+            time_limit=time_limit,
+            signal_mins=signal_mins,
+        )
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(
             "--max-resubmit-count must be > 0 when auto-resubmit is enabled."
@@ -927,8 +1002,9 @@ def _run_remd_batch(
 @click.option(
     "--time-limit",
     type=str,
-    default=None,
-    help="Optional time limit override for the sbatch header (e.g., 08:00:00).",
+    default="00:15:00",
+    show_default=True,
+    help="Time limit for the generated sbatch script.",
 )
 @click.option(
     "--gpus",
@@ -958,7 +1034,7 @@ def _run_remd_batch(
 @click.option(
     "--signal-mins",
     type=float,
-    default=90.0,
+    default=10.0,
     show_default=True,
     help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
 )
@@ -1055,6 +1131,11 @@ def batch(
     if auto_resubmit and signal_mins <= 0:
         raise click.ClickException(
             "--signal-mins must be > 0 when auto-resubmit is enabled."
+        )
+    if auto_resubmit:
+        _validate_signal_before_time_limit(
+            time_limit=time_limit,
+            signal_mins=signal_mins,
         )
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(

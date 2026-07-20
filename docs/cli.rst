@@ -76,6 +76,8 @@ Key options:
    ``MPI_EXEC`` is ``srun``.
 ``--nodes``
    Override the total node count in the header.
+``--time-limit``
+   Time limit for the generated sbatch script (default: 00:15:00).
 ``--remd``
    Use REMD execution mode (``run-local-remd.bash``) instead of standard batch mode.
 ``--auto-resubmit`` / ``--no-auto-resubmit``
@@ -83,7 +85,8 @@ Key options:
    regenerates the batch script, and resubmits it until all components finish
    or the max resubmission count is reached.
 ``--signal-mins``
-   Minutes before the time limit to trigger auto-resubmit (default: 90).
+   Minutes before the time limit to trigger auto-resubmit (default: 10). Must
+   be at least 1 minute shorter than ``--time-limit``.
 ``--max-resubmit-count``
    Maximum total submissions for the script (including the first run; default: 4).
 ``--current-submission-time``
@@ -128,7 +131,9 @@ To submit the analysis itself as a SLURM manager job, use ``--slurm-submit``::
    batter fe analyze work/adrb2 run-20240101 --slurm-submit
 
 The generated script uses ``job_manager.header``/``job_manager.body`` in the same
-way as ``batter run --slurm-submit``. Use ``--partition`` or
+way as ``batter run --slurm-submit``. By default, BATTER sets
+``#SBATCH --partition=batch`` and ``#SBATCH --account=BIP152`` for FE analysis
+SLURM submissions. Use ``--partition``, ``--account``, or
 ``--slurm-manager-path`` to override the generated manager script.
 
 To generate a per-ligand (or per-RBFE-pair) SLURM array script without submitting
@@ -139,8 +144,8 @@ it immediately, use ``--job-array``::
 This writes ``*_array.sbatch`` and a matching ``*.tasks.tsv`` task file in the
 current directory. Submit the generated script with ``sbatch`` after inspection.
 Use ``--array-limit`` to control concurrent array tasks, ``--array-output`` to
-choose the script path, and ``--partition`` to set the generated script's
-partition. For RBFE and ``rbfe_septop`` runs, each array task analyzes one
+choose the script path, and ``--partition``/``--account`` to set the generated
+script's SLURM allocation entries. For RBFE and ``rbfe_septop`` runs, each array task analyzes one
 transformation pair; ``--ligand`` may be a pair id such as ``LIG1~LIG2`` or an
 endpoint ligand name to include all pairs touching that ligand. If you omit
 ``run_id``, BATTER writes array tasks for every execution under

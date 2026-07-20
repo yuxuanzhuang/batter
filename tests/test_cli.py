@@ -543,6 +543,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     assert "#SBATCH --job-name=fep_" in script_text
     assert "/fe_analyze/rep1" in script_text
     assert "#SBATCH --partition=gpu" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
     assert "# BATTER environment captured at submit time" in script_text
     assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
     assert "fe analyze" in script_text
@@ -632,6 +633,7 @@ def test_cli_fe_analyze_job_array_writes_script_and_tasks(
     assert tasks_path.read_text().splitlines() == ["rep1\tLIG1", "rep1\tLIG2"]
     script_text = script_path.read_text()
     assert "#SBATCH --partition=owners" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
     assert "#SBATCH --cpus-per-task=2" in script_text
     assert "#SBATCH --array=1-2%3" in script_text
     assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
@@ -703,7 +705,10 @@ def test_cli_fe_analyze_job_array_rbfe_endpoint_filter(
     assert script_path.with_suffix(".tasks.tsv").read_text().splitlines() == [
         "rep1\tA~B"
     ]
-    assert "#SBATCH --array=1-1%2" in script_path.read_text()
+    script_text = script_path.read_text()
+    assert "#SBATCH --partition=batch" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
+    assert "#SBATCH --array=1-1%2" in script_text
 
 
 def test_cli_fe_analyze_job_array_rbfe_septop_uses_pairs(

@@ -795,6 +795,7 @@ def _submit_fe_analyze_slurm(
     log_level: str,
     slurm_manager_path: Path | None,
     partition: str | None,
+    account: str | None,
 ) -> None:
     work_dir_abs = work_dir.resolve()
     target = run_id or "all"
@@ -837,6 +838,7 @@ def _submit_fe_analyze_slurm(
         overwrite=overwrite,
         log_level=log_level.upper(),
         partition=partition or "",
+        account=account or "",
     )
 
     base_path = Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
@@ -854,6 +856,8 @@ def _submit_fe_analyze_slurm(
     manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
     if partition:
         manager_code = _upsert_sbatch_option(manager_code, "partition", partition)
+    if account:
+        manager_code = _upsert_sbatch_option(manager_code, "account", account)
 
     script_name = f"{run_hash}_job_manager.sbatch"
     with open(script_name, "w") as f:
@@ -960,6 +964,7 @@ def _write_fe_analyze_job_array(
     overwrite: bool,
     log_level: str,
     partition: str | None,
+    account: str | None,
     array_limit: int,
     array_output: Path | None,
 ) -> Path:
@@ -990,6 +995,7 @@ def _write_fe_analyze_job_array(
         overwrite=overwrite,
         log_level=log_level.upper(),
         partition=partition or "",
+        account=account or "",
         array_limit=array_limit,
         targets=len(tasks),
     )
@@ -1027,10 +1033,12 @@ def _write_fe_analyze_job_array(
     run_cmd = " \\\n".join(cmd_lines)
 
     partition_line = f"#SBATCH --partition={partition}\n" if partition else ""
+    account_line = f"#SBATCH --account={account}\n" if account else ""
     script = (
         "#!/bin/bash\n"
         f"#SBATCH --job-name={job_name}\n"
         f"{partition_line}"
+        f"{account_line}"
         "#SBATCH --nodes=1\n"
         "#SBATCH --ntasks=1\n"
         f"#SBATCH --cpus-per-task={cpus}\n"
@@ -1160,8 +1168,15 @@ def _write_fe_analyze_job_array(
 @click.option(
     "--partition",
     "-p",
-    default=None,
-    help="Override the SLURM partition in the generated manager or array script.",
+    default="batch",
+    show_default=True,
+    help="SLURM partition in the generated manager or array script.",
+)
+@click.option(
+    "--account",
+    default="BIP152",
+    show_default=True,
+    help="SLURM account in the generated manager or array script.",
 )
 @click.option(
     "--job-array/--no-job-array",
@@ -1194,6 +1209,7 @@ def fe_analyze(
     slurm_submit: bool = False,
     slurm_manager_path: Path | None = None,
     partition: str | None = None,
+    account: str | None = None,
     job_array: bool = False,
     array_limit: int = 2,
     array_output: Path | None = None,
@@ -1238,6 +1254,7 @@ def fe_analyze(
             log_level=log_level,
             slurm_manager_path=slurm_manager_path,
             partition=partition,
+            account=account,
         )
         return
 
@@ -1265,6 +1282,7 @@ def fe_analyze(
                 overwrite=overwrite,
                 log_level=log_level,
                 partition=partition,
+                account=account,
                 array_limit=array_limit,
                 array_output=array_output,
             )

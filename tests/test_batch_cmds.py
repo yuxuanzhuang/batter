@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from batter.cli import batch_cmds
 from batter.cli.root import cli
 from click.testing import CliRunner
@@ -13,6 +15,53 @@ def _setup_abfe_component(exec_path: Path, ligand: str = "L1", comp: str = "z") 
     (comp_dir / f"{comp}-1").mkdir(parents=True, exist_ok=True)
     (comp_dir / f"{comp}00").mkdir(parents=True, exist_ok=True)
     return comp_dir
+
+
+def test_parse_slurm_time_limit_minutes() -> None:
+    assert batch_cmds._parse_slurm_time_limit_minutes("15") == 15
+    assert batch_cmds._parse_slurm_time_limit_minutes("90:00") == 90
+    assert batch_cmds._parse_slurm_time_limit_minutes("00:15:00") == 15
+    assert (
+        batch_cmds._parse_slurm_time_limit_minutes("2-01:30:00")
+        == 2 * 24 * 60 + 90
+    )
+
+
+@pytest.mark.parametrize("remd", [False, True])
+def test_batch_cli_rejects_signal_too_close_to_time_limit(
+    tmp_path: Path, monkeypatch, remd: bool
+) -> None:
+    exec_path = tmp_path / "executions" / "rep1"
+    comp_dir = _setup_abfe_component(exec_path, ligand="L1", comp="z")
+    if remd:
+        (comp_dir / "run-local-remd.bash").write_text("#!/bin/bash\nN_WINDOWS=1\n")
+    else:
+        monkeypatch.setattr(
+            batch_cmds,
+            "_write_batch_run_script",
+            lambda *args, **kwargs: comp_dir / "run-local-batch.bash",
+        )
+    monkeypatch.setattr(batch_cmds, "components_under", lambda _: ["z"])
+
+    out = tmp_path / ("remd.sbatch" if remd else "batch.sbatch")
+    args = [
+        "batch",
+        "-e",
+        str(exec_path),
+        "--output",
+        str(out),
+        "--signal-mins",
+        "14.5",
+    ]
+    if remd:
+        args.insert(1, "--remd")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, args)
+
+    assert result.exit_code != 0
+    assert "at least 1 minute shorter" in result.output
+    assert not out.exists()
 
 
 def test_collect_batch_tasks_skips_pre_window_failed(tmp_path, monkeypatch) -> None:
@@ -82,6 +131,7 @@ def test_batch_cli_remd_renders_run_local_remd(
     text = out.read_text()
     assert "bash ./run-local-remd.bash" in text
     assert "bash ./run-local-batch.bash" not in text
+    assert "#SBATCH --time=00:15:00" in text
 
 
 def test_batch_cli_remd_explains_missing_rbfe_transformations(tmp_path: Path) -> None:
