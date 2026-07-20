@@ -1,5 +1,5 @@
 version: 1
-protocol: rbfe
+protocol: rbfe_septop
 backend: local
 
 create:
@@ -28,6 +28,7 @@ create:
 run:
   output_folder: adrb2_A_mabfe
   only_fe_preparation: false
+  only_rbfe_network: true
   dry_run: false
   run_id: auto
   max_workers: 8

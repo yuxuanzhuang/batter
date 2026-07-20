@@ -52,6 +52,25 @@ def test_slurmm_am_body_does_not_increment_attempt_for_titan_xp_output(
     assert "not incrementing failure count" in result.stdout
 
 
+def test_slurmm_am_body_ignores_stale_titan_xp_archive_for_current_failure(
+    tmp_path: Path,
+) -> None:
+    stale = tmp_path / "WRONG_FAIL" / "20260101_010101_job_attempt_1"
+    current = tmp_path / "WRONG_FAIL" / "20260102_010101_job_attempt_1"
+    stale.mkdir(parents=True)
+    current.mkdir(parents=True)
+    (stale / "md-01.out").write_text("Running on GPU TITAN Xp\n")
+    (current / "md-01.out").write_text("Running on GPU A100\n")
+
+    result = _run_slurmm_am_body(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "job_attempt.txt").read_text().strip() == "2"
+    assert (tmp_path / "ATTEMPT_FAILED").read_text().strip() == "FAILED"
+    assert "TITAN Xp in WRONG_FAIL/20260101_010101_job_attempt_1" not in result.stdout
+    assert "not incrementing failure count" not in result.stdout
+
+
 def test_slurmm_am_body_does_not_increment_attempt_for_titan_xp_md_output(
     tmp_path: Path,
 ) -> None:
