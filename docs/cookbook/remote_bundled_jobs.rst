@@ -7,8 +7,8 @@ batch allocation. The same flow supports standard bundled production and REMD
 production; add ``--remd`` when each component should run through
 ``run-local-remd.bash`` inside the bundled job.
 
-Two-Step Workflow
------------------
+Workflow
+--------
 
 1. Create each execution and run equilibration/pre-production setup:
 
@@ -47,6 +47,20 @@ Two-Step Workflow
    The ``-e`` paths may point at execution roots, ``simulations/``,
    ``transformations/``, or leaf folders containing ``fe/``. Use paths on a
    filesystem visible from the compute nodes.
+
+3. After all bundled simulations are marked ``FINISHED``, run FE analysis on the
+   work directory to generate the result tables and plots:
+
+   .. code-block:: console
+
+      batter fe analyze 7db6_rest_abfe rep1
+
+   For large ABFE/RBFE campaigns, ``--job-array`` can distribute the analysis
+   over a Slurm array:
+
+   .. code-block:: console
+
+      batter fe analyze 7db6_rest_abfe rep1 --job-array --array-limit 128
 
 ``batter batch`` renders a single ``sbatch`` script that runs the production
 helpers across the supplied executions. Normal mode uses ``run-local-batch.bash``;
