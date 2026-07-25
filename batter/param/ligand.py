@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import warnings
 from abc import ABC, abstractmethod
@@ -273,6 +275,49 @@ def _hash_id(payload: str, ligand_ff: str, retain_h: bool) -> str:
     h.update(payload.encode("utf-8"))
     h.update(f"|ff={ligand_ff}|retain={int(retain_h)}".encode("utf-8"))
     return h.hexdigest()[:12]
+
+
+def _is_openff_force_field(ligand_ff: str) -> bool:
+    return "openff" in str(ligand_ff).lower()
+
+
+def _installed_version(package: str) -> str:
+    try:
+        return importlib_metadata.version(package)
+    except importlib_metadata.PackageNotFoundError:
+        return "not installed"
+
+
+def _validate_openff_export_stack(ligand_ff: str) -> None:
+    """Fail early when OpenFF export dependencies are not importable."""
+    if not _is_openff_force_field(ligand_ff):
+        return
+
+    try:
+        from openff.interchange import Interchange  # noqa: F401
+    except Exception as exc:
+        raise RuntimeError(
+            "OpenFF ligand parameter export requires a working openff-interchange "
+            "installation. Importing openff.interchange failed under Python "
+            f"{sys.version.split()[0]} with openff-interchange "
+            f"{_installed_version('openff-interchange')}: {exc}. "
+            "Use a Python 3.11 environment or install an openff-interchange build "
+            "compatible with this Python version."
+        ) from exc
+
+
+def _has_complete_ligand_artifacts(target_dir: Path, ligand_name: str = "lig") -> bool:
+    required = (
+        "sdf",
+        "mol2",
+        "frcmod",
+        "lib",
+        "prmtop",
+        "inpcrd",
+        "pdb",
+        "json",
+    )
+    return all((target_dir / f"{ligand_name}.{ext}").exists() for ext in required)
 
 
 # --------------------------------------------------------------------------- #
@@ -879,6 +924,7 @@ def batch_ligand_process(
             f"Unsupported force field: {ligand_ff}. "
             f"Supported: {available_amber_ff + available_openff_ff}"
         )
+    _validate_openff_export_stack(ligand_ff)
 
     # --- compute content hashes for unique physical inputs ---
     # key: path (string) → (hash_id, canonical_smiles)
@@ -937,11 +983,7 @@ def batch_ligand_process(
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         # Skip if artifacts already present and not overwriting
-        marker_any = any(
-            (target_dir / f"{lig.name}.{ext}").exists()
-            for ext in ("frcmod", "lib", "prmtop", "xml")
-        )
-        if not overwrite and marker_any:
+        if not overwrite and _has_complete_ligand_artifacts(target_dir, lig.name):
             logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
             # treat cached ligands as successful so they propagate downstream
             success_paths.add(p)
@@ -962,7 +1004,7 @@ def batch_ligand_process(
                 except Exception as exc:
                     if mode_lower in {"prune", "retry"}:
                         logger.error(
-                            "[param_ligands] failed to prepare %s (hash=%s): %s — skipping due to on_failure=%s",
+                            "[param_ligands] failed to prepare {} (hash={}): {} — skipping due to on_failure={}",
                             lig_name,
                             hid,
                             exc,

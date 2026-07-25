@@ -1156,7 +1156,7 @@ def _run_from_yaml_impl(
         lig_original_names = dict(stored_names)
         if lig_original_names:
             logger.debug(
-                "Loaded %d original ligand names from %s",
+                "Loaded {} original ligand names from {}",
                 len(lig_original_names),
                 _ligand_names_path(run_dir),
             )
@@ -1316,7 +1316,7 @@ def _run_from_yaml_impl(
                 if step.name == "param_ligands" and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
                     parent_failure = True
                     logger.error(
-                        "[param_ligands] encountered error with on_failure=%s: %s — continuing with successful ligands only.",
+                        "[param_ligands] encountered error with on_failure={}: {} — continuing with successful ligands only.",
                         rc.run.on_failure,
                         exc,
                     )
@@ -1403,7 +1403,7 @@ def _run_from_yaml_impl(
     if not param_idx_path.exists():
         if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
             logger.warning(
-                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure=%s.",
+                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure={}.",
                 rc.run.on_failure,
             )
             param_index = {"ligands": []}

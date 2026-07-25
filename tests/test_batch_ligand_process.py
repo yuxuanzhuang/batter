@@ -78,6 +78,37 @@ def test_batch_ligand_process_prunes_failed(monkeypatch, tmp_path: Path) -> None
     assert set(unique.keys()) == {str(lig1)}
 
 
+def test_batch_ligand_process_prune_logs_failure_details(
+    monkeypatch, tmp_path: Path
+) -> None:
+    lig1 = tmp_path / "a.sdf"
+    lig2 = tmp_path / "b.sdf"
+    lig1.write_text("fake")
+    lig2.write_text("fake")
+
+    _patch_hashing(monkeypatch, {lig2})
+    messages: list[str] = []
+    sink_id = ligand_mod.logger.add(
+        lambda message: messages.append(str(message)), format="{message}", level="ERROR"
+    )
+    try:
+        ligand_mod.batch_ligand_process(
+            {"L1": str(lig1), "L2": str(lig2)},
+            output_path=tmp_path / "out",
+            on_failure="prune",
+        )
+    finally:
+        ligand_mod.logger.remove(sink_id)
+
+    rendered = "\n".join(messages)
+    assert (
+        "[param_ligands] failed to prepare L2 (hash=HASH-SMI-b.sdf): boom"
+        in rendered
+    )
+    assert "on_failure=prune" in rendered
+    assert "%s" not in rendered
+
+
 def test_batch_ligand_process_raises_without_prune(monkeypatch, tmp_path: Path) -> None:
     lig = tmp_path / "a.sdf"
     lig.write_text("fake")
@@ -100,8 +131,18 @@ def test_batch_ligand_process_reuses_cache(monkeypatch, tmp_path: Path) -> None:
     out = tmp_path / "out"
     cache_dir = out / "HASH-SMI-a.sdf"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # create marker files so the ligand is considered cached
-    (cache_dir / "lig.prmtop").write_text("ok")
+    # create all required files so the ligand is considered cached
+    for suffix in (
+        "sdf",
+        "mol2",
+        "frcmod",
+        "lib",
+        "prmtop",
+        "inpcrd",
+        "pdb",
+        "json",
+    ):
+        (cache_dir / f"lig.{suffix}").write_text("ok")
 
     hashes, unique = ligand_mod.batch_ligand_process(
         {"L1": str(lig)},
@@ -111,3 +152,25 @@ def test_batch_ligand_process_reuses_cache(monkeypatch, tmp_path: Path) -> None:
 
     assert hashes == ["HASH-SMI-a.sdf"]
     assert set(unique.keys()) == {str(lig)}
+
+
+def test_batch_ligand_process_does_not_reuse_incomplete_cache(
+    monkeypatch, tmp_path: Path
+) -> None:
+    lig = tmp_path / "a.sdf"
+    lig.write_text("fake")
+    _patch_hashing(monkeypatch, {lig})
+
+    out = tmp_path / "out"
+    cache_dir = out / "HASH-SMI-a.sdf"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "lig.prmtop").write_text("partial")
+
+    hashes, unique = ligand_mod.batch_ligand_process(
+        {"L1": str(lig)},
+        output_path=out,
+        on_failure="prune",
+    )
+
+    assert hashes == []
+    assert unique == {}

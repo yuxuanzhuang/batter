@@ -15,6 +15,7 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.param.ligand import (
     _convert_mol_name_to_unique,
     _hash_id,
+    _has_complete_ligand_artifacts,
     _rdkit_load,
     _canonical_payload,
     batch_ligand_process,
@@ -363,7 +364,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
                     smi = _canonical_payload(mol)
                     hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
                     cache_dir = outdir / hid
-                    if (cache_dir / "lig.prmtop").exists():
+                    if _has_complete_ligand_artifacts(cache_dir):
                         unique[str(path)] = (hid, smi)
                         salvaged_hashes.append(hid)
                 except Exception:

@@ -206,7 +206,7 @@ def handle_phase_failures(
                     retried.append(c)
                 else:
                     logger.warning(
-                        "[%s] retry requested but no sentinels removed for %s",
+                        "[{}] retry requested but no sentinels removed for {}",
                         phase_name,
                         c.meta.get("ligand", c.name),
                     )

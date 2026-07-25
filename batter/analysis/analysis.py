@@ -60,6 +60,13 @@ COMPONENT_DIRECTION_DICT = {
 }
 
 
+def _trapezoid(y, x):
+    integrator = getattr(np, "trapezoid", None) or getattr(np, "trapz", None)
+    if integrator is None:
+        raise AttributeError("NumPy provides neither trapezoid nor trapz integration.")
+    return integrator(y, x)
+
+
 def _parse_amber_rst_line(line: str) -> dict[str, str]:
     """Parse an Amber &rst line into keyword fields without assuming spacing."""
     fields: dict[str, str] = {}
@@ -1154,17 +1161,17 @@ class BoreschAnalysis(FEAnalysisBase):
         # Integrate translation and rotation
         r1_int, a1_int, t1_int, a2_int, t2_int, t3_int = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         intrange = np.arange(r1lb, r1ub, r1st)
-        r1_int = np.trapz(f_r1(intrange), intrange)
+        r1_int = _trapezoid(f_r1(intrange), intrange)
         intrange = np.arange(a1lb, a1ub, a1st)
-        a1_int = np.trapz(f_a1(intrange), intrange)
+        a1_int = _trapezoid(f_a1(intrange), intrange)
         intrange = dih_per(t1lb, t1ub, t1st, t1_0)
-        t1_int = np.trapz(f_t1(intrange), intrange)
+        t1_int = _trapezoid(f_t1(intrange), intrange)
         intrange = np.arange(a2lb, a2ub, a2st)
-        a2_int = np.trapz(f_a2(intrange), intrange)
+        a2_int = _trapezoid(f_a2(intrange), intrange)
         intrange = dih_per(t2lb, t2ub, t2st, t2_0)
-        t2_int = np.trapz(f_t2(intrange), intrange)
+        t2_int = _trapezoid(f_t2(intrange), intrange)
         intrange = dih_per(t3lb, t3ub, t3st, t3_0)
-        t3_int = np.trapz(f_t3(intrange), intrange)
+        t3_int = _trapezoid(f_t3(intrange), intrange)
         return (
             R
             * temperature

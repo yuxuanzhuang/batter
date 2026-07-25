@@ -159,7 +159,7 @@ def resolve_signature_conflict(
     if requested_run_id == "auto":
         if diffs:
             logger.info(
-                "Existing execution %s does not match current configuration; differences: %s",
+                "Existing execution {} does not match current configuration; differences: {}",
                 run_dir,
                 diff_str,
             )

@@ -173,6 +173,34 @@ def test_boresch_analysis_selects_ligand_specific_tag(
     assert seen == [(11.0, 12.0, 13.0, 14.0, 15.0, 16.0)]
 
 
+def test_boresch_fe_int_uses_numpy_trapezoid_without_trapz(monkeypatch) -> None:
+    real_trapezoid = analysis_mod.np.trapezoid
+    calls = 0
+
+    def _trapezoid(y, x):
+        nonlocal calls
+        calls += 1
+        return real_trapezoid(y, x)
+
+    monkeypatch.setattr(analysis_mod.np, "trapezoid", _trapezoid)
+    monkeypatch.delattr(analysis_mod.np, "trapz", raising=False)
+
+    result = analysis_mod.BoreschAnalysis.fe_int(
+        5.0,
+        90.0,
+        180.0,
+        90.0,
+        180.0,
+        180.0,
+        10.0,
+        10.0,
+        298.15,
+    )
+
+    assert np.isfinite(result)
+    assert calls == 6
+
+
 def test_analyze_lig_task_writes_backward_fe_timeseries(
     tmp_path: Path, monkeypatch
 ) -> None:
