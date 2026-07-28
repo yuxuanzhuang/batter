@@ -48,7 +48,7 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "edit rbfe_network.json" in note
     assert "reloads its pairs field" in note
     assert "fall back to the configured atom mapper" in note
-    assert "Identical duplicate ligands are omitted" in note
+    assert "rbfe.skip_duplicate_ligands: true" in note
     assert "Full-map edges are retained" in note
     assert "run.only_rbfe_network" in note
     assert "--full-rbfe" in note
@@ -513,7 +513,52 @@ def test_build_rbfe_network_plan_orients_generated_edges_by_larger_volume(
     assert payload["direction_decisions"][0]["flipped"] is True
 
 
-def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
+def test_build_rbfe_network_plan_keeps_identical_duplicate_ligands_by_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+
+    def _unexpected_identity_check(path):
+        raise AssertionError(f"unexpected duplicate check for {path}")
+
+    monkeypatch.setattr("batter.rbfe.ligand_identity_key", _unexpected_identity_check)
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["B", "C"]]}))
+    seen: dict[str, object] = {}
+
+    def _fake_mapping_artifacts(**kwargs):
+        seen["pairs"] = kwargs["pairs"]
+        seen["ligand_files"] = kwargs["ligand_files"]
+        return {}
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert payload["skip_duplicate_ligands"] is False
+    assert payload["ligands"] == ["A", "B", "C"]
+    assert payload["pairs"] == [["A", "B"], ["B", "C"]]
+    assert "skipped_identical_ligands" not in payload
+    assert seen["pairs"] == [["A", "B"], ["B", "C"]]
+    assert set(seen["ligand_files"]) == {"A", "B", "C"}
+
+
+def test_build_rbfe_network_plan_skips_identical_duplicate_ligands_when_requested(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -545,10 +590,11 @@ def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
             "B": str(tmp_path / "B.sdf"),
             "C": str(tmp_path / "C.sdf"),
         },
-        RBFENetworkArgs(mapping_file=mapping_file),
+        RBFENetworkArgs(mapping_file=mapping_file, skip_duplicate_ligands=True),
         tmp_path,
     )
 
+    assert payload["skip_duplicate_ligands"] is True
     assert payload["ligands"] == ["A", "C"]
     assert payload["pairs"] == [["A", "C"]]
     assert payload["skipped_identical_ligands"] == [
@@ -579,10 +625,11 @@ def test_build_rbfe_network_plan_all_identical_ligands_writes_empty_network(
             "A": str(tmp_path / "A.sdf"),
             "B": str(tmp_path / "B.sdf"),
         },
-        RBFENetworkArgs(mapping="default"),
+        RBFENetworkArgs(mapping="default", skip_duplicate_ligands=True),
         tmp_path,
     )
 
+    assert payload["skip_duplicate_ligands"] is True
     assert payload["ligands"] == ["A"]
     assert payload["pairs"] == []
     assert payload["skipped_identical_ligands"] == [

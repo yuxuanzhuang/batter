@@ -614,6 +614,67 @@ def test_rewrite_terminal_nme_drops_duplicate_methyl_aliases(tmp_path: Path) -> 
     assert "HH31 NME" not in text
 
 
+def test_rewrite_ace_cap_aliases_for_leap(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  CAY ACE A   3       0.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      2  HY1 ACE A   3       0.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      3  HY2 ACE A   3       0.000   0.500   0.000  1.00  0.00           H",
+                "ATOM      4  HY3 ACE A   3       0.000   0.000   0.500  1.00  0.00           H",
+                "ATOM      5  C   ACE A   3       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      6  OY  ACE A   3       1.500   0.000   0.000  1.00  0.00           O",
+                "ATOM      7  N   GLU A   3       2.000   0.000   0.000  1.00  0.00           N",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_ace_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " CH3 ACE A   3" in text
+    assert " H1  ACE A   3" in text
+    assert " H2  ACE A   3" in text
+    assert " H3  ACE A   3" in text
+    assert " O   ACE A   3" in text
+    assert " CAY ACE" not in text
+    assert " HY1 ACE" not in text
+    assert " OY  ACE" not in text
+
+
+def test_rewrite_ace_cap_drops_duplicate_alias_atoms(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  H1  ACE A   3       0.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      2  CH3 ACE A   3       0.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  H2  ACE A   3       0.000   0.500   0.000  1.00  0.00           H",
+                "ATOM      4  H3  ACE A   3       0.000   0.000   0.500  1.00  0.00           H",
+                "ATOM      5  C   ACE A   3       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      6  O   ACE A   3       1.500   0.000   0.000  1.00  0.00           O",
+                "ATOM      7  CAY ACE A   3       0.010   0.010   0.010  1.00  0.00           C",
+                "ATOM      8  OY  ACE A   3       1.510   0.010   0.010  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_ace_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert text.count(" CH3 ACE A   3") == 1
+    assert text.count(" O   ACE A   3") == 1
+    assert " CAY ACE" not in text
+    assert " OY  ACE" not in text
+
+
 def test_rewrite_terminal_amide_cap_after_high_residues_uses_chain_local_id(
     tmp_path: Path,
 ) -> None:

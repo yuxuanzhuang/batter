@@ -944,6 +944,13 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    skip_duplicate_ligands: bool = Field(
+        False,
+        description=(
+            "When true, omit later RBFE ligands with an identical molecular "
+            "identity to an earlier ligand before planning the network."
+        ),
+    )
     direction_policy: Literal["larger_volume", "preserve"] = Field(
         "larger_volume",
         description=(

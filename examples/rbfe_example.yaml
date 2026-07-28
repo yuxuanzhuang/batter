@@ -70,6 +70,8 @@ rbfe:
   # atom_mapping_file: reference/rbfe_atom_mappings.json
   # Konnektor network layout heuristic
   konnektor_layout: redundantminimalspanningtree
+  # skip later ligands with identical molecular identity; default is false
+  skip_duplicate_ligands: false
   # whether to generate both directions for each edge
   both_directions: false
 

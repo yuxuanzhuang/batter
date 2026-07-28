@@ -321,10 +321,12 @@ The HTML view is the primary network-review artifact:
   score, mapped-atom ratio, volume ratio, shape mismatch, and shape overlap.
   Missing optional metrics are simply absent from the selector.
 
-During planning, BATTER omits duplicate ligands with identical molecular
-identity. Full atom or full heavy-atom mappings are retained as normal edges and
-recorded as coverage metadata in the per-edge mapping status and network JSON.
-Skipped identical ligands are recorded in ``rbfe_network.json`` as skip metadata.
+By default, BATTER keeps duplicate ligands in RBFE network planning. Set
+``rbfe.skip_duplicate_ligands: true`` to omit later ligands with identical
+molecular identity before the network is planned. Full atom or full heavy-atom
+mappings are retained as normal edges and recorded as coverage metadata in the
+per-edge mapping status and network JSON. Skipped identical ligands are recorded
+in ``rbfe_network.json`` as skip metadata.
 
 Transformation systems are created under:
 

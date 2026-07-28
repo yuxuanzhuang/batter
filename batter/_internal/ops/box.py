@@ -1366,6 +1366,26 @@ _SEPARATE_METHYLAMIDE_ATOM_ALIASES = {
     "HM2": "H2",
     "HM3": "H3",
 }
+_ACE_CAP_ATOM_ALIASES = {
+    "C": "C",
+    "O": "O",
+    "OY": "O",
+    "CH3": "CH3",
+    "CAY": "CH3",
+    "CY": "CH3",
+    "H1": "H1",
+    "H2": "H2",
+    "H3": "H3",
+    "HY1": "H1",
+    "HY2": "H2",
+    "HY3": "H3",
+    "1HY": "H1",
+    "2HY": "H2",
+    "3HY": "H3",
+    "HH31": "H1",
+    "HH32": "H2",
+    "HH33": "H3",
+}
 
 
 def _is_amber_protein_resname(resname: str) -> bool:
@@ -1524,6 +1544,47 @@ def _rewrite_separate_terminal_methylamide_cap(
         rewritten.append(line)
 
     return rewritten, changed
+
+
+def _rewrite_ace_caps_for_leap(pdb_path: Path) -> int:
+    """
+    Rewrite common ACE atom aliases into Amber ACE template atom names.
+
+    Dabble-style ACE caps can use ``CAY/HY1/HY2/HY3/OY`` while Amber LEaP's
+    ACE template expects ``CH3/H1/H2/H3/O``. If the aliases are left in place,
+    LEaP creates untyped CAY/OY atoms and later fails during ``saveamberparm``.
+    """
+    lines = pdb_path.read_text().splitlines(True)
+    rewritten: list[str] = []
+    emitted_by_residue: dict[tuple[str, int, str], set[str]] = {}
+    changed_residues: set[tuple[str, int, str]] = set()
+
+    for line in lines:
+        key = _pdb_residue_key(line)
+        if key is None or key[2] != "ACE":
+            rewritten.append(line)
+            continue
+
+        atom_name = _pdb_atom_name(line)
+        target_name = _ACE_CAP_ATOM_ALIASES.get(atom_name)
+        if target_name is None:
+            rewritten.append(line)
+            continue
+
+        emitted = emitted_by_residue.setdefault(key, set())
+        if target_name in emitted:
+            changed_residues.add(key)
+            continue
+
+        emitted.add(target_name)
+        if target_name != atom_name:
+            line = _replace_pdb_atom_name(line, target_name)
+            changed_residues.add(key)
+        rewritten.append(line)
+
+    if changed_residues:
+        pdb_path.write_text("".join(rewritten))
+    return len(changed_residues)
 
 
 def _rewrite_terminal_amide_caps_for_leap(
@@ -2441,6 +2502,13 @@ def create_box(ctx: BuildContext) -> None:
     else:
         water_box = f"{water_model}BOX"
 
+    build_ace_cap_count = _rewrite_ace_caps_for_leap(window_dir / "build.pdb")
+    if build_ace_cap_count:
+        logger.debug(
+            "Rewrote {} ACE terminal cap(s) into Amber atom names before pre-solvation LEaP.",
+            build_ace_cap_count,
+        )
+
     build_cap_count = _rewrite_terminal_amide_caps_for_leap(
         window_dir / "build.pdb",
         exclude_residue_names=[mol],
@@ -2727,6 +2795,12 @@ def create_box(ctx: BuildContext) -> None:
             prot_lines.append("TER\n")
         solvate_pre_prot = window_dir / "solvate_pre_prot.pdb"
         solvate_pre_prot.write_text("".join(prot_lines))
+        ace_cap_count = _rewrite_ace_caps_for_leap(solvate_pre_prot)
+        if ace_cap_count:
+            logger.debug(
+                "Rewrote {} ACE terminal cap(s) into Amber atom names before LEaP.",
+                ace_cap_count,
+            )
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:
             logger.debug(

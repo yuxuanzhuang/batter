@@ -364,6 +364,7 @@ def _planned_metadata_items(metadata: Mapping[str, Any] | None) -> list[tuple[st
         "atom_mapping_file",
         "add_atom_mapping_edges",
         "added_atom_mapping_edges",
+        "skip_duplicate_ligands",
         "konnektor_layout",
         "atom_mapper",
         "both_directions",

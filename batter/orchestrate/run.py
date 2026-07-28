@@ -264,8 +264,7 @@ def _require_rbfe_network_has_pairs(config_dir: Path) -> None:
         raise RuntimeError(f"Could not parse prepared RBFE network file: {network_path}") from exc
     if not payload.get("pairs"):
         raise RuntimeError(
-            "Prepared RBFE network contains no ligand pairs after removing identical "
-            "duplicate ligands."
+            "Prepared RBFE network contains no ligand pairs."
         )
 
 
@@ -281,8 +280,8 @@ def _rbfe_network_review_note(run_dir: Path) -> str:
         "You may edit rbfe_network.json before continuing; BATTER reloads its "
         "pairs field for RBFE transformation setup. Newly added pairs without "
         "prepared mapping artifacts fall back to the configured atom mapper.\n"
-        "Identical duplicate ligands are omitted from pairs and recorded in "
-        "the JSON skip metadata when detected. Full-map edges are retained.\n"
+        "Set rbfe.skip_duplicate_ligands: true to omit identical duplicate "
+        "ligands from pairs and record JSON skip metadata. Full-map edges are retained.\n"
         "If the network looks correct, set run.only_rbfe_network: false or rerun "
         "with --full-rbfe to continue."
     )
@@ -558,14 +557,21 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    skip_duplicate_ligands = bool(
+        getattr(rbfe_cfg, "skip_duplicate_ligands", False)
+    )
+    mapping_source["skip_duplicate_ligands"] = skip_duplicate_ligands
     ligand_files_all = {
         name: Path(lig_map[name])
         for name in available
         if name in lig_map
     }
-    available, identical_replacements, skipped_identical_ligands = (
-        deduplicate_identical_ligands(available, ligand_files_all)
-    )
+    identical_replacements: dict[str, str] = {}
+    skipped_identical_ligands: list[dict[str, str]] = []
+    if skip_duplicate_ligands:
+        available, identical_replacements, skipped_identical_ligands = (
+            deduplicate_identical_ligands(available, ligand_files_all)
+        )
     if skipped_identical_ligands:
         mapping_source["skipped_identical_ligands"] = skipped_identical_ligands
         logger.warning(

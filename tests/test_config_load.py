@@ -223,6 +223,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  skip_duplicate_ligands: true
   network_scorer: shape-difference
   atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
@@ -242,6 +243,7 @@ rbfe:
     assert cfg.run.only_rbfe_network is True
     assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
     assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
+    assert cfg.rbfe.skip_duplicate_ligands is True
     assert cfg.rbfe.atom_mapper == "lomap"
     assert cfg.rbfe.network_scorer == "shape_difference"
     assert cfg.rbfe.lomap.time == 7
@@ -287,6 +289,7 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.allow_bond_breaks is False
     assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
+    assert cfg.skip_duplicate_ligands is False
     assert cfg.minimal_mapping_atom == 3
     assert cfg.direction_policy == "larger_volume"
 
