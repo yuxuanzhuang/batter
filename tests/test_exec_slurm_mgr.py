@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -214,6 +215,49 @@ def test_submit_rebuild_does_not_duplicate_header_on_repeat(monkeypatch, tmp_pat
     assert script_txt.count("source /path/to/amber.sh") == 1
     assert script_txt.count("SYSTEMNAME, STAGE, POSE") == 1
     assert "BODY" in script_txt
+
+
+def test_submit_rebuild_prefers_newer_body_only_script_over_stale_sidecar(
+    monkeypatch,
+    tmp_path,
+):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    sidecar = workdir / "SLURMM-run.body"
+    script.write_text("NEW_BODY\n")
+    sidecar.write_text("OLD_BODY\n")
+    os.utime(sidecar, (1, 1))
+    os.utime(script, (2, 2))
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    (header_root / "SLURMM-Am.header").write_text("#HEADER\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        class Dummy:
+            returncode = 0
+            stdout = "Submitted batch job 99"
+            stderr = ""
+
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    manager._submit_once(spec)
+
+    script_txt = script.read_text()
+    assert script_txt.startswith("#HEADER")
+    assert "NEW_BODY" in script_txt
+    assert "OLD_BODY" not in script_txt
+    assert sidecar.read_text() == "NEW_BODY\n"
 
 
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):

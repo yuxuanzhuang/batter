@@ -101,6 +101,7 @@ if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
 
+reset_attempt_failed_archive_marker
 archive_existing_log_file "$log_file"
 
 # Determine progress from the first window

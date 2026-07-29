@@ -1055,6 +1055,15 @@ class SlurmJobManager:
             body_path = spec.workdir / spec.body_rel
         elif candidate.exists():
             body_path = candidate
+            try:
+                script_text = script_abs.read_text()
+                script_is_body_only = not any(
+                    ln.lstrip().startswith("#SBATCH") for ln in script_text.splitlines()
+                )
+                if script_is_body_only and script_abs.stat().st_mtime > candidate.stat().st_mtime:
+                    body_path = script_abs
+            except Exception as exc:
+                logger.debug(f"[SLURM] Could not compare script/body mtimes for {script_abs}: {exc}")
         else:
             body_path = script_abs
         if not body_path.exists():

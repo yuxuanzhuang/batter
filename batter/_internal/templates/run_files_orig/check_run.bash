@@ -72,14 +72,27 @@ archive_failed_job_files() {
     fi
 
     if (( moved_any )); then
+        record_attempt_failed_archive "$archive_dir"
         echo "[INFO] Archived failed job files to ${archive_dir}"
     else
         rmdir "$archive_dir" 2>/dev/null || true
         rmdir WRONG_FAIL 2>/dev/null || true
+        reset_attempt_failed_archive_marker
     fi
 }
 
 ATTEMPT_FAILED_MARKER=${ATTEMPT_FAILED_MARKER:-ATTEMPT_FAILED}
+ATTEMPT_FAILED_ARCHIVE_MARKER=${ATTEMPT_FAILED_ARCHIVE_MARKER:-ATTEMPT_FAILED_ARCHIVE}
+
+reset_attempt_failed_archive_marker() {
+    : > "$ATTEMPT_FAILED_ARCHIVE_MARKER"
+}
+
+record_attempt_failed_archive() {
+    local archive_dir=$1
+    [[ -n $archive_dir ]] || return 0
+    printf "%s\n" "$archive_dir" > "$ATTEMPT_FAILED_ARCHIVE_MARKER"
+}
 
 write_attempt_failed_marker() {
     printf "FAILED\n" > "$ATTEMPT_FAILED_MARKER"
@@ -87,6 +100,8 @@ write_attempt_failed_marker() {
 
 consume_prior_failure_marker() {
     local prior_failed=0
+
+    reset_attempt_failed_archive_marker
 
     if [[ -f "$ATTEMPT_FAILED_MARKER" ]]; then
         prior_failed=1
@@ -101,6 +116,7 @@ mark_failed_and_exit() {
     if [[ -n $message ]]; then
         echo "$message"
     fi
+    reset_attempt_failed_archive_marker
     write_attempt_failed_marker
     exit 1
 }

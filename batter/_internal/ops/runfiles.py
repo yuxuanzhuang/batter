@@ -75,8 +75,11 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     )
     out_slurm_body = work / "SLURMM-run"
     out_slurm_body.write_text(body_txt)
+    out_slurm_sidecar = work / "SLURMM-run.body"
+    out_slurm_sidecar.write_text(body_txt)
     try:
         out_slurm_body.chmod(0o755)
+        out_slurm_sidecar.chmod(0o755)
     except Exception as e:
         logger.debug(f"chmod failed for {out_slurm_body}: {e}")
 
@@ -157,7 +160,10 @@ def write_fe_run_file(
     )
     out_slurm_body = dst_dir / "SLURMM-run"
     out_slurm_body.write_text(body_txt)
+    out_slurm_sidecar = dst_dir / "SLURMM-run.body"
+    out_slurm_sidecar.write_text(body_txt)
     os.chmod(out_slurm_body, 0o755)
+    os.chmod(out_slurm_sidecar, 0o755)
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "

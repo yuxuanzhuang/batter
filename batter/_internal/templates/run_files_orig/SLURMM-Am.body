@@ -21,6 +21,7 @@ echo "Current attempt: $RETRY_COUNT"
 
 # Define the maximum number of attempts.
 MAX_ATTEMPTS=5
+ATTEMPT_FAILED_ARCHIVE_MARKER=${ATTEMPT_FAILED_ARCHIVE_MARKER:-ATTEMPT_FAILED_ARCHIVE}
 
 is_titan_xp_retry_exempt_output() {
     local out_file=$1
@@ -36,12 +37,31 @@ failure_outputs_have_titan_xp() {
     local retry_count=${1:-}
     local out_file archive_dir archive_name archive_key latest_key=""
     local latest_archive_dirs=()
-    while IFS= read -r -d '' out_file; do
-        if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
-            echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
-            return 0
-        fi
-    done < <(find . -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
+
+    scan_titan_xp_outputs_in_dir() {
+        local search_dir=$1
+        local maxdepth=${2:-1}
+        local out_file
+        [[ -d "$search_dir" ]] || return 1
+
+        while IFS= read -r -d '' out_file; do
+            if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
+                echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+                return 0
+            fi
+        done < <(find "$search_dir" -maxdepth "$maxdepth" -type f -name '*.out' -print0 2>/dev/null)
+        return 1
+    }
+
+    if [[ -e "$ATTEMPT_FAILED_ARCHIVE_MARKER" ]]; then
+        while IFS= read -r archive_dir; do
+            [[ -n "$archive_dir" ]] || continue
+            if scan_titan_xp_outputs_in_dir "$archive_dir" 1; then
+                return 0
+            fi
+        done < "$ATTEMPT_FAILED_ARCHIVE_MARKER"
+        return 1
+    fi
 
     for archive_dir in WRONG_FAIL/*_job_attempt_${retry_count}; do
         [[ -d "$archive_dir" ]] || continue
@@ -55,15 +75,16 @@ failure_outputs_have_titan_xp() {
         fi
     done
 
-    for archive_dir in "${latest_archive_dirs[@]}"; do
-        while IFS= read -r -d '' out_file; do
-            if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
-                echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+    if (( ${#latest_archive_dirs[@]} > 0 )); then
+        for archive_dir in "${latest_archive_dirs[@]}"; do
+            if scan_titan_xp_outputs_in_dir "$archive_dir" 1; then
                 return 0
             fi
-        done < <(find "$archive_dir" -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
-    done
-    return 1
+        done
+        return 1
+    fi
+
+    scan_titan_xp_outputs_in_dir "." 1
 }
 
 # Run the simulation

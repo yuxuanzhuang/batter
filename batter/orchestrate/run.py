@@ -328,7 +328,13 @@ def _clear_failure_markers(run_dir: Path) -> None:
     if not sim_root.exists():
         return
     removed = 0
-    marker_patterns = ("FAILED", "ATTEMPT_FAILED", "job_attempt.txt", "*.failed")
+    marker_patterns = (
+        "FAILED",
+        "ATTEMPT_FAILED",
+        "ATTEMPT_FAILED_ARCHIVE",
+        "job_attempt.txt",
+        "*.failed",
+    )
     for marker_pattern in marker_patterns:
         for path in sim_root.rglob(marker_pattern):
             try:

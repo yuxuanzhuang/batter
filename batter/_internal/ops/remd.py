@@ -355,7 +355,9 @@ def write_remd_run_scripts(
         },
     )
     slurm_body.write_text(body_text)
+    slurm_body.with_suffix(slurm_body.suffix + ".body").write_text(body_text)
     slurm_body.chmod(0o755)
+    slurm_body.with_suffix(slurm_body.suffix + ".body").chmod(0o755)
     out.append(slurm_body)
 
     # copy check_run.bash alongside for failure checks

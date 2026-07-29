@@ -71,6 +71,41 @@ def test_slurmm_am_body_ignores_stale_titan_xp_archive_for_current_failure(
     assert "not incrementing failure count" not in result.stdout
 
 
+def test_slurmm_am_body_ignores_stale_live_titan_xp_long_equil_output(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "WRONG_FAIL" / "20260728_222657_job_attempt_1"
+    current.mkdir(parents=True)
+    (tmp_path / "eqnpt_eq.out").write_text("CUDA Device Name: NVIDIA TITAN Xp\n")
+    (current / "eqnpt_disappear.out").write_text(
+        "MDOUT: eqnpt_disappear.out\nCUDA Device Name: NVIDIA A40\n"
+    )
+
+    result = _run_slurmm_am_body(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "job_attempt.txt").read_text().strip() == "2"
+    assert (tmp_path / "ATTEMPT_FAILED").read_text().strip() == "FAILED"
+    assert "Detected TITAN Xp in eqnpt_eq.out" not in result.stdout
+    assert "not incrementing failure count" not in result.stdout
+
+
+def test_slurmm_am_body_empty_current_archive_marker_blocks_stale_titan_fallback(
+    tmp_path: Path,
+) -> None:
+    stale = tmp_path / "WRONG_FAIL" / "20260101_010101_job_attempt_1"
+    stale.mkdir(parents=True)
+    (stale / "eqnpt_eq.out").write_text("CUDA Device Name: NVIDIA TITAN Xp\n")
+    (tmp_path / "ATTEMPT_FAILED_ARCHIVE").write_text("")
+
+    result = _run_slurmm_am_body(tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "job_attempt.txt").read_text().strip() == "2"
+    assert (tmp_path / "ATTEMPT_FAILED").read_text().strip() == "FAILED"
+    assert "not incrementing failure count" not in result.stdout
+
+
 def test_slurmm_am_body_does_not_increment_attempt_for_titan_xp_md_output(
     tmp_path: Path,
 ) -> None:
