@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
+
+mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter.exec.handlers.equil_analysis import (
     PROLIF_ARTIFACT_FILENAMES,
@@ -12,6 +15,7 @@ from batter.exec.handlers.equil_analysis import (
     _persistent_prolif_residue_priorities,
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
+    _salt_bridge_ligand_atom_preference,
     _write_prolif_lignetwork_html,
     _write_prolif_artifacts,
 )
@@ -123,6 +127,87 @@ def test_persistent_prolif_residue_priorities_rank_salt_bridge_first() -> None:
         20: 0,
         30: 2,
     }
+
+
+def _atom_line(
+    serial: int,
+    name: str,
+    resname: str,
+    chain: str,
+    resid: int,
+    x: float,
+    y: float,
+    z: float,
+    element: str,
+) -> str:
+    return (
+        f"ATOM  {serial:5d} {name:<4}{resname:>4} {chain}{resid:4d}"
+        f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2}\n"
+    )
+
+
+def test_salt_bridge_ligand_atom_preference_uses_prolif_salt_bridge(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    pdb = tmp_path / "salt_bridge.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _atom_line(1, "CA", "ASP", "A", 10, 0.0, 0.0, 0.0, "C"),
+                _atom_line(2, "OD1", "ASP", "A", 10, 1.0, 0.0, 0.0, "O"),
+                _atom_line(3, "OD2", "ASP", "A", 10, 2.0, 0.0, 0.0, "O"),
+                _atom_line(4, "N1", "LIG", "L", 300, 2.5, 0.0, 0.0, "N"),
+                _atom_line(5, "C1", "LIG", "L", 300, 5.5, 0.0, 0.0, "C"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    rw_mol = Chem.RWMol()
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    rw_mol.AddBond(nitrogen_idx, carbon_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(2)
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(2.5, 0.0, 0.0))
+    conformer.SetAtomPosition(carbon_idx, Point3D(5.5, 0.0, 0.0))
+    mol.AddConformer(conformer)
+    params = tmp_path / "params"
+    params.mkdir()
+    Chem.MolToMolFile(mol, str(params / "LIG.sdf"))
+
+    preference = _salt_bridge_ligand_atom_preference(
+        system_root=tmp_path,
+        residue_name="LIG",
+        ligand_label="pose",
+        universe=u,
+        tail_fraction=1.0,
+        prolif_record={
+            "usable": True,
+            "persistent_protein_residues": [
+                {
+                    "resid": 10,
+                    "resname": "ASP",
+                    "interactions": [
+                        {"interaction": "Cationic", "occupancy": 1.0}
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert preference["ligand_atom_names"] == ["N1"]
+    assert preference["protein_residue_ids"] == [10]
+    assert preference["pairs"][0]["protein"]["name"] in {"OD1", "OD2"}
+    assert preference["pairs"][0]["ligand"]["name"] == "N1"
 
 
 def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> None:

@@ -493,6 +493,7 @@ def _pick_ligand_anchor_names(
     u: mda.Universe,
     mol: str,
     ligand_names: Sequence[str],
+    preferred_l1_names: Sequence[str] = (),
     p1_resid: str,
     p1_atom: str,
     p2_resid: str,
@@ -525,19 +526,33 @@ def _pick_ligand_anchor_names(
         if np.isfinite(angle):
             candidates[str(name)] = center
 
-    aa1: str | None = None
-    for tolerance in (15.0, 70.0):
-        best_diff = float("inf")
-        for name, center in candidates.items():
-            angle = _angle_degrees(p2_center, p1_center, center)
-            if not np.isfinite(angle) or abs(angle - 90.0) > tolerance:
-                continue
-            diff = float(np.linalg.norm(center - target))
-            if diff < best_diff:
-                best_diff = diff
-                aa1 = name
-        if aa1 is not None:
-            break
+    def _choose_first_anchor(names_to_search: Sequence[str]) -> str | None:
+        selected: str | None = None
+        for tolerance in (15.0, 70.0):
+            best_diff = float("inf")
+            for name in names_to_search:
+                center = candidates.get(str(name))
+                if center is None:
+                    continue
+                angle = _angle_degrees(p2_center, p1_center, center)
+                if not np.isfinite(angle) or abs(angle - 90.0) > tolerance:
+                    continue
+                diff = float(np.linalg.norm(center - target))
+                if diff < best_diff:
+                    best_diff = diff
+                    selected = str(name)
+            if selected is not None:
+                break
+        return selected
+
+    preferred_l1 = [
+        str(name).strip()
+        for name in preferred_l1_names
+        if str(name).strip() in candidates
+    ]
+    aa1 = _choose_first_anchor(_dedupe_names(preferred_l1)) if preferred_l1 else None
+    if aa1 is None:
+        aa1 = _choose_first_anchor(list(candidates))
     if aa1 is None:
         raise RuntimeError("anchor not found")
 
@@ -581,6 +596,31 @@ def _pick_ligand_anchor_names(
     return [aa1, aa2, aa3]
 
 
+def _dedupe_names(names: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        clean = str(name).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+    return out
+
+
+def _order_ligand_names_with_priority(
+    names: Sequence[str],
+    priority_names: Sequence[str],
+) -> list[str]:
+    base = _dedupe_names(names)
+    priority = _dedupe_names(priority_names)
+    base_set = set(base)
+    priority_set = set(priority)
+    return [name for name in priority if name in base_set] + [
+        name for name in base if name not in priority_set
+    ]
+
+
 def _python_prep_complex(
     *,
     workdir: Path,
@@ -602,6 +642,7 @@ def _python_prep_complex(
     ligand_names: Sequence[str],
     other_mol: Sequence[str],
     lipid_mol: Sequence[str],
+    preferred_l1_names: Sequence[str] = (),
 ) -> None:
     """Python fallback for prep-ini.tcl when VMD is unavailable."""
     _write_python_prep_script_marker(workdir)
@@ -643,6 +684,7 @@ def _python_prep_complex(
         u=prep_u,
         mol=mol,
         ligand_names=ligand_names,
+        preferred_l1_names=preferred_l1_names,
         p1_resid=p1_vmd,
         p1_atom=p1_atom,
         p2_resid=p2_vmd,
@@ -721,6 +763,102 @@ def _sdf_heavy_atom_ordinals(sdf_file: str | Path) -> tuple[int | None, dict[int
     return int(mol.GetNumAtoms()), heavy_ordinals
 
 
+def _map_sdf_atom_indices_to_ligand_names(
+    sdf_file: str | Path,
+    ligand_atoms,
+    atom_indices: Sequence[int],
+) -> tuple[list[str], list[int], int | None]:
+    lig_names = [str(name) for name in ligand_atoms.names]
+    sdf_atom_count, heavy_ordinals = _sdf_heavy_atom_ordinals(sdf_file)
+
+    names: list[str] = []
+    dropped: list[int] = []
+    if sdf_atom_count == len(lig_names):
+        for idx in atom_indices:
+            if 0 <= idx < len(lig_names):
+                names.append(lig_names[idx])
+            else:
+                dropped.append(idx)
+    elif heavy_ordinals:
+        heavy_names = [
+            str(atom.name)
+            for atom in ligand_atoms
+            if not _atom_is_hydrogen(atom)
+        ]
+        for idx in atom_indices:
+            heavy_ordinal = heavy_ordinals.get(idx)
+            if heavy_ordinal is not None and 0 <= heavy_ordinal < len(heavy_names):
+                names.append(heavy_names[heavy_ordinal])
+            else:
+                dropped.append(idx)
+    else:
+        for idx in atom_indices:
+            if 0 <= idx < len(lig_names):
+                names.append(lig_names[idx])
+            else:
+                dropped.append(idx)
+
+    return names, dropped, sdf_atom_count
+
+
+def _sdf_formally_charged_atom_indices(sdf_file: str | Path) -> list[int]:
+    try:
+        from rdkit import Chem
+    except Exception:
+        return []
+
+    try:
+        supplier = Chem.SDMolSupplier(str(sdf_file), removeHs=False)
+        mols = [mol for mol in supplier if mol is not None]
+    except Exception:
+        return []
+    if not mols:
+        return []
+
+    charged: list[int] = []
+    for atom in mols[0].GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            continue
+        if int(atom.GetFormalCharge()) != 0:
+            charged.append(int(atom.GetIdx()))
+    return charged
+
+
+def _sdf_formal_charge_by_ligand_atom_name(
+    sdf_file: str | Path,
+    ligand_atoms,
+) -> dict[str, int]:
+    charged_indices = _sdf_formally_charged_atom_indices(sdf_file)
+    if not charged_indices:
+        return {}
+
+    try:
+        from rdkit import Chem
+        supplier = Chem.SDMolSupplier(str(sdf_file), removeHs=False)
+        mols = [mol for mol in supplier if mol is not None]
+    except Exception:
+        return {}
+    if not mols:
+        return {}
+
+    charges: dict[str, int] = {}
+    for idx in charged_indices:
+        names, _dropped, _sdf_atom_count = _map_sdf_atom_indices_to_ligand_names(
+            sdf_file,
+            ligand_atoms,
+            [idx],
+        )
+        if not names:
+            continue
+        clean = str(names[0]).strip()
+        if not clean:
+            continue
+        charge = int(mols[0].GetAtomWithIdx(int(idx)).GetFormalCharge())
+        if charge:
+            charges[clean] = charge
+    return charges
+
+
 def _candidate_ligand_atom_name_string(
     sdf_file: str | Path,
     ligand_atoms,
@@ -761,34 +899,11 @@ def _candidate_ligand_atom_name_string(
         )
 
     candidate_indices = [int(idx) for idx in get_ligand_candidates(str(sdf_file))]
-    sdf_atom_count, heavy_ordinals = _sdf_heavy_atom_ordinals(sdf_file)
-
-    names: list[str] = []
-    dropped: list[int] = []
-    if sdf_atom_count == len(lig_names):
-        for idx in candidate_indices:
-            if 0 <= idx < len(lig_names):
-                names.append(lig_names[idx])
-            else:
-                dropped.append(idx)
-    elif heavy_ordinals:
-        heavy_names = [
-            str(atom.name)
-            for atom in ligand_atoms
-            if not _atom_is_hydrogen(atom)
-        ]
-        for idx in candidate_indices:
-            heavy_ordinal = heavy_ordinals.get(idx)
-            if heavy_ordinal is not None and 0 <= heavy_ordinal < len(heavy_names):
-                names.append(heavy_names[heavy_ordinal])
-            else:
-                dropped.append(idx)
-    else:
-        for idx in candidate_indices:
-            if 0 <= idx < len(lig_names):
-                names.append(lig_names[idx])
-            else:
-                dropped.append(idx)
+    names, dropped, sdf_atom_count = _map_sdf_atom_indices_to_ligand_names(
+        sdf_file,
+        ligand_atoms,
+        candidate_indices,
+    )
 
     if dropped:
         logger.warning(
@@ -868,7 +983,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 5
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 6
 
 
 def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
@@ -926,6 +1041,15 @@ def _stable_boresch_distance_candidates(stable_record: dict) -> list[dict]:
         if candidates:
             return candidates
     return [stable_record]
+
+
+def _stable_salt_bridge_ligand_atom_names(stable_record: dict | None) -> list[str]:
+    if not isinstance(stable_record, dict):
+        return []
+    preference = stable_record.get("salt_bridge_preference")
+    if not isinstance(preference, dict):
+        return []
+    return _dedupe_names(preference.get("ligand_atom_names") or [])
 
 
 def _renumber_stable_protein_residue(
@@ -1607,6 +1731,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                     .replace("SDRD", f"{0.0:4.2f}")
                     .replace("OTHRS", str(other_mol_vmd))
                     .replace("LIPIDS", str(lipid_mol_vmd))
+                    .replace("SALTBRIDGELIGANDNAME", "")
                     .replace("LIGANDNAME", ligand_name_str)
                 )
 
@@ -1949,6 +2074,8 @@ def build_complex_z(ctx) -> bool:
         ligand_label=ligand,
         stage="fe-z",
     )
+    salt_bridge_lig_names: list[str] = []
+    salt_bridge_lig_name_str = ""
     default_anchor_state = {
         "P1": P1,
         "p1_resid": p1_resid,
@@ -1962,15 +2089,32 @@ def build_complex_z(ctx) -> bool:
     }
     stable_preference_applied = False
     stable_preference = None
+    stable_record = None
 
     extra = dict(ctx.extra or {})
+    stable_record = _load_stable_boresch_distance(equil_dir)
+    if stable_record is not None:
+        salt_bridge_lig_names = _stable_salt_bridge_ligand_atom_names(stable_record)
+        if salt_bridge_lig_names:
+            lig_name_str = " ".join(
+                _order_ligand_names_with_priority(
+                    lig_name_str.split(),
+                    salt_bridge_lig_names,
+                )
+            )
+            salt_bridge_lig_name_str = " ".join(salt_bridge_lig_names)
+            logger.debug(
+                "[build_complex_z] Prioritizing salt-bridge ligand atom(s) "
+                "from equil analysis for {}: {}",
+                ligand,
+                salt_bridge_lig_name_str,
+            )
     if _user_anchor_atoms_were_provided(extra):
         logger.debug(
             "[build_complex_z] Explicit create.anchor_atoms were provided; "
             "stable equilibration distance will not modify receptor anchors."
         )
     else:
-        stable_record = _load_stable_boresch_distance(equil_dir)
         if stable_record is not None:
             stable_preference = _select_stable_boresch_distance_preference(
                 u=u,
@@ -1992,6 +2136,12 @@ def build_complex_z(ctx) -> bool:
                 p1_atom = stable_preference["p1_atom"]
                 p1_vmd = stable_preference["p1_vmd"]
                 lig_name_str = stable_preference["lig_name_str"]
+                lig_name_str = " ".join(
+                    _order_ligand_names_with_priority(
+                        lig_name_str.split(),
+                        salt_bridge_lig_names,
+                    )
+                )
                 l1_x = stable_preference["l1_x"]
                 l1_y = stable_preference["l1_y"]
                 l1_z = stable_preference["l1_z"]
@@ -2045,6 +2195,7 @@ def build_complex_z(ctx) -> bool:
                     .replace("LIGSITE", "0")  # no FB for ligand now
                     .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
                     .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
+                    .replace("SALTBRIDGELIGANDNAME", salt_bridge_lig_name_str)
                     .replace("LIGANDNAME", ligand_name_str)
                 )
 
@@ -2078,6 +2229,7 @@ def build_complex_z(ctx) -> bool:
                 ligand_names=str(ligand_name_str).split(),
                 other_mol=other_mol,
                 lipid_mol=lipid_mol,
+                preferred_l1_names=salt_bridge_lig_names,
             )
 
     try:
@@ -2088,7 +2240,12 @@ def build_complex_z(ctx) -> bool:
             "retrying with all ligand atoms.",
             ligand,
         )
-        all_lig_name_str = " ".join(str(x) for x in lig_names)
+        all_lig_name_str = " ".join(
+            _order_ligand_names_with_priority(
+                [str(x) for x in lig_names],
+                salt_bridge_lig_names,
+            )
+        )
         try:
             _run_prep(all_lig_name_str)
             lig_name_str = all_lig_name_str
@@ -2104,7 +2261,12 @@ def build_complex_z(ctx) -> bool:
             try:
                 _run_prep(lig_name_str)
             except RuntimeError:
-                all_lig_name_str = " ".join(str(x) for x in lig_names)
+                all_lig_name_str = " ".join(
+                    _order_ligand_names_with_priority(
+                        [str(x) for x in lig_names],
+                        salt_bridge_lig_names,
+                    )
+                )
                 _run_prep(all_lig_name_str)
                 lig_name_str = all_lig_name_str
 
@@ -2148,10 +2310,15 @@ def build_complex_z(ctx) -> bool:
         P3=P3,
         lig_resid=lig_resid,
         selected_names=a,
-        preferred_first_names=(
-            [stable_preference["stable_ligand_name"]]
-            if stable_preference_applied and stable_preference is not None
-            else []
+        preferred_first_names=_dedupe_names(
+            [
+                *salt_bridge_lig_names,
+                *(
+                    [stable_preference["stable_ligand_name"]]
+                    if stable_preference_applied and stable_preference is not None
+                    else []
+                ),
+            ]
         ),
     )
     tagged.write_text(" ".join(a[:3]) + "\n")

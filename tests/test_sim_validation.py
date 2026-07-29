@@ -243,6 +243,42 @@ def test_stable_boresch_distance_prioritizes_interaction_priority(
     ]
 
 
+def test_stable_boresch_distance_prioritizes_salt_bridge_ligand_atom(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "stable_ligand_priority.pdb"
+    lines = [
+        _atom_line(1, "CA", "ALA", "A", 10, 0.0, 0.0, 0.0, "C"),
+        _atom_line(2, "C1", "LIG", "A", 300, 4.0, 0.0, 0.0, "C"),
+        _atom_line(3, "N1", "LIG", "A", 300, 5.0, 0.0, 0.0, "N"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    u = mda.Universe(str(pdb))
+    coords = np.repeat(u.atoms.positions[None, :, :], 2, axis=0)
+    coords[0, 1, :] = np.array([4.0, 0.0, 0.0])
+    coords[1, 1, :] = np.array([4.1, 0.0, 0.0])
+    coords[0, 2, :] = np.array([5.0, 0.0, 0.0])
+    coords[1, 2, :] = np.array([6.0, 0.0, 0.0])
+    u.load_new(coords, order="fac")
+    validator = _make_validator(u, tmp_path)
+
+    record = validator.find_stable_boresch_distance(
+        tail_fraction=1.0,
+        min_distance=3.0,
+        max_distance=7.0,
+        ligand_atom_names=["C1", "N1"],
+        ligand_atom_priorities={"N1": 0},
+    )
+
+    assert record["ligand"]["name"] == "N1"
+    assert record["rank_score"]["ligand_atom_priority"] == 0
+    assert record["criteria"]["ligand_atom_priorities"] == [
+        {"name": "N1", "priority": 0}
+    ]
+
+
 def test_stable_boresch_distance_rejects_collinear_first_anchor(
     tmp_path: Path,
 ) -> None:

@@ -9,6 +9,7 @@ mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter.systemprep.helpers import (
     find_anchor_atoms,
+    get_ligand_candidates,
     select_apo_receptor_anchor_atoms,
     select_receptor_anchor_atoms,
 )
@@ -122,6 +123,25 @@ def test_find_anchor_atoms_uses_synthetic_vector_for_apo_dummy(tmp_path: Path) -
     assert np.linalg.norm(vector) == pytest.approx(5.0)
     assert np.linalg.norm(vector - np.array([-150.0, 25.0, -170.0])) > 100.0
     assert result[6] == pytest.approx(6.0)
+
+
+def test_get_ligand_candidates_keeps_terminal_charged_atoms(tmp_path: Path) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+
+    mol = Chem.AddHs(Chem.MolFromSmiles("[NH3+]CC1=CC=CC=C1"))
+    ligand_sdf = tmp_path / "charged_terminal.sdf"
+    Chem.MolToMolFile(mol, str(ligand_sdf))
+
+    charged_indices = [
+        atom.GetIdx()
+        for atom in mol.GetAtoms()
+        if atom.GetAtomicNum() != 1 and atom.GetFormalCharge() != 0
+    ]
+
+    candidates = get_ligand_candidates(ligand_sdf)
+
+    assert charged_indices
+    assert charged_indices[0] in candidates
 
 
 def test_select_receptor_anchor_atoms_uses_ligand_pose_and_geometry(

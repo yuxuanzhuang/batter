@@ -31,6 +31,7 @@ $ligh writepdb mmm-noh.pdb
 
 set a [atomselect 1 "resname MMM and noh and name LIGANDNAME"]
 set tot [$a get name]
+set salt_bridge_tot {SALTBRIDGELIGANDNAME}
 
 foreach i $tot {
 set t [atomselect 1 "resname MMM and name $i"]
@@ -55,6 +56,13 @@ lappend mat $i
 }
 
 puts $mat
+
+set salt_bridge_mat {}
+foreach i $salt_bridge_tot {
+    if {[lsearch -exact $mat $i] >= 0} {
+        lappend salt_bridge_mat $i
+    }
+}
 
 proc pick_aa1 {mat xd yd zd ang_tol} {
     upvar rad rad aa1 aa1 best_ang best_ang
@@ -118,15 +126,31 @@ proc pick_aa1 {mat xd yd zd ang_tol} {
     }
 }
 
-# Pass 1: strict
-set ANG_TOL 15.0
-pick_aa1 $mat $xd $yd $zd $ANG_TOL
+if {[llength $salt_bridge_mat] > 0} {
+    puts "Trying salt-bridge ligand first-anchor candidates"
+    puts $salt_bridge_mat
 
-# If not found, pass 2: relaxed
+    set ANG_TOL 15.0
+    pick_aa1 $salt_bridge_mat $xd $yd $zd $ANG_TOL
+
+    if {![info exists aa1]} {
+        puts "No salt-bridge aa1 found with ANG_TOL=$ANG_TOL. Retrying salt-bridge candidates with ANG_TOL=70..."
+        set ANG_TOL 70.0
+        pick_aa1 $salt_bridge_mat $xd $yd $zd $ANG_TOL
+    }
+}
+
 if {![info exists aa1]} {
-    puts "No aa1 found with ANG_TOL=$ANG_TOL. Retrying with ANG_TOL=70..."
-    set ANG_TOL 70.0
+    # Pass 1: strict
+    set ANG_TOL 15.0
     pick_aa1 $mat $xd $yd $zd $ANG_TOL
+
+    # If not found, pass 2: relaxed
+    if {![info exists aa1]} {
+        puts "No aa1 found with ANG_TOL=$ANG_TOL. Retrying with ANG_TOL=70..."
+        set ANG_TOL 70.0
+        pick_aa1 $mat $xd $yd $zd $ANG_TOL
+    }
 }
 
 set exist [info exists aa1]

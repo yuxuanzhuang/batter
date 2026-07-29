@@ -96,6 +96,47 @@ def test_candidate_ligand_atom_name_string_maps_sdf_indices_to_heavy_atoms(
     assert names == "C1 C2 C3"
 
 
+def test_candidate_ligand_atom_name_string_does_not_promote_charge_without_salt_bridge(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    rw_mol = Chem.RWMol()
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    oxygen_idx = rw_mol.AddAtom(Chem.Atom("O"))
+    rw_mol.AddBond(carbon_idx, nitrogen_idx, Chem.BondType.SINGLE)
+    rw_mol.AddBond(carbon_idx, oxygen_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(3)
+    conformer.SetAtomPosition(carbon_idx, Point3D(0.0, 0.0, 0.0))
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(1.0, 0.0, 0.0))
+    conformer.SetAtomPosition(oxygen_idx, Point3D(0.0, 1.0, 0.0))
+    mol.AddConformer(conformer)
+    sdf_file = tmp_path / "charged.sdf"
+    Chem.MolToMolFile(mol, str(sdf_file))
+    atoms = _FakeAtomGroup(
+        [
+            _FakeAtom("C1", "C"),
+            _FakeAtom("N1", "N"),
+            _FakeAtom("O1", "O"),
+        ]
+    )
+
+    names = build_complex_mod._candidate_ligand_atom_name_string(
+        sdf_file,
+        atoms,
+        ligand_label="LIG",
+        stage="equil",
+    )
+
+    assert names.split() == ["C1", "N1", "O1"]
+
+
 def test_is_apo_ligand_build_reads_param_metadata(tmp_path: Path) -> None:
     metadata = tmp_path / "APO.json"
     metadata.write_text(json.dumps({"apo": True}))
@@ -237,6 +278,45 @@ def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
     )
 
     assert preferred_names[0] == "C4"
+
+
+def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "aligned_amber.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, 0.0, 1.0, 0.0),
+                _pdb_line("HETATM", 3, "C1", "LIG", "L", 10, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 4, "N1", "LIG", "L", 10, 2.0, 0.0, 0.0),
+                _pdb_line("HETATM", 5, "C2", "LIG", "L", 10, 2.0, 1.0, 0.0),
+                _pdb_line("HETATM", 6, "C3", "LIG", "L", 10, 2.0, 1.0, 1.0),
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    names = build_complex_mod._pick_ligand_anchor_names(
+        u=u,
+        mol="LIG",
+        ligand_names=["C1", "N1", "C2", "C3"],
+        preferred_l1_names=["N1"],
+        p1_resid="2",
+        p1_atom="CA",
+        p2_resid="3",
+        p2_atom="CA",
+        l1_x=1.0,
+        l1_y=0.0,
+        l1_z=0.0,
+        l1_range=3.0,
+        min_adis=0.5,
+        max_adis=2.0,
+    )
+
+    assert names[0] == "N1"
 
 
 def test_guard_abfe_boresch_ligand_anchor_names_allows_pdb_resid_mismatch(

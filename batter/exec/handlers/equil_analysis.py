@@ -53,6 +53,25 @@ PROLIF_HBOND_INTERACTIONS = frozenset(
         "hbonddonor",
     }
 )
+SALT_BRIDGE_DISTANCE_CUTOFF = 4.0
+PROTEIN_POSITIVE_ATOMS = frozenset(
+    {
+        ("ARG", "NE"),
+        ("ARG", "NH1"),
+        ("ARG", "NH2"),
+        ("LYS", "NZ"),
+        ("HIP", "ND1"),
+        ("HIP", "NE2"),
+    }
+)
+PROTEIN_NEGATIVE_ATOMS = frozenset(
+    {
+        ("ASP", "OD1"),
+        ("ASP", "OD2"),
+        ("GLU", "OE1"),
+        ("GLU", "OE2"),
+    }
+)
 PROLIF_ARTIFACT_FILENAMES = {
     "timeseries_csv_gz": "prolif_interactions_timeseries.csv.gz",
     "barcode_png": "prolif_interactions_barcode.png",
@@ -198,6 +217,18 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except Exception:
         return None
+
+
+def _dedupe_preserve_order(values: Sequence[Any]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
 
 
 def _prolif_residue_metadata(value: Any) -> dict[str, Any]:
@@ -797,6 +828,62 @@ def _persistent_prolif_residue_priorities(
     return priorities
 
 
+def _persistent_prolif_salt_bridge_residues(
+    prolif_record: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(prolif_record, dict) or not prolif_record.get("usable", False):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[int, str, str]] = set()
+    for item in prolif_record.get("persistent_protein_residues") or []:
+        if not isinstance(item, dict):
+            continue
+        resid = _int_or_none(item.get("resid"))
+        if resid is None:
+            continue
+        has_salt_bridge = False
+        max_occupancy = 0.0
+        for interaction in item.get("interactions") or []:
+            if not isinstance(interaction, dict):
+                continue
+            if _prolif_interaction_priority(interaction.get("interaction")) != 0:
+                continue
+            has_salt_bridge = True
+            try:
+                max_occupancy = max(max_occupancy, float(interaction.get("occupancy", 0.0)))
+            except Exception:
+                pass
+        if not has_salt_bridge:
+            continue
+        key = (
+            int(resid),
+            str(item.get("resname") or ""),
+            str(item.get("chainID") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "resid": int(resid),
+                "resname": key[1],
+                "chainID": key[2],
+                "max_occupancy": max_occupancy,
+            }
+        )
+    out.sort(key=lambda item: (-float(item["max_occupancy"]), int(item["resid"])))
+    return out
+
+
+def _protein_salt_bridge_atom_charge(atom: Any) -> int:
+    key = (str(atom.resname).upper(), str(atom.name).upper())
+    if key in PROTEIN_POSITIVE_ATOMS:
+        return 1
+    if key in PROTEIN_NEGATIVE_ATOMS:
+        return -1
+    return 0
+
+
 def _write_prolif_interactions(
     *,
     prolif_path: Path,
@@ -999,6 +1086,161 @@ def _ligand_candidate_atom_names(
     return [name for name in names.split() if name]
 
 
+def _salt_bridge_ligand_atom_preference(
+    *,
+    system_root: Path,
+    residue_name: str | None,
+    ligand_label: str | None,
+    universe: mda.Universe,
+    tail_fraction: float,
+    prolif_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    salt_bridge_residues = _persistent_prolif_salt_bridge_residues(prolif_record)
+    empty = {
+        "ligand_atom_names": [],
+        "protein_residue_ids": [
+            int(item["resid"]) for item in salt_bridge_residues
+        ],
+        "distance_cutoff": float(SALT_BRIDGE_DISTANCE_CUTOFF),
+        "pairs": [],
+    }
+    if not salt_bridge_residues:
+        return empty
+    if not residue_name:
+        return empty
+    sdf_file = system_root / "params" / f"{residue_name}.sdf"
+    if not sdf_file.exists():
+        return empty
+    lig_atoms = universe.select_atoms(f"resname {residue_name}")
+    if lig_atoms.n_atoms == 0:
+        return empty
+    try:
+        from batter._internal.ops.build_complex import (
+            _sdf_formal_charge_by_ligand_atom_name,
+        )
+
+        ligand_charges = _sdf_formal_charge_by_ligand_atom_name(
+            sdf_file,
+            lig_atoms,
+        )
+    except Exception as exc:
+        logger.debug(
+            "[equil_check:{}] Could not derive ligand formal charges from {}: {}.",
+            ligand_label,
+            sdf_file,
+            exc,
+        )
+        return empty
+    if not ligand_charges:
+        return empty
+
+    ligand_atoms_by_name = {
+        str(atom.name).strip(): atom
+        for atom in lig_atoms
+        if str(atom.name).strip() in ligand_charges
+    }
+    if not ligand_atoms_by_name:
+        return empty
+
+    protein_atoms = []
+    for residue in salt_bridge_residues:
+        resid = int(residue["resid"])
+        atoms = universe.select_atoms(f"protein and resid {resid}")
+        if atoms.n_atoms == 0:
+            atoms = universe.select_atoms(f"resid {resid} and not resname {residue_name}")
+        for atom in atoms:
+            charge = _protein_salt_bridge_atom_charge(atom)
+            if charge:
+                protein_atoms.append((atom, charge))
+    if not protein_atoms:
+        return empty
+
+    n_frames = len(universe.trajectory)
+    if n_frames == 0:
+        return empty
+    start_frame = _trailing_analysis_start_frame(n_frames, tail_fraction)
+    pair_distances: dict[tuple[int, str], list[float]] = {}
+    protein_by_index: dict[int, Any] = {}
+    for _ts in universe.trajectory[start_frame:n_frames]:
+        for protein_atom, protein_charge in protein_atoms:
+            protein_by_index[int(protein_atom.index)] = protein_atom
+            for ligand_name, ligand_atom in ligand_atoms_by_name.items():
+                ligand_charge = int(ligand_charges.get(ligand_name, 0))
+                if ligand_charge == 0 or protein_charge * ligand_charge >= 0:
+                    continue
+                distance = float(
+                    np.linalg.norm(
+                        np.asarray(protein_atom.position, dtype=float)
+                        - np.asarray(ligand_atom.position, dtype=float)
+                    )
+                )
+                pair_distances.setdefault(
+                    (int(protein_atom.index), ligand_name),
+                    [],
+                ).append(distance)
+
+    pair_records: list[dict[str, Any]] = []
+    for (protein_index, ligand_name), distances in pair_distances.items():
+        if not distances:
+            continue
+        values = np.asarray(distances, dtype=float)
+        contact_fraction = float(np.mean(values <= SALT_BRIDGE_DISTANCE_CUTOFF))
+        if contact_fraction <= 0.0:
+            continue
+        protein_atom = protein_by_index[protein_index]
+        ligand_atom = ligand_atoms_by_name[ligand_name]
+        pair_records.append(
+            {
+                "protein": {
+                    "index": int(protein_atom.index),
+                    "resid": int(protein_atom.resid),
+                    "resname": str(protein_atom.resname),
+                    "name": str(protein_atom.name),
+                    "mask": f":{int(protein_atom.resid)}@{protein_atom.name}",
+                    "charge": int(_protein_salt_bridge_atom_charge(protein_atom)),
+                },
+                "ligand": {
+                    "index": int(ligand_atom.index),
+                    "resid": int(ligand_atom.resid),
+                    "resname": str(ligand_atom.resname),
+                    "name": str(ligand_name),
+                    "mask": f":{int(ligand_atom.resid)}@{ligand_name}",
+                    "charge": int(ligand_charges[ligand_name]),
+                },
+                "distance": {
+                    "mean": float(values.mean()),
+                    "min": float(values.min()),
+                    "max": float(values.max()),
+                    "contact_fraction": contact_fraction,
+                },
+            }
+        )
+
+    pair_records.sort(
+        key=lambda item: (
+            -float(item["distance"]["contact_fraction"]),
+            float(item["distance"]["mean"]),
+            int(item["protein"]["resid"]),
+            str(item["protein"]["name"]),
+            str(item["ligand"]["name"]),
+        )
+    )
+    ligand_names = _dedupe_preserve_order(
+        str(record["ligand"]["name"]) for record in pair_records
+    )
+    if ligand_names:
+        logger.debug(
+            "[equil_check:{}] Salt-bridge ligand atom preference from ProLIF: {}",
+            ligand_label,
+            " ".join(ligand_names),
+        )
+    return {
+        **empty,
+        "ligand_atom_names": ligand_names,
+        "pairs": pair_records,
+    }
+
+
 def _stable_distance_validator(
     *,
     universe: mda.Universe,
@@ -1034,6 +1276,20 @@ def _write_stable_boresch_distance(
         ligand_label=ligand_label,
         universe=universe,
     )
+    salt_bridge_preference = _salt_bridge_ligand_atom_preference(
+        system_root=system_root,
+        residue_name=residue_name,
+        ligand_label=ligand_label,
+        universe=universe,
+        tail_fraction=tail_fraction,
+        prolif_record=prolif_record,
+    )
+    salt_bridge_ligand_names = list(
+        salt_bridge_preference.get("ligand_atom_names") or []
+    )
+    salt_bridge_ligand_priorities = {
+        name: idx for idx, name in enumerate(salt_bridge_ligand_names)
+    }
     persistent_residue_ids = _persistent_prolif_residue_ids(prolif_record)
     persistent_residue_priorities = _persistent_prolif_residue_priorities(prolif_record)
     min_distance = float(getattr(sim, "min_adis", None) or 3.0)
@@ -1047,6 +1303,7 @@ def _write_stable_boresch_distance(
                 min_distance=min_distance,
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
+                ligand_atom_priorities=salt_bridge_ligand_priorities,
                 protein_residue_ids=persistent_residue_ids,
                 protein_residue_priorities=persistent_residue_priorities,
             )
@@ -1065,6 +1322,7 @@ def _write_stable_boresch_distance(
                 min_distance=min_distance,
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
+                ligand_atom_priorities=salt_bridge_ligand_priorities,
                 protein_residue_priorities=persistent_residue_priorities,
             )
     else:
@@ -1073,6 +1331,7 @@ def _write_stable_boresch_distance(
             min_distance=min_distance,
             max_distance=max_distance,
             ligand_atom_names=ligand_candidate_names,
+            ligand_atom_priorities=salt_bridge_ligand_priorities,
             protein_residue_priorities=persistent_residue_priorities,
         )
     stable_record["mode"] = mode
@@ -1093,6 +1352,7 @@ def _write_stable_boresch_distance(
         "used_residue_filter": used_prolif_filter,
         "fallback_reason": fallback_reason,
     }
+    stable_record["salt_bridge_preference"] = salt_bridge_preference
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
     logger.debug(
         "[equil_check:{}] stable Boresch pair: {} to {} "

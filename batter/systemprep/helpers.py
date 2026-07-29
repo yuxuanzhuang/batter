@@ -1195,6 +1195,9 @@ def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = False) -> Lis
         if atom.GetAtomicNum() == 1:
             continue  # skip hydrogens
         non_h.append(atom.GetIdx())
+        if atom.GetFormalCharge() != 0:
+            anchor_candidates.append(atom.GetIdx())
+            continue
         if atom.GetHybridization() == Chem.rdchem.HybridizationType.SP:
             continue
         heavy_neighbors = sum(1 for n in atom.GetNeighbors() if n.GetAtomicNum() != 1)
