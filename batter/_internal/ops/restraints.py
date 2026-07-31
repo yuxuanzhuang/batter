@@ -988,21 +988,20 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                 continue
 
-            # disable ligand dihedrals
-            if False:
-                if n == 4:
-                    try:
-                        iat = (
-                            f"{atm_num.index(fields[0])},"
-                            f"{atm_num.index(fields[1])},"
-                            f"{atm_num.index(fields[2])},"
-                            f"{atm_num.index(fields[3])},"
-                        )
-                        df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
-                    except:
-                        logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
+            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            if n == 4:
+                try:
+                    iat = (
+                        f"{atm_num.index(fields[0])},"
+                        f"{atm_num.index(fields[1])},"
+                        f"{atm_num.index(fields[2])},"
+                        f"{atm_num.index(fields[3])},"
+                    )
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                except Exception:
+                    logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
     _append_colvar_rst_blocks(cv_in, outp)
     logger.debug(f"[equil] restraints written in {work}")
@@ -1144,16 +1143,15 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                     continue
-            # ligand dihedrals
-            if False:
-                if n == 4:
-                    try:
-                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
-                        df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
-                    except:
-                        logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
+            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            if n == 4:
+                try:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                except Exception:
+                    logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
     _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
@@ -2776,16 +2774,15 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                     continue
-            # ligand dihedrals
-            if False:
-                if n == 4:
-                    try:
-                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
-                        df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
-                    except:
-                        logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
+            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            if n == 4:
+                try:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                except Exception:
+                    logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
     _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver

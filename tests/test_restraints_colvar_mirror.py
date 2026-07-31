@@ -819,3 +819,73 @@ def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:
     disang_text = (windows_dir / "disang.rest").read_text()
     assert "igr1=1,0" in disang_text
     assert "igr1=2,0" not in disang_text
+
+
+def test_equil_disang_keeps_zero_force_ligand_dihedrals_from_prmtop(
+    tmp_path: Path,
+) -> None:
+    work_dir = tmp_path
+    build_dir = work_dir / "q_build_files"
+    build_dir.mkdir()
+    (build_dir / "equil-LIG.pdb").write_text("HEADER\n")
+    (work_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@C1",
+                "L2": ":4@C2",
+                "L3": ":4@C3",
+                "lig_res": "4",
+            }
+        )
+    )
+    (work_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       3.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  C1  LIG A   4       4.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C2  LIG A   4       5.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C3  LIG A   4       6.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      7  C4  LIG A   4       7.000   0.000   0.000  1.00  0.00           C\n",
+            ]
+        )
+        + "END\n"
+    )
+    for name in ("lig.pdb", "LIG.prmtop", "full.prmtop", "full.inpcrd"):
+        (work_dir / name).write_text("stub\n")
+
+    ctx = types.SimpleNamespace(
+        working_dir=work_dir,
+        build_dir=build_dir,
+        equil_dir=work_dir,
+        win=-1,
+        ligand="lig",
+        residue_name="LIG",
+        extra={},
+        sim=types.SimpleNamespace(
+            hmr="no",
+            rest=[0, 0, 0, 0, 0, 10.0, 20.0],
+            release_eq=[100],
+        ),
+    )
+
+    original_scan = restraints._scan_dihedrals_from_prmtop
+    original_assign = restraints._write_assign_and_read_vals
+    try:
+        restraints._scan_dihedrals_from_prmtop = lambda *args, **kwargs: [
+            ":4@C1 :4@C2 :4@C3 :4@C4"
+        ]
+        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [1.0] * 10
+        restraints.write_equil_restraints(ctx)
+    finally:
+        restraints._scan_dihedrals_from_prmtop = original_scan
+        restraints._write_assign_and_read_vals = original_assign
+
+    disang_text = (work_dir / "disang.rest").read_text()
+    assert "#Lig_D" in disang_text
+    assert "iat=4,5,6,7," in disang_text
+    assert "rk2=  0.0000000, rk3=  0.0000000, &end #Lig_D" in disang_text
