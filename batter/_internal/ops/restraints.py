@@ -33,6 +33,10 @@ _ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
 BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
 BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
 SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
+LIGAND_DIHEDRAL_DEFAULT_FORCE = 10.0
+LIGAND_DIHEDRAL_ZERO_FORCE_ATOMS = frozenset(
+    {"C12", "C13", "C14", "C15", "C16", "C17"}
+)
 BoreschCandidate = tuple[float, tuple[int, int, int], tuple[float, ...], float, float]
 
 def _stride_atom_serials(
@@ -527,6 +531,23 @@ def _filter_sp_carbons(msk: List[str], mol2_path: Path) -> List[str]:
         out.append(m)
     return out
 
+
+def _atom_name_from_mask(mask: str) -> str:
+    """Return the atom name portion from an Amber-style atom mask."""
+    return mask.rsplit("@", 1)[-1].strip()
+
+
+def _ligand_dihedral_force_constant(
+    expr: str,
+    active_force: float = LIGAND_DIHEDRAL_DEFAULT_FORCE,
+) -> float:
+    """Return the force constant for a prmtop-derived ligand dihedral."""
+    atom_names = {_atom_name_from_mask(field) for field in expr.split()}
+    if atom_names & LIGAND_DIHEDRAL_ZERO_FORCE_ATOMS:
+        return 0.0
+    return float(active_force)
+
+
 def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, traj: Path) -> List[float]:
     """Emit assign.in and parse assign.dat into reference values `vals`, same order as `rst_exprs`."""
     ain = work / "assign.in"
@@ -988,7 +1009,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                 continue
 
-            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
                     iat = (
@@ -997,9 +1018,10 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                         f"{atm_num.index(fields[2])},"
                         f"{atm_num.index(fields[3])},"
                     )
+                    force_const = _ligand_dihedral_force_constant(expr)
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
@@ -1143,13 +1165,20 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                     continue
-            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
                     iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    active_lig_dih_force = (
+                        float(ldhf) if float(ldhf) > 0.0 else LIGAND_DIHEDRAL_DEFAULT_FORCE
+                    )
+                    force_const = _ligand_dihedral_force_constant(
+                        expr,
+                        active_lig_dih_force,
+                    )
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
@@ -1483,6 +1512,7 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
             except ValueError:
                 logger.warning(f"[restraints:{comp}] skipping unmapped ligand dihedral: {expr}")
                 continue
+            dih_force_const = _ligand_dihedral_force_constant(expr, force_const)
             df.write(f"&rst iat={iat:<23s} ")
             df.write(
                 "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, "
@@ -1492,8 +1522,8 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
                     float(val),
                     float(val),
                     float(val) + 180.0,
-                    force_const,
-                    force_const,
+                    dih_force_const,
+                    dih_force_const,
                 )
             )
             used_msks.append(expr)
@@ -1505,7 +1535,7 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
                     "base_force_constant": base_force,
                     "lambda": window_weight,
                     "force_scale": force_scale,
-                    "force_constant": force_const,
+                    "force_constant": dih_force_const,
                 }
             )
 
@@ -2774,13 +2804,20 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                     continue
-            # ligand dihedrals from the ligand prmtop; force constants may be zero.
+            # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
                     iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    active_lig_dih_force = (
+                        float(ldhf) if float(ldhf) > 0.0 else LIGAND_DIHEDRAL_DEFAULT_FORCE
+                    )
+                    force_const = _ligand_dihedral_force_constant(
+                        expr,
+                        active_lig_dih_force,
+                    )
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 

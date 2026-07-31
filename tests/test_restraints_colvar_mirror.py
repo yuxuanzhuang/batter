@@ -821,7 +821,22 @@ def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:
     assert "igr1=2,0" not in disang_text
 
 
-def test_equil_disang_keeps_zero_force_ligand_dihedrals_from_prmtop(
+def test_ligand_dihedral_force_rule_zeroes_excluded_atom_names() -> None:
+    assert (
+        restraints._ligand_dihedral_force_constant(
+            ":1@C1 :1@C2 :1@C3 :1@C4"
+        )
+        == 10.0
+    )
+    assert (
+        restraints._ligand_dihedral_force_constant(
+            ":1@C1 :1@C12 :1@C3 :1@C4"
+        )
+        == 0.0
+    )
+
+
+def test_equil_disang_writes_ligand_dihedrals_from_prmtop_with_force_rule(
     tmp_path: Path,
 ) -> None:
     work_dir = tmp_path
@@ -851,6 +866,7 @@ def test_equil_disang_keeps_zero_force_ligand_dihedrals_from_prmtop(
                 "ATOM      5  C2  LIG A   4       5.000   0.000   0.000  1.00  0.00           C\n",
                 "ATOM      6  C3  LIG A   4       6.000   0.000   0.000  1.00  0.00           C\n",
                 "ATOM      7  C4  LIG A   4       7.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      8  C12 LIG A   4       8.000   0.000   0.000  1.00  0.00           C\n",
             ]
         )
         + "END\n"
@@ -877,15 +893,25 @@ def test_equil_disang_keeps_zero_force_ligand_dihedrals_from_prmtop(
     original_assign = restraints._write_assign_and_read_vals
     try:
         restraints._scan_dihedrals_from_prmtop = lambda *args, **kwargs: [
-            ":4@C1 :4@C2 :4@C3 :4@C4"
+            ":4@C1 :4@C2 :4@C3 :4@C4",
+            ":4@C12 :4@C2 :4@C3 :4@C4",
         ]
-        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [1.0] * 10
+        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [1.0] * 11
         restraints.write_equil_restraints(ctx)
     finally:
         restraints._scan_dihedrals_from_prmtop = original_scan
         restraints._write_assign_and_read_vals = original_assign
 
     disang_text = (work_dir / "disang.rest").read_text()
-    assert "#Lig_D" in disang_text
-    assert "iat=4,5,6,7," in disang_text
-    assert "rk2=  0.0000000, rk3=  0.0000000, &end #Lig_D" in disang_text
+    lig_d_lines = [line for line in disang_text.splitlines() if "#Lig_D" in line]
+    assert len(lig_d_lines) == 2
+    assert any(
+        "iat=4,5,6,7," in line
+        and "rk2= 10.0000000, rk3= 10.0000000, &end #Lig_D" in line
+        for line in lig_d_lines
+    )
+    assert any(
+        "iat=8,5,6,7," in line
+        and "rk2=  0.0000000, rk3=  0.0000000, &end #Lig_D" in line
+        for line in lig_d_lines
+    )
