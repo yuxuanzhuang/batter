@@ -52,6 +52,21 @@ Notes:
 * The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
   ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
 
+Rerun Equilibration Analysis
+============================
+
+Run equilibration analysis again for an existing execution or for one ligand
+simulation folder::
+
+   batter simulation-analysis work/adrb2/executions/rep1 --force
+   batter simulation-analysis work/adrb2/executions/rep1/simulations/LIG1 --force
+
+The command writes refreshed ``simulation_analysis.png``, representative
+structures, stable-distance JSON, and ProLIF raw/plot artifacts into each
+``equil/`` directory and copies the user-facing outputs into ``equil/results/``.
+Use ``--ligand-resname`` when the ligand residue name cannot be inferred from
+``params/*.sdf`` or ``equil/*.sdf``.
+
 Generate Batch Scripts
 ======================
 

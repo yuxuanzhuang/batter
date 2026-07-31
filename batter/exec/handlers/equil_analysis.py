@@ -102,6 +102,7 @@ def _paths(root: Path) -> dict[str, Path]:
         "prolif_lignetwork": eq / PROLIF_ARTIFACT_FILENAMES["lignetwork_html"],
         "prolif_interaction_diagram": eq
         / PROLIF_ARTIFACT_FILENAMES["interaction_diagram_png"],
+        "simulation_analysis": eq / "simulation_analysis.png",
         "build_files": eq / "q_build_files",
         "prot_renum": prot_renum,
         "full_pdb": eq / "full.pdb",
@@ -112,6 +113,7 @@ def _paths(root: Path) -> dict[str, Path]:
 def _stable_boresch_distance_current(path: Path) -> bool:
     if not path.exists():
         return False
+    sim_val = None
     try:
         data = json.loads(path.read_text())
     except Exception:
@@ -252,6 +254,14 @@ def _prolif_residue_metadata(value: Any) -> dict[str, Any]:
         if not chain and match.group(3):
             chain = match.group(3)
 
+    if resid is not None:
+        resid = int(resid)
+    if resname and resid is not None:
+        chain_suffix = ""
+        if chain and chain not in {"0", "None", "none", "nan", "NaN"}:
+            chain_suffix = f".{chain}"
+        label = f"{resname}{resid}{chain_suffix}"
+
     return {
         "label": label,
         "resname": resname,
@@ -286,9 +296,11 @@ def _prolif_interaction_id(column: Any) -> str:
     if parsed is None:
         return _shorten_label(column, 120)
     ligand_id, protein_id, interaction = parsed
+    ligand_label = _prolif_residue_metadata(ligand_id).get("label") or str(ligand_id)
+    protein_label = _prolif_residue_metadata(protein_id).get("label") or str(protein_id)
     return "|".join(
         str(item).replace("|", "/")
-        for item in (ligand_id, protein_id, interaction)
+        for item in (ligand_label, protein_label, interaction)
     )
 
 
@@ -1406,13 +1418,38 @@ _EQUIL_ANALYSIS_ARTIFACT_FILES = (
 )
 
 
+def _write_equil_results_readme(results_dir: Path) -> None:
+    (results_dir / "README.txt").write_text(
+        "This directory contains equilibration analysis outputs for one BATTER simulation.\n\n"
+        "Common files:\n"
+        "- representative.pdb: representative equilibration snapshot used downstream.\n"
+        "- representative.rst7: AMBER restart for the representative snapshot.\n"
+        "- representative_complex.pdb: representative complex aligned to the initial complex.\n"
+        "- representative_pose.pdb: ligand pose from the representative complex.\n"
+        "- initial_pose.pdb: ligand pose from the initial complex.\n"
+        "- equilibration_analysis_results.npz: NumPy archive of validation metrics.\n"
+        "- simulation_analysis.png: ligand binding-site distance and RMSD over frame, with simulation time on the top axis when available.\n"
+        "- dihed_hist.png: ligand dihedral distributions used to choose the representative snapshot.\n"
+        "- stable_boresch_distance.json: automatically selected stable protein-ligand distance for Boresch anchor refinement.\n"
+        "- prolif_interactions.json: raw ProLIF interaction summary and persistent interacting residues.\n"
+        "- prolif_interactions_timeseries.csv.gz: per-frame ProLIF interaction barcode data.\n"
+        "- prolif_interactions_barcode.png: per-frame ProLIF interaction barcode plot.\n"
+        "- prolif_interactions_occupancy.png: ProLIF interaction occupancy plot.\n"
+        "- prolif_interaction_diagram.png: residue-level ligand interaction diagram.\n"
+        "- prolif_lignetwork.html: interactive ProLIF ligand interaction network when supported by ProLIF.\n",
+    )
+
+
 def _copy_equil_analysis_artifacts(equil_dir: Path) -> None:
-    artifacts_dir = equil_dir / "artifacts"
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-    for name in _EQUIL_ANALYSIS_ARTIFACT_FILES:
-        src = equil_dir / name
-        if src.exists():
-            shutil.copy2(src, artifacts_dir / name)
+    results_dir = equil_dir / "results"
+    legacy_artifacts_dir = equil_dir / "artifacts"
+    for dest_dir in (results_dir, legacy_artifacts_dir):
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for name in _EQUIL_ANALYSIS_ARTIFACT_FILES:
+            src = equil_dir / name
+            if src.exists():
+                shutil.copy2(src, dest_dir / name)
+        _write_equil_results_readme(dest_dir)
 
 
 def _add_existing_prolif_artifacts(
@@ -1431,6 +1468,230 @@ def _add_existing_prolif_artifacts(
         path = paths[key]
         if path.exists():
             artifacts[key] = path
+
+
+def discover_equil_analysis_targets(path: Path) -> list[Path]:
+    """Return simulation roots accepted by the standalone simulation-analysis CLI."""
+    root = Path(path).expanduser().resolve()
+    targets: list[Path] = []
+
+    def _add(candidate: Path) -> None:
+        candidate = candidate.resolve()
+        if (candidate / "equil").is_dir() and candidate not in targets:
+            targets.append(candidate)
+
+    if root.name == "equil" and root.is_dir():
+        _add(root.parent)
+    else:
+        _add(root)
+    simulation_dirs: list[Path] = []
+    if (root / "simulations").is_dir():
+        simulation_dirs.append(root / "simulations")
+    if root.name == "simulations" and root.is_dir():
+        simulation_dirs.append(root)
+    for sim_dir in simulation_dirs:
+        for equil_dir in sorted(sim_dir.glob("*/equil")):
+            _add(equil_dir.parent)
+        for equil_dir in sorted(sim_dir.glob("*/*/equil")):
+            _add(equil_dir.parent)
+    return sorted(targets)
+
+
+_STANDALONE_REFRESH_FILES = (
+    "equilibration_analysis_results.npz",
+    "stable_boresch_distance.json",
+    "prolif_interactions.json",
+    "prolif_interactions_timeseries.csv.gz",
+    "prolif_interactions_barcode.png",
+    "prolif_interactions_occupancy.png",
+    "prolif_lignetwork.html",
+    "prolif_interaction_diagram.png",
+    "simulation_analysis.png",
+    "dihed_hist.png",
+)
+
+
+def _read_standalone_run_config(system_root: Path) -> dict[str, Any]:
+    for parent in (system_root, *system_root.parents):
+        path = parent / "artifacts" / "config" / "run_config.normalized.json"
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning("Could not read standalone run config {}: {}", path, exc)
+            return {}
+        return data if isinstance(data, dict) else {}
+    return {}
+
+
+def _standalone_config_sections(system_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    data = _read_standalone_run_config(system_root)
+    config = data.get("config") if isinstance(data.get("config"), dict) else data
+    create = config.get("create") if isinstance(config.get("create"), dict) else {}
+    fe_sim = config.get("fe_sim") if isinstance(config.get("fe_sim"), dict) else {}
+    return create, fe_sim
+
+
+def _infer_standalone_ligand_context(
+    system_root: Path,
+    *,
+    residue_name: str | None,
+    ligand_label: str | None,
+) -> tuple[str | None, str]:
+    if not ligand_label:
+        for metadata_path in sorted((system_root / "params").glob("*.metadata.json")):
+            try:
+                data = json.loads(metadata_path.read_text())
+            except Exception:
+                continue
+            title = str(data.get("title") or "").strip() if isinstance(data, dict) else ""
+            if title:
+                ligand_label = title
+                break
+    if not ligand_label:
+        ligand_label = system_root.name
+
+    if residue_name:
+        return residue_name, ligand_label
+
+    excluded_stems = {
+        "full",
+        "ligand",
+        "vac_ligand",
+        "anchors",
+        "equil-reference",
+        "extra_conf_restraints",
+        "initial_pose",
+        "ligand_dihedral_restraints",
+        "ligand_dihedral_schedule",
+        "metadata",
+        "other_parts",
+        "output",
+        "representative",
+        "representative_complex",
+        "representative_pose",
+        "stable_boresch_distance",
+    }
+    for search_dir, suffix in (
+        (system_root / "params", "*.sdf"),
+        (system_root / "equil", "*.sdf"),
+        (system_root / "equil", "*.json"),
+    ):
+        if not search_dir.is_dir():
+            continue
+        for candidate in sorted(search_dir.glob(suffix)):
+            stem = candidate.stem
+            if stem in excluded_stems or stem.startswith("prolif_"):
+                continue
+            return stem, ligand_label
+    return None, ligand_label
+
+
+def _infer_standalone_hmr(
+    equil_dir: Path,
+    hmr: bool | str | None,
+    fe_sim: dict[str, Any],
+) -> str:
+    value = hmr if hmr is not None else fe_sim.get("hmr")
+    if value is None:
+        return "yes" if (equil_dir / "full.hmr.prmtop").exists() else "no"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    text = str(value).strip().lower()
+    return "yes" if text in {"1", "true", "yes", "y", "on"} else "no"
+
+
+def _infer_standalone_eq_steps(equil_dir: Path, fe_sim: dict[str, Any]) -> int:
+    value = fe_sim.get("eq_steps")
+    if value is not None:
+        try:
+            return int(value)
+        except Exception:
+            pass
+    trajs = [path for path in equil_dir.glob("md-*.nc") if path.stat().st_size > 1024]
+    if not trajs and (equil_dir / "eqnpt_appear.rst7").exists():
+        return 0
+    return 1_000_000
+
+
+def _refresh_standalone_outputs(equil_dir: Path) -> None:
+    for name in _STANDALONE_REFRESH_FILES:
+        path = equil_dir / name
+        if path.exists():
+            path.unlink()
+
+
+def _fallback_representative_frame_index(
+    *,
+    universe: mda.Universe,
+    sim_val: SimValidator,
+) -> int:
+    frames = np.asarray(sim_val.results.get("frame_indices", []), dtype=int)
+    if frames.size:
+        return int(frames[-1])
+    n_frames = len(universe.trajectory)
+    if n_frames <= 0:
+        return 0
+    return int(n_frames - 1)
+
+
+def run_equil_analysis_for_simulation(
+    system_root: Path,
+    *,
+    residue_name: str | None = None,
+    ligand_label: str | None = None,
+    threshold: float | None = None,
+    hmr: bool | str | None = None,
+    force: bool = False,
+) -> ExecResult:
+    """Run the equil-analysis handler for one existing simulation directory."""
+    from batter.config.simulation import SimulationConfig
+
+    system_root = Path(system_root).expanduser().resolve()
+    p = _paths(system_root)
+    if not p["equil_dir"].is_dir():
+        raise FileNotFoundError(f"Missing equil directory under {system_root}")
+    if force:
+        _refresh_standalone_outputs(p["equil_dir"])
+
+    create, fe_sim = _standalone_config_sections(system_root)
+    residue_name, ligand_label = _infer_standalone_ligand_context(
+        system_root,
+        residue_name=residue_name,
+        ligand_label=ligand_label,
+    )
+    if threshold is None:
+        threshold = float(fe_sim.get("unbound_threshold", 8.0) or 8.0)
+
+    sim_data: dict[str, Any] = {
+        "system_name": create.get("system_name") or system_root.name,
+        "fe_type": fe_sim.get("fe_type") or "md",
+        "hmr": _infer_standalone_hmr(p["equil_dir"], hmr, fe_sim),
+        "eq_steps": _infer_standalone_eq_steps(p["equil_dir"], fe_sim),
+        "unbound_threshold": float(threshold),
+        "protein_align": create.get("protein_align")
+        or fe_sim.get("protein_align")
+        or "name CA",
+    }
+    for key in ("min_adis", "max_adis"):
+        value = create.get(key, fe_sim.get(key))
+        if value is not None:
+            sim_data[key] = value
+
+    sim = SimulationConfig.model_validate(sim_data)
+    system = SimSystem(
+        name=ligand_label or system_root.name,
+        root=system_root,
+        meta={"ligand": ligand_label, "residue_name": residue_name},
+    )
+    params = {
+        "sim": sim,
+        "sys_params": {"anchor_atoms": create.get("anchor_atoms") or []},
+        "store_debug_files": True,
+        "unbound_threshold": float(threshold),
+    }
+    return equil_analysis_handler(Step(name="equil_analysis"), system, params)
 
 
 def _maybe_cleanup_equil(payload: StepPayload, paths: dict[str, Path]) -> None:
@@ -1506,6 +1767,7 @@ def equil_analysis_handler(
 
     if p["unbound"].exists():
         logger.warning(f"[equil_check:{lig}] previously marked UNBOUND — keeping as is")
+        _copy_equil_analysis_artifacts(p["equil_dir"])
         _maybe_cleanup_equil(payload, p)
         return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
@@ -1570,6 +1832,7 @@ def equil_analysis_handler(
         if p["stable_boresch_distance"].exists():
             artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
         _add_existing_prolif_artifacts(artifacts, p)
+        _copy_equil_analysis_artifacts(p["equil_dir"])
         _maybe_cleanup_equil(payload, p)
         return ExecResult(job_ids=[], artifacts=artifacts)
 
@@ -1606,6 +1869,7 @@ def equil_analysis_handler(
             if p["stable_boresch_distance"].exists():
                 artifacts["stable_boresch_distance"] = p["stable_boresch_distance"]
             _add_existing_prolif_artifacts(artifacts, p)
+            _copy_equil_analysis_artifacts(p["equil_dir"])
             _maybe_cleanup_equil(payload, p)
             return ExecResult(job_ids=[], artifacts=artifacts)
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
@@ -1703,6 +1967,7 @@ def equil_analysis_handler(
 
     # Run validation
 
+    sim_val = None
     try:
         # Build trajectory list from completed equil segments
         trajs = _sort_md_paths(list(p["equil_dir"].glob("md-*.nc")))
@@ -1724,15 +1989,15 @@ def equil_analysis_handler(
             directory=p["equil_dir"],
             protein_anchor_masks=anchor_masks,
         )
-        sim_val.plot_analysis(savefig=True)
-
         # bound vs unbound
         ligand_bs_last = float(np.asarray(sim_val.results["ligand_bs"][-1]).item())
         if ligand_bs_last > threshold:
             logger.warning(
                 f"[equil_check:{lig}] UNBOUND (ligand_bs={ligand_bs_last:.2f} Å) > {threshold:.2f} Å"
             )
+            sim_val.plot_analysis(savefig=True)
             p["unbound"].write_text(f"UNBOUND with ligand_bs = {ligand_bs_last:.3f}\n")
+            _copy_equil_analysis_artifacts(p["equil_dir"])
             _maybe_cleanup_equil(payload, p)
             return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
@@ -1793,15 +2058,38 @@ def equil_analysis_handler(
                     lig,
                     exc,
                 )
-        rep_idx = int(sim_val.find_representative_snapshot())
+        try:
+            rep_idx = int(sim_val.find_representative_snapshot())
+        except Exception as exc:
+            rep_idx = _fallback_representative_frame_index(universe=u, sim_val=sim_val)
+            sim_val.results["representative_frame_index"] = int(rep_idx)
+            sim_val.results["representative_selection_mode"] = "last_frame_fallback"
+            sim_val.results["representative_selection_reason"] = str(exc)
+            logger.warning(
+                "[equil_check:{}] Could not choose representative from ligand "
+                "dihedrals; using last trajectory frame {}: {}",
+                lig,
+                rep_idx,
+                exc,
+            )
+        sim_val.plot_analysis(savefig=True)
+        sim_val.dump_results()
         # pick representative frame and export using cpptraj
         _cpptraj_export_rep(rep_idx, prmtop, trajs, p["equil_dir"])
-        sim_val.dump_results()
 
     # if traj doesn't exist
     # use the last frame as representative
     except Exception as e:
         logger.debug(f"[equil_check:{lig}] error during simulation validation: {e}")
+        if sim_val is not None and not p["simulation_analysis"].exists():
+            try:
+                sim_val.plot_analysis(savefig=True)
+            except Exception as plot_exc:
+                logger.debug(
+                    "[equil_check:{}] Could not write fallback simulation_analysis.png: {}",
+                    lig,
+                    plot_exc,
+                )
         if p["rep_pdb"].exists() and p["rep_rst"].exists():
             logger.warning(
                 f"[equil_check:{lig}] keeping existing representative.* after "
@@ -1864,7 +2152,8 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] Failed to align representative complex: {exc}"
             )
 
-    # copy key outputs into equil/artifacts for downstream use
+    # copy key outputs into equil/results for user-facing inspection and into
+    # equil/artifacts for compatibility with older downstream paths.
     _copy_equil_analysis_artifacts(p["equil_dir"])
 
     logger.debug(f"[equil_check:{lig}] representative frame written")

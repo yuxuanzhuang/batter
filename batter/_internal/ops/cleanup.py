@@ -115,6 +115,7 @@ _SYSTEM_KEEP_NAMES = {
 
 _KEEP_DIR_NAMES = {
     "artifacts",
+    "results",
     "params",
     "inputs",
     "remd",

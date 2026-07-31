@@ -399,6 +399,12 @@ def _copy_equil_artifacts(
         "representative_complex.pdb": "representative_complex.pdb",
         "representative_pose.pdb": "representative_pose.pdb",
         "initial_pose.pdb": "initial_pose.pdb",
+        "prolif_interactions.json": "prolif_interactions.json",
+        "prolif_interactions_timeseries.csv.gz": "prolif_interactions_timeseries.csv.gz",
+        "prolif_interactions_barcode.png": "prolif_interactions_barcode.png",
+        "prolif_interactions_occupancy.png": "prolif_interactions_occupancy.png",
+        "prolif_interaction_diagram.png": "prolif_interaction_diagram.png",
+        "prolif_lignetwork.html": "prolif_lignetwork.html",
         f"{mol_name}.sdf": f"{mol_name}.sdf",
         f"{mol_name}.prmtop": f"{mol_name}.prmtop",
         f"{mol_name}.pdb": f"{mol_name}.pdb",
@@ -424,6 +430,12 @@ def _copy_equil_artifacts(
             f"- simulation_analysis.png: Plot of equilibration simulation metrics over time.\n"
             f"- dihed_hist.png: Histogram of dihedral angle distributions during equilibration.\n"
             f"- representative.pdb: Representative snapshot from equilibration that is used for further FEP.\n\n"
+            f"- prolif_interactions.json: Raw ProLIF interaction summary.\n"
+            f"- prolif_interactions_timeseries.csv.gz: Per-frame ProLIF interaction states.\n"
+            f"- prolif_interactions_barcode.png: ProLIF per-frame interaction barcode plot.\n"
+            f"- prolif_interactions_occupancy.png: ProLIF interaction occupancy plot.\n"
+            f"- prolif_interaction_diagram.png: Residue-level ligand interaction diagram.\n"
+            f"- prolif_lignetwork.html: Interactive ProLIF ligand interaction network when available.\n\n"
             f"- {mol_name}.sdf: Ligand structure file in SDF format.\n"
             f"- {mol_name}.prmtop: AMBER parameter/topology file for the ligand.\n"
             f"- {mol_name}.pdb: PDB structure file for the ligand.\n\n"

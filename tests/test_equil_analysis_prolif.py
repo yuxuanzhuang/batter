@@ -9,10 +9,13 @@ mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter.exec.handlers.equil_analysis import (
     PROLIF_ARTIFACT_FILENAMES,
+    _copy_equil_analysis_artifacts,
     _equil_anchor_masks_to_original_resids,
     _load_equil_anchor_masks,
     _persistent_prolif_residue_ids,
     _persistent_prolif_residue_priorities,
+    _prolif_interaction_id,
+    _prolif_residue_metadata,
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
     _salt_bridge_ligand_atom_preference,
@@ -98,6 +101,19 @@ def test_prolif_dataframe_records_persistent_protein_residues() -> None:
     assert _persistent_prolif_residue_ids(
         {"usable": True, "persistent_protein_residues": persistent}
     ) == [42]
+
+
+def test_prolif_residue_labels_show_integer_resids() -> None:
+    protein_meta = _prolif_residue_metadata("ASP86.0")
+    ligand_meta = _prolif_residue_metadata("hmn292.0")
+
+    assert protein_meta["label"] == "ASP86"
+    assert protein_meta["resid"] == 86
+    assert isinstance(protein_meta["resid"], int)
+    assert ligand_meta["label"] == "hmn292"
+    assert _prolif_interaction_id(("hmn292.0", "ASP86.0", "Anionic")) == (
+        "hmn292|ASP86|Anionic"
+    )
 
 
 def test_persistent_prolif_residue_priorities_rank_salt_bridge_first() -> None:
@@ -250,6 +266,26 @@ def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> Non
         path = tmp_path / artifacts[key]
         assert path.exists()
         assert path.stat().st_size > 0
+
+
+def test_equil_analysis_artifacts_are_copied_to_results_folder(tmp_path: Path) -> None:
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir()
+    (equil_dir / "prolif_interactions.json").write_text('{"schema_version": 3}\n')
+    (equil_dir / "prolif_interactions_barcode.png").write_bytes(b"png")
+    (equil_dir / "simulation_analysis.png").write_bytes(b"png")
+
+    _copy_equil_analysis_artifacts(equil_dir)
+
+    results_dir = equil_dir / "results"
+    legacy_dir = equil_dir / "artifacts"
+    assert (results_dir / "prolif_interactions.json").exists()
+    assert (results_dir / "prolif_interactions_barcode.png").exists()
+    assert (results_dir / "simulation_analysis.png").exists()
+    assert "prolif_interactions_timeseries.csv.gz" in (
+        results_dir / "README.txt"
+    ).read_text()
+    assert (legacy_dir / "prolif_interactions.json").exists()
 
 
 def test_run_prolif_fingerprint_disables_progress_when_supported() -> None:

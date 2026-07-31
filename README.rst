@@ -111,6 +111,25 @@ Use ``--help`` to see all commands:
    batter -h
    batter run -h
 
+Equilibration analysis outputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After equilibration analysis, BATTER copies the main per-ligand reports into
+``simulations/<ligand>/equil/results/`` with a ``README.txt``. These include
+``simulation_analysis.png`` with frame and simulation-time axes, the selected
+representative snapshot, ``stable_boresch_distance.json``, and ProLIF outputs:
+``prolif_interactions.json``, ``prolif_interactions_timeseries.csv.gz``,
+``prolif_interactions_barcode.png``, ``prolif_interactions_occupancy.png``,
+``prolif_interaction_diagram.png``, and ``prolif_lignetwork.html`` when ProLIF
+can generate it.
+
+To rerun equilibration analysis for an existing execution or one ligand folder:
+
+.. code-block:: bash
+
+   batter simulation-analysis work/adrb2/executions/rep1 --force
+   batter simulation-analysis work/adrb2/executions/rep1/simulations/LIG1 --force
+
 Examples
 ----------------
 YAML files in ``examples/`` illustrate common setups:

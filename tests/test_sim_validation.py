@@ -129,6 +129,25 @@ def test_representative_snapshot_uses_last_quarter_frames(
     assert validator.results["representative_analysis_start_frame"] == 6
 
 
+def test_simulation_analysis_plot_records_frame_and_time_axes(tmp_path: Path) -> None:
+    u = _make_test_universe(tmp_path)
+    coords = np.repeat(u.atoms.positions[None, :, :], 3, axis=0)
+    u.load_new(coords, order="fac", dt=2000.0)
+    validator = _make_validator(u, tmp_path)
+    validator.results = {
+        "ligand_bs": np.array([3.0, 3.2, 3.1]),
+        "protein_rmsd": np.array([0.0, 0.5, 0.7]),
+        "ligand_rmsd": np.array([0.0, 0.8, 0.6]),
+        "representative_frame_index": 1,
+    }
+
+    validator.plot_analysis(savefig=True)
+
+    assert np.array_equal(validator.results["frame_indices"], np.array([0, 1, 2]))
+    assert np.allclose(validator.results["simulation_time_ns"], np.array([0.0, 2.0, 4.0]))
+    assert (tmp_path / "simulation_analysis.png").stat().st_size > 0
+
+
 def test_stable_boresch_distance_uses_tail_candidate_stability(
     tmp_path: Path,
 ) -> None:

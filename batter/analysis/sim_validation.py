@@ -103,6 +103,7 @@ class SimValidator:
                              f'one of {possible_resnames}, set it by `ligand` argument')
     
     def _validate(self):
+        self._frame_time_axes()
         self._box()
         self._rmsd()
         # self._rmsf()
@@ -763,6 +764,95 @@ class SimValidator:
         start_frame = int(np.floor(n_frames * (1.0 - tail_fraction)))
         return min(max(start_frame, 0), n_frames - 1)
 
+    def _frame_time_axes(self) -> tuple[np.ndarray, np.ndarray | None]:
+        frame_indices: list[int] = []
+        times_ps: list[float] = []
+        current_frame = None
+        try:
+            current_frame = int(self.universe.trajectory.frame)
+        except Exception:
+            current_frame = None
+        try:
+            for ts in self.universe.trajectory:
+                frame_indices.append(int(ts.frame))
+                try:
+                    times_ps.append(float(ts.time))
+                except Exception:
+                    times_ps.append(float("nan"))
+        finally:
+            if current_frame is not None:
+                try:
+                    self.universe.trajectory[current_frame]
+                except Exception:
+                    pass
+
+        if not frame_indices:
+            frame_indices = list(range(len(self.universe.trajectory)))
+        frames = np.asarray(frame_indices, dtype=int)
+        self.results["frame_indices"] = frames
+
+        times = np.asarray(times_ps, dtype=float)
+        if len(times) != len(frames) or not np.any(np.isfinite(times)):
+            return frames, None
+        if len(times) > 1 and np.allclose(times[np.isfinite(times)], times[np.isfinite(times)][0]):
+            dt = getattr(self.universe.trajectory, "dt", None)
+            try:
+                dt = float(dt)
+            except Exception:
+                dt = 0.0
+            if dt > 0.0:
+                times = np.arange(len(frames), dtype=float) * dt
+        times_ns = times / 1000.0
+        self.results["simulation_time_ns"] = times_ns
+        return frames, times_ns
+
+    def _plot_x_values(self, values: Any) -> np.ndarray:
+        arr = np.asarray(values)
+        frames = np.asarray(self.results.get("frame_indices", []), dtype=int)
+        if len(frames) == len(arr):
+            return frames
+        return np.arange(len(arr), dtype=int)
+
+    def _time_tick_labels(
+        self,
+        ticks: Sequence[float],
+        frames: np.ndarray,
+        times_ns: np.ndarray | None,
+    ) -> list[str]:
+        if times_ns is None or len(times_ns) != len(frames) or len(frames) == 0:
+            return []
+        finite = np.isfinite(times_ns)
+        if not np.any(finite):
+            return []
+        frame_values = np.asarray(frames, dtype=float)[finite]
+        time_values = np.asarray(times_ns, dtype=float)[finite]
+        order = np.argsort(frame_values)
+        frame_values = frame_values[order]
+        time_values = time_values[order]
+        unique_frames, unique_indices = np.unique(frame_values, return_index=True)
+        time_values = time_values[unique_indices]
+        if len(unique_frames) == 1:
+            return [f"{time_values[0]:.3g}" for _ in ticks]
+        labels: list[str] = []
+        for tick in ticks:
+            if tick < unique_frames[0] or tick > unique_frames[-1]:
+                labels.append("")
+            else:
+                value = float(np.interp(float(tick), unique_frames, time_values))
+                labels.append(f"{value:.3g}")
+        return labels
+
+    def _add_simulation_time_axis(self, ax, frames: np.ndarray, times_ns: np.ndarray | None) -> None:
+        labels = self._time_tick_labels(ax.get_xticks(), frames, times_ns)
+        if not labels:
+            return
+        top = ax.twiny()
+        top.set_xlim(ax.get_xlim())
+        top.set_xticks(ax.get_xticks())
+        top.set_xticklabels(labels)
+        top.set_xlabel("Simulation time (ns)")
+        top.tick_params(axis="x", labelsize=8)
+
     def _ligand_dihedral(self, start_frame: int = 0):
         logger.debug('Calculating ligand dihedral')
         dihed_ligands_file = self.workdir / 'assign.in'
@@ -837,16 +927,40 @@ class SimValidator:
 
     def plot_analysis(self, savefig=True, output_filename='simulation_analysis.png'):
         # plot ligand_bs, rmsd, dihedral in three rows
+        frames, times_ns = self._frame_time_axes()
         fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
         # Plot ligand binding site distance
-        axes[0].plot(self.results['ligand_bs'], label='Ligand to binding site distance')
+        x_ligand_bs = self._plot_x_values(self.results['ligand_bs'])
+        axes[0].plot(x_ligand_bs, self.results['ligand_bs'], label='Ligand to binding site distance')
         axes[0].set_ylabel('Distance (Å)')
         axes[0].legend()
         # Plot RMSD
-        axes[1].plot(self.results['protein_rmsd'], label='Protein RMSD')
-        axes[1].plot(self.results['ligand_rmsd'], label='Ligand RMSD')
+        x_protein = self._plot_x_values(self.results['protein_rmsd'])
+        x_ligand = self._plot_x_values(self.results['ligand_rmsd'])
+        axes[1].plot(x_protein, self.results['protein_rmsd'], label='Protein RMSD')
+        axes[1].plot(x_ligand, self.results['ligand_rmsd'], label='Ligand RMSD')
+        axes[1].set_xlabel('Frame')
         axes[1].set_ylabel('RMSD (Å)')
         axes[1].legend()
+        representative_frame = self.results.get('representative_frame_index')
+        if representative_frame is not None:
+            try:
+                representative_frame = int(representative_frame)
+            except Exception:
+                representative_frame = None
+        if representative_frame is not None:
+            for ax in axes:
+                ax.axvline(
+                    representative_frame,
+                    color='tab:red',
+                    linestyle='--',
+                    linewidth=1.2,
+                    label='Representative',
+                )
+            handles, labels = axes[0].get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            axes[0].legend(by_label.values(), by_label.keys())
+        self._add_simulation_time_axis(axes[0], frames, times_ns)
         plt.tight_layout()
         if savefig:
             plt.savefig(self.workdir / output_filename)

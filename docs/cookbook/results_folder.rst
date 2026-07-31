@@ -127,6 +127,12 @@ For a successful result, BATTER writes::
    * ``representative_pose.pdb``
    * ``initial_pose.pdb``
    * ``initial_complex.pdb``
+   * ``prolif_interactions.json``
+   * ``prolif_interactions_timeseries.csv.gz``
+   * ``prolif_interactions_barcode.png``
+   * ``prolif_interactions_occupancy.png``
+   * ``prolif_interaction_diagram.png``
+   * ``prolif_lignetwork.html`` when available
    * ``<ligand>.sdf``, ``<ligand>.prmtop``, and ``<ligand>.pdb`` when present
 
 Failure or Unbound Record Directory
