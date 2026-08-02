@@ -34,9 +34,6 @@ BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
 BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
 SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
 LIGAND_DIHEDRAL_DEFAULT_FORCE = 10.0
-LIGAND_DIHEDRAL_ZERO_FORCE_ATOMS = frozenset(
-    {"C12", "C13", "C14", "C15", "C16", "C17"}
-)
 BoreschCandidate = tuple[float, tuple[int, int, int], tuple[float, ...], float, float]
 
 def _stride_atom_serials(
@@ -170,6 +167,36 @@ def _adjust_receptor_anchor_mask(mask: str, dec_method: str | None) -> str:
     return f":{int(match.group(1)) + 1}@{match.group(2)}"
 
 
+def _mask_index(atm_num: Sequence[str], mask: str) -> int:
+    """Return the 1-based PDB atom index for an Amber mask.
+
+    Amber topology atom names for halogens are commonly upper-case (CL1), while
+    PDB atom names written by Amber tools can be element-cased (Cl1). Prefer an
+    exact match, then fall back to a unique case-insensitive match.
+    """
+    try:
+        return atm_num.index(mask)
+    except ValueError:
+        target = mask.lower()
+        matches = [idx for idx, candidate in enumerate(atm_num) if candidate.lower() == target]
+        if len(matches) == 1:
+            return matches[0]
+        raise
+
+
+def _canonical_mask(atm_num: Sequence[str], mask: str) -> str:
+    """Return the mask spelling used by ``atm_num`` when it can be resolved."""
+    try:
+        return atm_num[_mask_index(atm_num, mask)]
+    except ValueError:
+        return mask
+
+
+def _canonicalize_restraint_expr(expr: str, atm_num: Sequence[str]) -> str:
+    """Normalize atom-mask spelling in a restraint expression to ``vac.pdb``."""
+    return " ".join(_canonical_mask(atm_num, field) for field in expr.split())
+
+
 def _resolve_anchor_atom_from_mask(
     universe: mda.Universe,
     atm_num: Sequence[str],
@@ -177,7 +204,7 @@ def _resolve_anchor_atom_from_mask(
 ) -> object | None:
     """Resolve an Amber-style atom mask to an MDAnalysis atom from ``vac.pdb``."""
     try:
-        serial = atm_num.index(mask)
+        serial = _mask_index(atm_num, mask)
     except ValueError:
         return None
     if serial <= 0 or serial > universe.atoms.n_atoms:
@@ -532,23 +559,50 @@ def _filter_sp_carbons(msk: List[str], mol2_path: Path) -> List[str]:
     return out
 
 
-def _atom_name_from_mask(mask: str) -> str:
-    """Return the atom name portion from an Amber-style atom mask."""
-    return mask.rsplit("@", 1)[-1].strip()
-
-
 def _ligand_dihedral_force_constant(
     expr: str,
     active_force: float = LIGAND_DIHEDRAL_DEFAULT_FORCE,
 ) -> float:
     """Return the force constant for a prmtop-derived ligand dihedral."""
-    atom_names = {_atom_name_from_mask(field) for field in expr.split()}
-    if atom_names & LIGAND_DIHEDRAL_ZERO_FORCE_ATOMS:
-        return 0.0
     return float(active_force)
 
 
-def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, traj: Path) -> List[float]:
+def _restraint_reference_value(vals: Sequence[Optional[float]], index: int) -> Optional[float]:
+    if index < 0 or index >= len(vals):
+        return None
+    value = vals[index]
+    if value is None:
+        return None
+    return float(value)
+
+
+def _ligand_dihedral_reference_value(
+    vals: Sequence[Optional[float]],
+    index: int,
+    expr: str,
+    force_const: float,
+    comp: str,
+) -> Optional[float]:
+    value = _restraint_reference_value(vals, index)
+    if value is not None:
+        return value
+    if float(force_const) == 0.0:
+        logger.warning(
+            f"[restraints:{comp}] missing reference for zero-force ligand dihedral {expr}; using 0.0"
+        )
+        return 0.0
+    logger.warning(
+        f"[restraints:{comp}] skipping ligand dihedral without reference value: {expr}"
+    )
+    return None
+
+
+def _write_assign_and_read_vals(
+    work: Path,
+    rst_exprs: List[str],
+    prmtop: Path,
+    traj: Path,
+) -> List[Optional[float]]:
     """Emit assign.in and parse assign.dat into reference values `vals`, same order as `rst_exprs`."""
     ain = work / "assign.in"
     with ain.open("w") as f:
@@ -567,11 +621,26 @@ def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, 
     assign_dat = (work / "assign.dat").read_text().splitlines()
     if len(assign_dat) < 2:
         raise RuntimeError("assign.dat did not contain reference values")
-    vals = assign_dat[1].split()
-    # legacy rotation: shift first to end, drop last
-    vals.append(vals.pop(0))
-    vals = vals[:-1]
-    return [float(v) for v in vals]
+    labels = assign_dat[0].split()
+    raw_vals = assign_dat[1].split()
+    if labels and labels[0].lower().lstrip("#") == "frame":
+        labels = labels[1:]
+        raw_vals = raw_vals[1:]
+
+    vals: List[Optional[float]] = [None] * len(rst_exprs)
+    for label, raw_val in zip(labels, raw_vals):
+        if not re.fullmatch(r"r\d+", label):
+            continue
+        idx = int(label[1:])
+        if 0 <= idx < len(vals):
+            vals[idx] = float(raw_val)
+
+    missing = [f"r{i}" for i, val in enumerate(vals) if val is None]
+    if missing:
+        logger.warning(
+            f"[restraints] cpptraj did not report reference values for {', '.join(missing)}"
+        )
+    return vals
 
 
 def _equil_anchor_restraint_expressions(
@@ -933,7 +1002,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     if lig_mol2.exists():
         msk = _filter_sp_carbons(msk, lig_mol2)
 
-    full_rst = rst + msk
+    full_rst = [_canonicalize_restraint_expr(expr, atm_num) for expr in (rst + msk)]
 
     vals = _write_assign_and_read_vals(work, full_rst, full_prmtop, full_inpcrd)
 
@@ -979,7 +1048,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
             # first 3 are protein distances
             if i < 3 and n == 2:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
                          % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
@@ -988,21 +1057,21 @@ def write_equil_restraints(ctx: BuildContext) -> None:
             # TR block
             if 3 <= i < 3 + ligand_anchor_rst_count:
                 if n == 2:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
                 elif n == 3:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
                 elif n == 4:
                     iat = (
-                        f"{atm_num.index(fields[0])},"
-                        f"{atm_num.index(fields[1])},"
-                        f"{atm_num.index(fields[2])},"
-                        f"{atm_num.index(fields[3])},"
+                        f"{_mask_index(atm_num, fields[0])},"
+                        f"{_mask_index(atm_num, fields[1])},"
+                        f"{_mask_index(atm_num, fields[2])},"
+                        f"{_mask_index(atm_num, fields[3])},"
                     )
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
@@ -1012,16 +1081,25 @@ def write_equil_restraints(ctx: BuildContext) -> None:
             # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
-                    iat = (
-                        f"{atm_num.index(fields[0])},"
-                        f"{atm_num.index(fields[1])},"
-                        f"{atm_num.index(fields[2])},"
-                        f"{atm_num.index(fields[3])},"
+                    force_const = 0.0
+                    val = _ligand_dihedral_reference_value(
+                        vals,
+                        i,
+                        expr,
+                        force_const,
+                        "equil",
                     )
-                    force_const = _ligand_dihedral_force_constant(expr)
+                    if val is None:
+                        continue
+                    iat = (
+                        f"{_mask_index(atm_num, fields[0])},"
+                        f"{_mask_index(atm_num, fields[1])},"
+                        f"{_mask_index(atm_num, fields[2])},"
+                        f"{_mask_index(atm_num, fields[3])},"
+                    )
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
+                            % (val - 180.0, val, val, val + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
@@ -1100,7 +1178,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     if lig_mol2.exists():
         lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
 
-    rst_full = rst + lig_msks
+    rst_full = [_canonicalize_restraint_expr(expr, atm_num) for expr in (rst + lig_msks)]
     vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
 
     # weights (single stage in FE)
@@ -1140,7 +1218,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             n = len(fields)
             # protein triangle
             if i < 3 and n == 2:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
                          % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
@@ -1148,19 +1226,19 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             # TR (if included)
             if (not lig_only) and (i >= 3) and (i < 9):
                 if n == 2:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
                     continue
                 if n == 3:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
                     continue
                 if n == 4:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},{_mask_index(atm_num, fields[3])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
@@ -1168,17 +1246,20 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
-                    active_lig_dih_force = (
-                        float(ldhf) if float(ldhf) > 0.0 else LIGAND_DIHEDRAL_DEFAULT_FORCE
-                    )
-                    force_const = _ligand_dihedral_force_constant(
+                    force_const = 0.0
+                    val = _ligand_dihedral_reference_value(
+                        vals,
+                        i,
                         expr,
-                        active_lig_dih_force,
+                        force_const,
+                        comp,
                     )
+                    if val is None:
+                        continue
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},{_mask_index(atm_num, fields[3])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
+                            % (val - 180.0, val, val, val + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
@@ -1390,10 +1471,11 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
     L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
     lig_res = anchors.lig_res
+    atm_num = num_to_mask(vac_pdb.as_posix())
     boresch_exprs = _ligand_boresch_expressions(P1, P2, P3, L1, L2, L3)
+    boresch_exprs = [_canonicalize_restraint_expr(expr, atm_num) for expr in boresch_exprs]
     boresch_vals = _write_assign_and_read_vals(windows_dir, boresch_exprs, full_prmtop, full_inpcrd)
 
-    atm_num = num_to_mask(vac_pdb.as_posix())
     vac_lig_pdb = windows_dir / "vac_ligand.pdb"
     if not vac_lig_pdb.exists():
         vac_lig_pdb = windows_dir / f"{lig}.pdb"
@@ -1412,10 +1494,11 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
         if len(fields) != 4:
             continue
         try:
-            relative_dihedrals.append(tuple(ligand_atm_num.index(field) for field in fields))
+            relative_dihedrals.append(tuple(_mask_index(ligand_atm_num, field) for field in fields))
         except ValueError:
             logger.warning(f"[restraints:{comp}] skipping ligand dihedral without source atom map: {expr}")
     lig_msks = [m.replace(":1", f":{lig_res}") for m in raw_lig_msks]
+    lig_msks = [_canonicalize_restraint_expr(expr, atm_num) for expr in lig_msks]
     if not lig_msks:
         raise ValueError(f"[restraints:{comp}] no ligand heavy-atom dihedrals found for {lig}")
     if len(relative_dihedrals) != len(lig_msks):
@@ -1462,7 +1545,7 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
             fields = expr.split()
             n = len(fields)
             try:
-                iat = ",".join(str(atm_num.index(field)) for field in fields) + ","
+                iat = ",".join(str(_mask_index(atm_num, field)) for field in fields) + ","
             except ValueError as exc:
                 raise ValueError(f"[restraints:{comp}] could not map Boresch restraint: {expr}") from exc
             df.write(f"&rst iat={iat:<23s} ")
@@ -1504,10 +1587,10 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
                 continue
             try:
                 iat = (
-                    f"{atm_num.index(fields[0])},"
-                    f"{atm_num.index(fields[1])},"
-                    f"{atm_num.index(fields[2])},"
-                    f"{atm_num.index(fields[3])},"
+                    f"{_mask_index(atm_num, fields[0])},"
+                    f"{_mask_index(atm_num, fields[1])},"
+                    f"{_mask_index(atm_num, fields[2])},"
+                    f"{_mask_index(atm_num, fields[3])},"
                 )
             except ValueError:
                 logger.warning(f"[restraints:{comp}] skipping unmapped ligand dihedral: {expr}")
@@ -2499,7 +2582,10 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
     receptor_exprs = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
     ref_exprs = _boresch_tr_expressions(P1, P2, P3, *ref_lig_masks)
     alt_exprs = _boresch_tr_expressions(P1, P2, P3, *alt_lig_masks)
-    rst_full = receptor_exprs + ref_exprs + alt_exprs
+    rst_full = [
+        _canonicalize_restraint_expr(expr, atm_num)
+        for expr in (receptor_exprs + ref_exprs + alt_exprs)
+    ]
 
     vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
     _rdhf, rdsf, ldf, laf, _ldhf, _rcom, _lcom = ctx.sim.rest
@@ -2517,7 +2603,7 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
             n = len(fields)
             tag = "Rec_C" if i < 3 else ("Lig_TR_REF" if i < 9 else "Lig_TR_ALT")
             if i < 3 and n == 2:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write(
                     "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
@@ -2525,14 +2611,14 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
                 )
                 continue
             if n == 2:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write(
                     "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
                     % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf, tag)
                 )
             elif n == 3:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write(
                     "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
@@ -2540,8 +2626,8 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
                 )
             elif n == 4:
                 iat = (
-                    f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
-                    f"{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
+                    f"{_mask_index(atm_num, fields[2])},{_mask_index(atm_num, fields[3])},"
                 )
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write(
@@ -2560,7 +2646,7 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
     logger.debug(
         f"[restraints:x] SEPTOP Boresch anchors ref={ref_lig_masks} alt={alt_lig_masks} written to {disang}"
     )
-    return ref_exprs + alt_exprs
+    return rst_full[3:]
 
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:
@@ -2724,7 +2810,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
     if lig_mol2.exists():
         lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
 
-    rst_full = rst + lig_msks
+    rst_full = [_canonicalize_restraint_expr(expr, atm_num) for expr in (rst + lig_msks)]
     vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
 
     # weights (single stage in FE)
@@ -2779,7 +2865,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             n = len(fields)
             # protein triangle
             if i < 3 and n == 2:
-                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")
                 df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
                          % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
@@ -2787,19 +2873,19 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             # TR (if included)
             if (not lig_only) and (i >= 3) and (i < 9):
                 if n == 2:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
                     continue
                 if n == 3:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
                     continue
                 if n == 4:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},{_mask_index(atm_num, fields[3])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
@@ -2807,17 +2893,20 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             # ligand dihedrals from the ligand prmtop.
             if n == 4:
                 try:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
-                    active_lig_dih_force = (
-                        float(ldhf) if float(ldhf) > 0.0 else LIGAND_DIHEDRAL_DEFAULT_FORCE
-                    )
-                    force_const = _ligand_dihedral_force_constant(
+                    force_const = 0.0
+                    val = _ligand_dihedral_reference_value(
+                        vals,
+                        i,
                         expr,
-                        active_lig_dih_force,
+                        force_const,
+                        comp,
                     )
+                    if val is None:
+                        continue
+                    iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},{_mask_index(atm_num, fields[2])},{_mask_index(atm_num, fields[3])},"
                     df.write(f"&rst iat={iat:<23s} ")
                     df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, force_const, force_const))
+                            % (val - 180.0, val, val, val + 180.0, force_const, force_const))
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 

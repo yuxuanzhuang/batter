@@ -8,25 +8,22 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Sequence
 
-import MDAnalysis as mda
 import numpy as np
 import pandas as pd
 from loguru import logger
-from MDAnalysis.analysis import align
 
-from batter.analysis.sim_validation import (
-    STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
-    SimValidator,
-)
 from batter._internal.ops.cleanup import cleanup_equil_after_analysis
-from batter._internal.ops.box import _restore_protein_resids_from_renum
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import cpptraj, run_with_log
+
+if TYPE_CHECKING:
+    import MDAnalysis as mda
+    from batter.analysis.sim_validation import SimValidator
 
 PROLIF_INTERACTIONS_SCHEMA_VERSION = 3
 PROLIF_OCCUPANCY_THRESHOLD = 0.30
@@ -81,6 +78,36 @@ PROLIF_ARTIFACT_FILENAMES = {
 }
 
 
+def _mda():
+    import MDAnalysis as mda
+
+    return mda
+
+
+def _mda_align():
+    from MDAnalysis.analysis import align
+
+    return align
+
+
+def _sim_validator_cls():
+    from batter.analysis.sim_validation import SimValidator
+
+    return SimValidator
+
+
+def _stable_boresch_distance_schema_version() -> int:
+    from batter.analysis.sim_validation import STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
+
+    return STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
+
+
+def _restore_protein_resids_from_renum_fn():
+    from batter._internal.ops.box import _restore_protein_resids_from_renum
+
+    return _restore_protein_resids_from_renum
+
+
 def _paths(root: Path) -> dict[str, Path]:
     """Return commonly accessed equilibration paths under ``root``."""
     eq = root / "equil"
@@ -124,7 +151,7 @@ def _stable_boresch_distance_current(path: Path) -> bool:
         schema_version = int(data.get("schema_version", 0))
     except Exception:
         return False
-    return schema_version >= STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
+    return schema_version >= _stable_boresch_distance_schema_version()
 
 
 def _prolif_interactions_current(path: Path) -> bool:
@@ -1260,7 +1287,8 @@ def _stable_distance_validator(
     directory: Path,
     protein_anchor_masks: list[str],
 ) -> SimValidator:
-    validator = SimValidator.__new__(SimValidator)
+    sim_validator_cls = _sim_validator_cls()
+    validator = sim_validator_cls.__new__(sim_validator_cls)
     validator.universe = universe
     validator.workdir = directory.resolve()
     validator.ligand = residue_name
@@ -1390,7 +1418,7 @@ def _write_unusable_stable_boresch_distance(
     reason: Exception,
 ) -> None:
     stable_record = {
-        "schema_version": STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+        "schema_version": _stable_boresch_distance_schema_version(),
         "source": "equil_analysis",
         "mode": mode,
         "usable": False,
@@ -1844,7 +1872,7 @@ def equil_analysis_handler(
             )
             if not _prolif_interactions_current(p["prolif_interactions"]):
                 try:
-                    u_prolif = mda.Universe(str(p["rep_pdb"]))
+                    u_prolif = _mda().Universe(str(p["rep_pdb"]))
                     _write_prolif_interactions(
                         prolif_path=p["prolif_interactions"],
                         universe=u_prolif,
@@ -1892,9 +1920,9 @@ def equil_analysis_handler(
         try:
             topology = p["equil_dir"] / prmtop
             if topology.exists() and p["rep_rst"].exists():
-                u_prolif = mda.Universe(str(topology), str(p["rep_rst"]))
+                u_prolif = _mda().Universe(str(topology), str(p["rep_rst"]))
             else:
-                u_prolif = mda.Universe(str(p["rep_pdb"]))
+                u_prolif = _mda().Universe(str(p["rep_pdb"]))
             prolif_record = _write_prolif_interactions(
                 prolif_path=p["prolif_interactions"],
                 universe=u_prolif,
@@ -1920,7 +1948,7 @@ def equil_analysis_handler(
             )
         else:
             try:
-                u_static = mda.Universe(str(p["rep_pdb"]))
+                u_static = _mda().Universe(str(p["rep_pdb"]))
                 anchor_masks = _load_equil_anchor_masks(p["equil_dir"])
                 stable_val = _stable_distance_validator(
                     universe=u_static,
@@ -1978,12 +2006,12 @@ def equil_analysis_handler(
             raise FileNotFoundError(
                 f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
             )
-        u = mda.Universe(str(p["full_pdb"]), [str(t) for t in trajs])
+        u = _mda().Universe(str(p["full_pdb"]), [str(t) for t in trajs])
         anchor_masks = _equil_anchor_masks_to_original_resids(
             _load_equil_anchor_masks(p["equil_dir"]),
             p["prot_renum"],
         )
-        sim_val = SimValidator(
+        sim_val = _sim_validator_cls()(
             u,
             ligand=residue_name,
             directory=p["equil_dir"],
@@ -2004,7 +2032,7 @@ def equil_analysis_handler(
         try:
             topology = p["equil_dir"] / prmtop
             u_prolif = (
-                mda.Universe(str(topology), [str(t) for t in trajs])
+                _mda().Universe(str(topology), [str(t) for t in trajs])
                 if topology.exists()
                 else u
             )
@@ -2123,8 +2151,8 @@ def equil_analysis_handler(
             header=None,
             names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
         )
-        uu = mda.Universe(str(p["rep_pdb"]))
-        _restore_protein_resids_from_renum(uu.atoms, renum)
+        uu = _mda().Universe(str(p["rep_pdb"]))
+        _restore_protein_resids_from_renum_fn()(uu.atoms, renum)
         uu.atoms.write(str(p["rep_pdb"]))
 
     # align representative to initial complex and extract poses
@@ -2132,9 +2160,9 @@ def equil_analysis_handler(
     if protein_align and p["rep_pdb"].exists() and p["full_pdb"].exists():
         try:
             aligned_rep_output = p["equil_dir"] / "representative_complex.pdb"
-            u_rep = mda.Universe(str(p["rep_pdb"]))
-            u_ref = mda.Universe(str(p["full_pdb"]))
-            _ = align.alignto(
+            u_rep = _mda().Universe(str(p["rep_pdb"]))
+            u_ref = _mda().Universe(str(p["full_pdb"]))
+            _ = _mda_align().alignto(
                 mobile=u_rep.atoms,
                 reference=u_ref.atoms,
                 select=f"({protein_align}) and name CA and not resname NMA ACE",

@@ -821,7 +821,7 @@ def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:
     assert "igr1=2,0" not in disang_text
 
 
-def test_ligand_dihedral_force_rule_zeroes_excluded_atom_names() -> None:
+def test_ligand_dihedral_force_helper_uses_active_force() -> None:
     assert (
         restraints._ligand_dihedral_force_constant(
             ":1@C1 :1@C2 :1@C3 :1@C4"
@@ -832,11 +832,11 @@ def test_ligand_dihedral_force_rule_zeroes_excluded_atom_names() -> None:
         restraints._ligand_dihedral_force_constant(
             ":1@C1 :1@C12 :1@C3 :1@C4"
         )
-        == 0.0
+        == 10.0
     )
 
 
-def test_equil_disang_writes_ligand_dihedrals_from_prmtop_with_force_rule(
+def test_equil_disang_writes_auto_ligand_dihedrals_with_zero_force(
     tmp_path: Path,
 ) -> None:
     work_dir = tmp_path
@@ -907,7 +907,7 @@ def test_equil_disang_writes_ligand_dihedrals_from_prmtop_with_force_rule(
     assert len(lig_d_lines) == 2
     assert any(
         "iat=4,5,6,7," in line
-        and "rk2= 10.0000000, rk3= 10.0000000, &end #Lig_D" in line
+        and "rk2=  0.0000000, rk3=  0.0000000, &end #Lig_D" in line
         for line in lig_d_lines
     )
     assert any(
