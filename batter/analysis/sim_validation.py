@@ -853,36 +853,74 @@ class SimValidator:
         top.set_xlabel("Simulation time (ns)")
         top.tick_params(axis="x", labelsize=8)
 
-    def _ligand_dihedral(self, start_frame: int = 0):
-        logger.debug('Calculating ligand dihedral')
-        dihed_ligands_file = self.workdir / 'assign.in'
-        if not os.path.exists(dihed_ligands_file):
-            raise FileNotFoundError(f'{dihed_ligands_file} not found')
-        
-        
-        with open(dihed_ligands_file, 'r') as f:
-            lines = f.readlines()
-            dihed_lines = [lines[i] for i in range(len(lines)) if lines[i].startswith('dihedral')]
+    def _amber_mask_to_selection(self, amber_sel: str) -> str:
+        resid = amber_sel.split('@')[0].split(':')[1]
+        atom_name = amber_sel.split('@')[1]
+        return f'resid {resid} and name {atom_name}'
 
-        # The first few are for protein dihedrals
+    def _ligand_dihedral_atom_groups_from_assign(self, assign_file: Path) -> list[AtomGroup]:
+        with open(assign_file, 'r') as f:
+            lines = f.readlines()
+        dihed_lines = [line for line in lines if line.startswith('dihedral')]
+
+        # The first three dihedrals are Boresch/anchor torsions; internal
+        # ligand dihedrals start after those.
         dihed_lines = dihed_lines[3:]
-        def selection_string(amber_sel):
-            resid = amber_sel.split('@')[0].split(':')[1]
-            resname = amber_sel.split('@')[1]
-            return f'resid {resid} and name {resname}'
 
         ag_lists = []
         for line in dihed_lines:
             try:
                 atoms_str = line.split()[2:6]
-                atoms_str = [selection_string(a) for a in atoms_str]
+                atoms_str = [self._amber_mask_to_selection(a) for a in atoms_str]
                 ag_group = AtomGroup([
                     self.universe.select_atoms(a).atoms[0] for a in atoms_str
                 ])
                 ag_lists.append(ag_group)
-            except Exception as e:
-                # an issue with Cl and CL naming
+            except Exception:
+                # Some historical assign.in files used mismatched Cl/CL atom names.
                 pass
+        return ag_lists
+
+    def _ligand_dihedral_atom_groups_from_disang(self, disang_file: Path) -> list[AtomGroup]:
+        ag_lists = []
+        n_atoms = len(self.universe.atoms)
+        for line in disang_file.read_text().splitlines():
+            if '#Lig_D' not in line:
+                continue
+            match = re.search(
+                r'\biat\s*=\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)',
+                line,
+            )
+            if not match:
+                continue
+            atom_numbers = [int(value) for value in match.groups()]
+            if any(value <= 0 or value > n_atoms for value in atom_numbers):
+                continue
+            ag_lists.append(self.universe.atoms[[value - 1 for value in atom_numbers]])
+        return ag_lists
+
+    def _ligand_dihedral_atom_groups(self) -> list[AtomGroup]:
+        disang_file = self.workdir / 'disang.rest'
+        if disang_file.exists():
+            ag_lists = self._ligand_dihedral_atom_groups_from_disang(disang_file)
+            if ag_lists:
+                self.results['ligand_dihedral_source'] = str(disang_file)
+                return ag_lists
+
+        assign_file = self.workdir / 'assign.in'
+        if assign_file.exists():
+            ag_lists = self._ligand_dihedral_atom_groups_from_assign(assign_file)
+            if ag_lists:
+                self.results['ligand_dihedral_source'] = str(assign_file)
+                return ag_lists
+
+        raise FileNotFoundError(
+            f'No ligand dihedral definitions found in {disang_file} or {assign_file}'
+        )
+
+    def _ligand_dihedral(self, start_frame: int = 0):
+        logger.debug('Calculating ligand dihedral')
+        ag_lists = self._ligand_dihedral_atom_groups()
         
         n_frames = len(self.universe.trajectory)
         if n_frames == 0:

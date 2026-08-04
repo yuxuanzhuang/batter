@@ -170,6 +170,34 @@ def _prolif_interactions_current(path: Path) -> bool:
     return schema_version >= PROLIF_INTERACTIONS_SCHEMA_VERSION
 
 
+def _npz_scalar_string(data: Any, key: str) -> str:
+    if key not in data:
+        return ""
+    value = data[key]
+    if isinstance(value, np.ndarray):
+        if value.shape == ():
+            value = value.item()
+        elif value.size == 1:
+            value = value.reshape(-1)[0]
+        else:
+            return ""
+    return str(value)
+
+
+def _representative_selection_needs_refresh(equil_dir: Path) -> bool:
+    """Return True for old last-frame fallbacks caused only by missing assign.in."""
+    result_path = equil_dir / "equilibration_analysis_results.npz"
+    if not result_path.exists() or not (equil_dir / "disang.rest").exists():
+        return False
+    try:
+        with np.load(result_path, allow_pickle=True) as data:
+            mode = _npz_scalar_string(data, "representative_selection_mode")
+            reason = _npz_scalar_string(data, "representative_selection_reason")
+    except Exception:
+        return False
+    return mode == "last_frame_fallback" and "assign.in" in reason
+
+
 _ANCHOR_MASK_RE = re.compile(r"^:?(?P<resid>-?\d+)@(?P<atom>[^,\s]+)$")
 
 
@@ -1804,6 +1832,15 @@ def equil_analysis_handler(
     # Always allow a later invocation to backfill ProLIF interaction analysis.
     stable_distance_needed = not user_anchor_atoms
     prolif_needed = not _prolif_interactions_current(p["prolif_interactions"])
+    representative_refresh_needed = _representative_selection_needs_refresh(
+        p["equil_dir"]
+    )
+    if representative_refresh_needed:
+        logger.debug(
+            "[equil_check:{}] representative.* came from an old missing-assign.in "
+            "last-frame fallback; refreshing analysis from disang.rest.",
+            lig,
+        )
     if (
         stable_distance_needed
         and p["stable_boresch_distance"].exists()
@@ -1844,6 +1881,7 @@ def equil_analysis_handler(
     if (
         p["rep_pdb"].exists()
         and p["rep_rst"].exists()
+        and not representative_refresh_needed
         and not prolif_needed
         and (
             not stable_distance_needed

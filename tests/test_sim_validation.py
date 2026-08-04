@@ -129,6 +129,35 @@ def test_representative_snapshot_uses_last_quarter_frames(
     assert validator.results["representative_analysis_start_frame"] == 6
 
 
+def test_representative_snapshot_reads_disang_without_assign_in(tmp_path: Path) -> None:
+    u = _make_test_universe(tmp_path)
+    coords = np.repeat(u.atoms.positions[None, :, :], 4, axis=0)
+    coords[:, 0, :] = np.array([0.0, 0.0, 0.0])
+    coords[:, 1, :] = np.array([1.0, 0.0, 0.0])
+    coords[:, 3, :] = np.array([1.0, 1.0, 0.0])
+    coords[:, 4, :] = np.array([2.0, 1.0, 1.0])
+    coords[3, 4, :] = np.array([2.0, 1.2, 0.8])
+    u.load_new(coords, order="fac")
+
+    (tmp_path / "disang.rest").write_text(
+        "&rst iat=1,2,4,5, r1=-180.0, r2=0.0, r3=0.0, "
+        "r4=180.0, rk2=0.0, rk3=0.0, &end #Lig_D\n"
+    )
+    validator = _make_validator(u, tmp_path)
+
+    rep_idx = validator.find_representative_snapshot(
+        savefig=True, output_filename="disang_dihed_hist.png"
+    )
+
+    assert rep_idx == 3
+    assert validator.results["representative_frame_index"] == 3
+    assert validator.results["ligand_dihedrals"].shape == (1, 1)
+    assert validator.results["ligand_dihedral_frame_indices"].tolist() == [3]
+    assert validator.results["ligand_dihedral_source"] == str(tmp_path / "disang.rest")
+    assert not (tmp_path / "assign.in").exists()
+    assert (tmp_path / "disang_dihed_hist.png").stat().st_size > 0
+
+
 def test_simulation_analysis_plot_records_frame_and_time_axes(tmp_path: Path) -> None:
     u = _make_test_universe(tmp_path)
     coords = np.repeat(u.atoms.positions[None, :, :], 3, axis=0)

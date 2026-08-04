@@ -130,6 +130,22 @@ To rerun equilibration analysis for an existing execution or one ligand folder:
    batter simulation-analysis work/adrb2/executions/rep1 --force
    batter simulation-analysis work/adrb2/executions/rep1/simulations/LIG1 --force
 
+Archiving result bundles
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``batter archive`` to create a compact tar archive from one or more BATTER
+execution folders. The archive includes directories named ``results`` inside an
+execution when they exist, the sibling ``results/<run_id>`` repository for
+``executions/<run_id>`` layouts, plus reproducibility inputs such as
+``artifacts/config/``, staged ``inputs/`` and per-ligand ``inputs``/``params``
+folders. Raw simulation folders, trajectories, and FE window data outside
+``results/`` are not included.
+
+.. code-block:: bash
+
+   batter archive work/adrb2/executions/rep1 work/adrb2/executions/rep2 -o adrb2_results.tar.gz
+   batter archive work/adrb2/executions --include mabfe_eq.yaml -o adrb2_results.tar.gz
+
 Examples
 ----------------
 YAML files in ``examples/`` illustrate common setups:

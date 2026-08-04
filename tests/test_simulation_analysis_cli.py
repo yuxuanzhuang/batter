@@ -11,6 +11,7 @@ from batter.cli.run import cli
 from batter.exec.handlers.equil_analysis import (
     _fallback_representative_frame_index,
     _infer_standalone_ligand_context,
+    _representative_selection_needs_refresh,
     discover_equil_analysis_targets,
 )
 from batter.pipeline.step import ExecResult
@@ -38,6 +39,34 @@ def test_fallback_representative_frame_uses_last_recorded_frame() -> None:
         universe=universe,
         sim_val=sim_val,
     ) == 12
+
+
+def test_missing_assign_fallback_representative_needs_refresh(tmp_path: Path) -> None:
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir()
+    (equil_dir / "disang.rest").write_text("&rst iat=1,2,3,4, &end #Lig_D\n")
+    np.savez_compressed(
+        equil_dir / "equilibration_analysis_results.npz",
+        representative_frame_index=39,
+        representative_selection_mode="last_frame_fallback",
+        representative_selection_reason=f"{equil_dir / 'assign.in'} not found",
+    )
+
+    assert _representative_selection_needs_refresh(equil_dir)
+
+
+def test_normal_last_frame_fallback_representative_is_kept(tmp_path: Path) -> None:
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir()
+    (equil_dir / "disang.rest").write_text("&rst iat=1,2,3,4, &end #Lig_D\n")
+    np.savez_compressed(
+        equil_dir / "equilibration_analysis_results.npz",
+        representative_frame_index=39,
+        representative_selection_mode="last_frame_fallback",
+        representative_selection_reason="no ligand dihedral definitions found",
+    )
+
+    assert not _representative_selection_needs_refresh(equil_dir)
 
 
 def test_standalone_ligand_context_ignores_equil_sidecar_json(tmp_path: Path) -> None:
