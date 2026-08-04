@@ -29,6 +29,19 @@ def test_create_execution_archive_keeps_results_and_reproducible_inputs(
     (execution / "simulations" / "LIG" / "equil" / "results" / "README.txt").write_text(
         "equil report\n"
     )
+    (execution / "simulations" / "LIG" / "fe" / "z" / "z-1" / "results").mkdir(
+        parents=True
+    )
+    (
+        execution
+        / "simulations"
+        / "LIG"
+        / "fe"
+        / "z"
+        / "z-1"
+        / "results"
+        / "summary.csv"
+    ).write_text("window,result\n")
     (execution / "simulations" / "LIG" / "equil" / "md-01.nc").write_text(
         "trajectory should not be archived\n"
     )
@@ -43,9 +56,12 @@ def test_create_execution_archive_keeps_results_and_reproducible_inputs(
     (execution / "batter.run.log").write_text("log\n")
 
     archive = tmp_path / "archive.tar.gz"
-    result = create_execution_archive([execution], archive)
+    progress_updates: list[str] = []
+    result = create_execution_archive([execution], archive, progress=progress_updates.append)
 
     assert result.archive_path == archive.resolve()
+    assert progress_updates == list(result.members)
+    assert progress_updates[0] == "batter_archive/archive_manifest.json"
     names = _tar_names(archive)
     assert "batter_archive/rep1/archive_manifest.json" not in names
     assert "batter_archive/archive_manifest.json" in names
@@ -54,6 +70,9 @@ def test_create_execution_archive_keeps_results_and_reproducible_inputs(
     assert "batter_archive/rep1/results/index.csv" in names
     assert "batter_archive/rep1/results/rep1/LIG/record.json" in names
     assert "batter_archive/rep1/simulations/LIG/equil/results/README.txt" in names
+    assert (
+        "batter_archive/rep1/simulations/LIG/fe/z/z-1/results/summary.csv" in names
+    )
     assert "batter_archive/rep1/simulations/LIG/inputs/ligand.sdf" in names
     assert "batter_archive/rep1/simulations/LIG/params/lig.json" in names
     assert "batter_archive/rep1/artifacts/config/run_config.yaml" in names
@@ -69,6 +88,10 @@ def test_create_execution_archive_keeps_results_and_reproducible_inputs(
     assert "results/index.csv" in manifest["executions"][0]["associated_results"]
     assert "results/rep1" in manifest["executions"][0]["associated_results"]
     assert "simulations/LIG/equil/results" in manifest["executions"][0]["results_dirs"]
+    assert (
+        "simulations/LIG/fe/z/z-1/results"
+        in manifest["executions"][0]["results_dirs"]
+    )
 
 
 def test_discover_execution_paths_expands_execution_parent(tmp_path: Path) -> None:
@@ -107,6 +130,7 @@ def test_archive_cli_accepts_multiple_executions_and_extra_inputs(tmp_path: Path
 
     assert result.exit_code == 0, result.output
     assert "Archived 2 execution(s)." in result.output
+    assert "Archive entries written:" in result.output
     names = _tar_names(archive)
     assert "batter_archive/rep1/results/index.csv" in names
     assert "batter_archive/rep2/results/index.csv" in names

@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 import tarfile
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
 
 
 REPRODUCIBLE_ROOT_DIRS = (
@@ -20,6 +20,17 @@ REPRODUCIBLE_ROOT_DIRS = (
 REPRODUCIBLE_SIM_DIR_NAMES = frozenset({"inputs", "params"})
 REPRODUCIBLE_ROOT_SUFFIXES = frozenset(
     {".yaml", ".yml", ".json", ".toml", ".txt", ".md", ".csv", ".tsv", ".log"}
+)
+RESULTS_DIR_PATTERNS = (
+    "results",
+    "simulations/*/results",
+    "simulations/*/equil/results",
+    "simulations/*/fe/results",
+    "simulations/*/fe/*/*/results",
+    "simulations/*/*/results",
+    "simulations/*/*/equil/results",
+    "simulations/*/*/fe/results",
+    "simulations/*/*/fe/*/*/results",
 )
 
 
@@ -37,6 +48,22 @@ class ExecutionArchiveResult:
     archive_path: Path
     members: tuple[str, ...]
     executions: tuple[ExecutionArchiveSummary, ...]
+
+
+@dataclass(frozen=True)
+class ArchiveMember:
+    source: Path
+    arcname: str
+
+
+@dataclass(frozen=True)
+class ExecutionArchivePlan:
+    output_path: Path
+    root_name: str
+    mode: str
+    manifest: bytes
+    summaries: tuple[ExecutionArchiveSummary, ...]
+    members: tuple[ArchiveMember, ...]
 
 
 def discover_execution_paths(paths: Iterable[Path | str]) -> list[Path]:
@@ -83,26 +110,14 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
         return False
 
 
-def _is_in_results_dir(path: Path, execution: Path) -> bool:
-    try:
-        rel = path.relative_to(execution)
-    except ValueError:
-        return False
-    return any(part == "results" for part in rel.parts[:-1])
-
-
 def discover_results_dirs(execution: Path) -> list[Path]:
-    """Find directories literally named results without descending into them."""
+    """Find BATTER results directories without walking raw simulation trees."""
     results_dirs: list[Path] = []
-    for root, dirnames, _filenames in os.walk(execution):
-        root_path = Path(root)
-        if root_path.name == "results":
-            results_dirs.append(root_path)
-            dirnames[:] = []
-            continue
-        if _is_in_results_dir(root_path, execution):
-            dirnames[:] = []
-    return sorted(results_dirs)
+    for pattern in RESULTS_DIR_PATTERNS:
+        for path in sorted(execution.glob(pattern)):
+            if path.is_dir():
+                results_dirs.append(path)
+    return _dedupe_paths(results_dirs)
 
 
 def discover_associated_results(execution: Path) -> list[Path]:
@@ -207,6 +222,25 @@ def _extra_prefixes(extra_paths: Sequence[Path]) -> dict[Path, str]:
     return prefixes
 
 
+def _iter_archive_members(source: Path, arcname: str) -> Iterable[ArchiveMember]:
+    if source.is_dir() and not source.is_symlink():
+        yield ArchiveMember(source=source, arcname=arcname)
+        for root, dirnames, filenames in os.walk(source, followlinks=False):
+            dirnames.sort()
+            filenames.sort()
+            root_path = Path(root)
+            for dirname in dirnames:
+                child = root_path / dirname
+                child_rel = child.relative_to(source).as_posix()
+                yield ArchiveMember(source=child, arcname=f"{arcname}/{child_rel}")
+            for filename in filenames:
+                child = root_path / filename
+                child_rel = child.relative_to(source).as_posix()
+                yield ArchiveMember(source=child, arcname=f"{arcname}/{child_rel}")
+        return
+    yield ArchiveMember(source=source, arcname=arcname)
+
+
 def _manifest_for(
     *,
     summaries: Sequence[ExecutionArchiveSummary],
@@ -259,15 +293,15 @@ def _manifest_for(
     }
 
 
-def create_execution_archive(
+def build_execution_archive_plan(
     executions: Iterable[Path | str],
     output: Path | str,
     *,
     include: Iterable[Path | str] = (),
     root_name: str = "batter_archive",
     overwrite: bool = False,
-) -> ExecutionArchiveResult:
-    """Create a compact tar archive for BATTER execution results and inputs."""
+) -> ExecutionArchivePlan:
+    """Plan a compact tar archive for BATTER execution results and inputs."""
     execution_paths = discover_execution_paths(executions)
     if not execution_paths:
         raise ValueError("No execution directories were provided.")
@@ -295,51 +329,96 @@ def create_execution_archive(
             )
         )
 
-    members: list[str] = []
+    manifest = json.dumps(
+        _manifest_for(
+            summaries=summaries,
+            extra_paths=extra_paths,
+            root_name=root_name,
+        ),
+        indent=2,
+        sort_keys=True,
+    ).encode("utf-8")
+
+    members: list[ArchiveMember] = []
     added_sources: set[Path] = set()
 
-    def add_path(tar: tarfile.TarFile, source: Path, arcname: str) -> None:
-        resolved = source.resolve()
-        if resolved == output_path or resolved in added_sources:
-            return
-        added_sources.add(resolved)
-        tar.add(source, arcname=arcname, recursive=True)
-        members.append(arcname)
+    def add_path(source: Path, arcname: str) -> None:
+        for member in _iter_archive_members(source, arcname):
+            resolved = member.source.resolve()
+            if resolved == output_path or resolved in added_sources:
+                continue
+            added_sources.add(resolved)
+            members.append(member)
 
-    mode = _tar_mode(output_path)
-    with tarfile.open(output_path, mode) as tar:
-        manifest = json.dumps(
-            _manifest_for(
-                summaries=summaries,
-                extra_paths=extra_paths,
-                root_name=root_name,
-            ),
-            indent=2,
-            sort_keys=True,
-        ).encode("utf-8")
-        info = tarfile.TarInfo(f"{root_name}/archive_manifest.json")
-        info.size = len(manifest)
+    for summary in summaries:
+        base = f"{root_name}/{summary.archive_prefix}"
+        for path in summary.results_dirs:
+            rel = path.relative_to(summary.execution).as_posix()
+            add_path(path, f"{base}/{rel}")
+        for path in summary.associated_results:
+            rel = path.relative_to(summary.execution.parent.parent).as_posix()
+            add_path(path, f"{root_name}/{rel}")
+        for path in summary.reproducible_inputs:
+            rel = path.relative_to(summary.execution).as_posix()
+            add_path(path, f"{base}/{rel}")
+
+    for path, prefix in _extra_prefixes(extra_paths).items():
+        add_path(path, f"{root_name}/extra_inputs/{prefix}")
+
+    return ExecutionArchivePlan(
+        output_path=output_path,
+        root_name=root_name,
+        mode=_tar_mode(output_path),
+        manifest=manifest,
+        summaries=tuple(summaries),
+        members=tuple(members),
+    )
+
+
+def write_execution_archive_plan(
+    plan: ExecutionArchivePlan,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> ExecutionArchiveResult:
+    """Write a prepared execution archive plan."""
+    members: list[str] = []
+    with tarfile.open(plan.output_path, plan.mode) as tar:
+        info = tarfile.TarInfo(f"{plan.root_name}/archive_manifest.json")
+        info.size = len(plan.manifest)
         info.mtime = datetime.now(timezone.utc).timestamp()
-        tar.addfile(info, fileobj=io.BytesIO(manifest))
+        tar.addfile(info, fileobj=io.BytesIO(plan.manifest))
         members.append(info.name)
+        if progress is not None:
+            progress(info.name)
 
-        for summary in summaries:
-            base = f"{root_name}/{summary.archive_prefix}"
-            for path in summary.results_dirs:
-                rel = path.relative_to(summary.execution).as_posix()
-                add_path(tar, path, f"{base}/{rel}")
-            for path in summary.associated_results:
-                rel = path.relative_to(summary.execution.parent.parent).as_posix()
-                add_path(tar, path, f"{root_name}/{rel}")
-            for path in summary.reproducible_inputs:
-                rel = path.relative_to(summary.execution).as_posix()
-                add_path(tar, path, f"{base}/{rel}")
-
-        for path, prefix in _extra_prefixes(extra_paths).items():
-            add_path(tar, path, f"{root_name}/extra_inputs/{prefix}")
+        for member in plan.members:
+            tar.add(member.source, arcname=member.arcname, recursive=False)
+            members.append(member.arcname)
+            if progress is not None:
+                progress(member.arcname)
 
     return ExecutionArchiveResult(
-        archive_path=output_path,
+        archive_path=plan.output_path,
         members=tuple(members),
-        executions=tuple(summaries),
+        executions=plan.summaries,
     )
+
+
+def create_execution_archive(
+    executions: Iterable[Path | str],
+    output: Path | str,
+    *,
+    include: Iterable[Path | str] = (),
+    root_name: str = "batter_archive",
+    overwrite: bool = False,
+    progress: Callable[[str], None] | None = None,
+) -> ExecutionArchiveResult:
+    """Create a compact tar archive for BATTER execution results and inputs."""
+    plan = build_execution_archive_plan(
+        executions,
+        output,
+        include=include,
+        root_name=root_name,
+        overwrite=overwrite,
+    )
+    return write_execution_archive_plan(plan, progress=progress)

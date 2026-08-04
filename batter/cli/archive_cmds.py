@@ -7,7 +7,10 @@ from pathlib import Path
 import click
 
 from batter.cli.root import cli
-from batter.runtime.archive import create_execution_archive
+from batter.runtime.archive import (
+    build_execution_archive_plan,
+    write_execution_archive_plan,
+)
 
 
 @cli.command("archive")
@@ -52,13 +55,24 @@ def archive_cmd(
 ) -> None:
     """Create a compact archive from one or more BATTER executions."""
     try:
-        result = create_execution_archive(
+        click.echo("Planning archive contents...")
+        plan = build_execution_archive_plan(
             executions,
             out,
             include=include_paths,
             root_name=root_name,
             overwrite=force,
         )
+        total_members = len(plan.members) + 1
+        with click.progressbar(
+            length=total_members,
+            label="Writing archive",
+            item_show_func=lambda item: item or "",
+        ) as bar:
+            result = write_execution_archive_plan(
+                plan,
+                progress=lambda member: bar.update(1, current_item=member),
+            )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -73,4 +87,4 @@ def archive_cmd(
         click.echo(
             f"Note: {len(missing)} execution(s) had no results/ directories."
         )
-    click.echo(f"Top-level members added: {len(result.members)}")
+    click.echo(f"Archive entries written: {len(result.members)}")

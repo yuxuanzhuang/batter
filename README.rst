@@ -139,7 +139,8 @@ execution when they exist, the sibling ``results/<run_id>`` repository for
 ``executions/<run_id>`` layouts, plus reproducibility inputs such as
 ``artifacts/config/``, staged ``inputs/`` and per-ligand ``inputs``/``params``
 folders. Raw simulation folders, trajectories, and FE window data outside
-``results/`` are not included.
+``results/`` are not included. The command prints a progress bar while archive
+entries are written.
 
 .. code-block:: bash
 
