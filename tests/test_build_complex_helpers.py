@@ -137,6 +137,58 @@ def test_candidate_ligand_atom_name_string_does_not_promote_charge_without_salt_
     assert names.split() == ["C1", "N1", "O1"]
 
 
+def test_initial_pose_salt_bridge_ligand_atom_names_requires_contact(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    pdb = tmp_path / "salt_bridge.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                "ATOM      1  OD1 ASP A  10       1.000   0.000   0.000  1.00  0.00           O\n",
+                "ATOM      2  OD2 ASP A  10       2.000   0.000   0.000  1.00  0.00           O\n",
+                "HETATM    3  N1  LIG L 300       2.500   0.000   0.000  1.00  0.00           N\n",
+                "HETATM    4  C1  LIG L 300       8.000   0.000   0.000  1.00  0.00           C\n",
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    rw_mol = Chem.RWMol()
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    rw_mol.AddBond(nitrogen_idx, carbon_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(2)
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(2.5, 0.0, 0.0))
+    conformer.SetAtomPosition(carbon_idx, Point3D(8.0, 0.0, 0.0))
+    mol.AddConformer(conformer)
+    sdf = tmp_path / "LIG.sdf"
+    Chem.MolToMolFile(mol, str(sdf))
+
+    names = build_complex_mod._initial_pose_salt_bridge_ligand_atom_names(
+        sdf_file=sdf,
+        ligand_atoms=u.select_atoms("resname LIG"),
+        protein_atoms=u.select_atoms("protein"),
+    )
+    no_contact_names = build_complex_mod._initial_pose_salt_bridge_ligand_atom_names(
+        sdf_file=sdf,
+        ligand_atoms=u.select_atoms("resname LIG"),
+        protein_atoms=u.select_atoms("protein"),
+        distance_cutoff=0.2,
+    )
+
+    assert names == ["N1"]
+    assert no_contact_names == []
+
+
 def test_is_apo_ligand_build_reads_param_metadata(tmp_path: Path) -> None:
     metadata = tmp_path / "APO.json"
     metadata.write_text(json.dumps({"apo": True}))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -12,6 +13,7 @@ from batter.exec.handlers.equil_analysis import (
     _copy_equil_analysis_artifacts,
     _equil_anchor_masks_to_original_resids,
     _load_equil_anchor_masks,
+    _load_no_equil_representative_universe,
     _persistent_prolif_residue_ids,
     _persistent_prolif_residue_priorities,
     _prolif_interaction_id,
@@ -19,8 +21,10 @@ from batter.exec.handlers.equil_analysis import (
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
     _salt_bridge_ligand_atom_preference,
+    _stable_distance_validator,
     _write_prolif_lignetwork_html,
     _write_prolif_artifacts,
+    _write_stable_boresch_distance,
 )
 
 
@@ -226,6 +230,210 @@ def test_salt_bridge_ligand_atom_preference_uses_prolif_salt_bridge(
     assert preference["pairs"][0]["ligand"]["name"] == "N1"
 
 
+def test_salt_bridge_ligand_atom_preference_falls_back_to_geometry(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    pdb = tmp_path / "salt_bridge.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _atom_line(1, "CA", "ASP", "A", 10, 0.0, 0.0, 0.0, "C"),
+                _atom_line(2, "OD1", "ASP", "A", 10, 1.0, 0.0, 0.0, "O"),
+                _atom_line(3, "OD2", "ASP", "A", 10, 2.0, 0.0, 0.0, "O"),
+                _atom_line(4, "N1", "LIG", "L", 300, 2.5, 0.0, 0.0, "N"),
+                _atom_line(5, "C1", "LIG", "L", 300, 5.5, 0.0, 0.0, "C"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    rw_mol = Chem.RWMol()
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    rw_mol.AddBond(nitrogen_idx, carbon_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(2)
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(2.5, 0.0, 0.0))
+    conformer.SetAtomPosition(carbon_idx, Point3D(5.5, 0.0, 0.0))
+    mol.AddConformer(conformer)
+    params = tmp_path / "params"
+    params.mkdir()
+    Chem.MolToMolFile(mol, str(params / "LIG.sdf"))
+
+    preference = _salt_bridge_ligand_atom_preference(
+        system_root=tmp_path,
+        residue_name="LIG",
+        ligand_label="pose",
+        universe=u,
+        tail_fraction=1.0,
+        prolif_record={
+            "usable": True,
+            "persistent_protein_residues": [],
+        },
+    )
+
+    assert preference["source"] == "charged_atom_distance"
+    assert preference["ligand_atom_names"] == ["N1"]
+    assert preference["protein_residue_ids"] == [10]
+
+
+def test_stable_boresch_distance_uses_geometry_salt_bridge_residue_filter(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    pdb = tmp_path / "stable_filter.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _atom_line(1, "CA", "ASP", "A", 10, 0.0, 0.0, 0.0, "C"),
+                _atom_line(2, "OD1", "ASP", "A", 10, 5.5, 0.0, 0.0, "O"),
+                _atom_line(3, "OD2", "ASP", "A", 10, 5.7, 0.0, 0.0, "O"),
+                _atom_line(4, "CA", "GLY", "A", 20, 1.0, 0.0, 0.0, "C"),
+                _atom_line(5, "N1", "LIG", "L", 300, 6.0, 0.0, 0.0, "N"),
+                _atom_line(6, "C1", "LIG", "L", 300, 9.0, 0.0, 0.0, "C"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    rw_mol = Chem.RWMol()
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    rw_mol.AddBond(nitrogen_idx, carbon_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(2)
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(6.0, 0.0, 0.0))
+    conformer.SetAtomPosition(carbon_idx, Point3D(9.0, 0.0, 0.0))
+    mol.AddConformer(conformer)
+    params = tmp_path / "params"
+    params.mkdir()
+    Chem.MolToMolFile(mol, str(params / "LIG.sdf"))
+
+    stable = _write_stable_boresch_distance(
+        stable_path=tmp_path / "stable_boresch_distance.json",
+        system_root=tmp_path,
+        sim=SimpleNamespace(min_adis=3.0, max_adis=7.0),
+        sim_val=_stable_distance_validator(
+            universe=u,
+            residue_name="LIG",
+            directory=tmp_path,
+            protein_anchor_masks=[],
+        ),
+        ligand_label="pose",
+        residue_name="LIG",
+        universe=u,
+        tail_fraction=1.0,
+        mode="test",
+        prolif_record={"usable": True, "persistent_protein_residues": []},
+    )
+
+    assert stable["protein"]["resid"] == 10
+    assert stable["ligand"]["name"] == "N1"
+    assert stable["prolif_preference"]["used_salt_bridge_residue_filter"] is True
+
+
+def test_stable_boresch_distance_uses_preference_universe_for_salt_bridge(
+    tmp_path: Path,
+) -> None:
+    Chem = pytest.importorskip("rdkit.Chem")
+    Point3D = pytest.importorskip("rdkit.Geometry").Point3D
+
+    validator_pdb = tmp_path / "validator.pdb"
+    validator_pdb.write_text(
+        "".join(
+            [
+                _atom_line(1, "CA", "VAL", "A", 86, 0.0, 0.0, 0.0, "C"),
+                _atom_line(2, "CA", "GLY", "A", 20, 10.0, 0.0, 0.0, "C"),
+                _atom_line(3, "N1", "LIG", "L", 300, 5.0, 0.0, 0.0, "N"),
+                _atom_line(4, "C1", "LIG", "L", 300, 6.0, 0.0, 0.0, "C"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    preference_pdb = tmp_path / "preference.pdb"
+    preference_pdb.write_text(
+        "".join(
+            [
+                _atom_line(1, "CA", "ASP", "A", 86, 0.0, 0.0, 0.0, "C"),
+                _atom_line(2, "OD1", "ASP", "A", 86, 4.4, 0.0, 0.0, "O"),
+                _atom_line(3, "OD2", "ASP", "A", 86, 4.6, 0.0, 0.0, "O"),
+                _atom_line(4, "N1", "LIG", "L", 300, 5.0, 0.0, 0.0, "N"),
+                _atom_line(5, "C1", "LIG", "L", 300, 8.0, 0.0, 0.0, "C"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    validator_u = mda.Universe(str(validator_pdb))
+    preference_u = mda.Universe(str(preference_pdb))
+
+    rw_mol = Chem.RWMol()
+    nitrogen = Chem.Atom("N")
+    nitrogen.SetFormalCharge(1)
+    nitrogen.SetNoImplicit(True)
+    nitrogen_idx = rw_mol.AddAtom(nitrogen)
+    carbon_idx = rw_mol.AddAtom(Chem.Atom("C"))
+    rw_mol.AddBond(nitrogen_idx, carbon_idx, Chem.BondType.SINGLE)
+    mol = rw_mol.GetMol()
+    conformer = Chem.Conformer(2)
+    conformer.SetAtomPosition(nitrogen_idx, Point3D(5.0, 0.0, 0.0))
+    conformer.SetAtomPosition(carbon_idx, Point3D(8.0, 0.0, 0.0))
+    mol.AddConformer(conformer)
+    params = tmp_path / "params"
+    params.mkdir()
+    Chem.MolToMolFile(mol, str(params / "LIG.sdf"))
+
+    stable = _write_stable_boresch_distance(
+        stable_path=tmp_path / "stable_boresch_distance.json",
+        system_root=tmp_path,
+        sim=SimpleNamespace(min_adis=3.0, max_adis=7.0),
+        sim_val=_stable_distance_validator(
+            universe=validator_u,
+            residue_name="LIG",
+            directory=tmp_path,
+            protein_anchor_masks=[],
+        ),
+        ligand_label="pose",
+        residue_name="LIG",
+        universe=validator_u,
+        preference_universe=preference_u,
+        tail_fraction=1.0,
+        mode="test",
+        prolif_record={
+            "usable": True,
+            "persistent_protein_residues": [
+                {
+                    "resid": 86,
+                    "resname": "ASP",
+                    "interactions": [
+                        {"interaction": "Cationic", "occupancy": 1.0}
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert stable["ligand"]["name"] == "N1"
+    assert stable["salt_bridge_preference"]["ligand_atom_names"] == ["N1"]
+    assert stable["salt_bridge_preference"]["protein_residue_ids"] == [86]
+
+
 def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> None:
     columns = pd.MultiIndex.from_tuples(
         [
@@ -301,6 +509,26 @@ def test_run_prolif_fingerprint_disables_progress_when_supported() -> None:
     _run_prolif_fingerprint(fp, object(), object(), object())
 
     assert fp.progress is False
+
+
+def test_no_equil_representative_universe_uses_cpptraj_pdb(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    class FakeMDA:
+        @staticmethod
+        def Universe(*args, **kwargs):
+            calls.append((args, kwargs))
+            return "universe"
+
+    rep_pdb = tmp_path / "representative.pdb"
+    rep_pdb.write_text("END\n")
+    monkeypatch.setattr("batter.exec.handlers.equil_analysis._mda", lambda: FakeMDA)
+
+    assert _load_no_equil_representative_universe(rep_pdb) == "universe"
+    assert calls == [((str(rep_pdb),), {})]
 
 
 def test_write_prolif_lignetwork_html_uses_prolif_plot_lignetwork(

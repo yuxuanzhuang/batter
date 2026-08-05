@@ -38,6 +38,27 @@ from batter._internal.ops.helpers import (
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
 
 
+_INITIAL_SALT_BRIDGE_DISTANCE_CUTOFF = 4.0
+_PROTEIN_POSITIVE_SALT_ATOMS = frozenset(
+    {
+        ("ARG", "NH1"),
+        ("ARG", "NH2"),
+        ("ARG", "NE"),
+        ("LYS", "NZ"),
+        ("HIP", "ND1"),
+        ("HIP", "NE2"),
+    }
+)
+_PROTEIN_NEGATIVE_SALT_ATOMS = frozenset(
+    {
+        ("ASP", "OD1"),
+        ("ASP", "OD2"),
+        ("GLU", "OE1"),
+        ("GLU", "OE2"),
+    }
+)
+
+
 def _atom_is_hydrogen(atom) -> bool:
     """Check whether an MDAnalysis atom is hydrogen.
 
@@ -859,6 +880,66 @@ def _sdf_formal_charge_by_ligand_atom_name(
     return charges
 
 
+def _protein_initial_salt_bridge_atom_charge(atom) -> int:
+    key = (str(atom.resname).upper(), str(atom.name).upper())
+    if key in _PROTEIN_POSITIVE_SALT_ATOMS:
+        return 1
+    if key in _PROTEIN_NEGATIVE_SALT_ATOMS:
+        return -1
+    return 0
+
+
+def _initial_pose_salt_bridge_ligand_atom_names(
+    *,
+    sdf_file: str | Path,
+    ligand_atoms,
+    protein_atoms,
+    distance_cutoff: float = _INITIAL_SALT_BRIDGE_DISTANCE_CUTOFF,
+) -> list[str]:
+    """Return ligand atom names in an initial-pose salt bridge, ordered by distance."""
+    try:
+        ligand_charges = _sdf_formal_charge_by_ligand_atom_name(sdf_file, ligand_atoms)
+    except Exception:
+        return []
+    if not ligand_charges:
+        return []
+
+    ligand_atoms_by_name = {
+        str(atom.name).strip(): atom
+        for atom in ligand_atoms
+        if str(atom.name).strip() in ligand_charges
+    }
+    if not ligand_atoms_by_name:
+        return []
+
+    contacts: list[tuple[float, str]] = []
+    for protein_atom in protein_atoms:
+        protein_charge = _protein_initial_salt_bridge_atom_charge(protein_atom)
+        if protein_charge == 0:
+            continue
+        for ligand_name, ligand_atom in ligand_atoms_by_name.items():
+            ligand_charge = int(ligand_charges.get(ligand_name, 0))
+            if ligand_charge == 0 or protein_charge * ligand_charge >= 0:
+                continue
+            distance = float(
+                np.linalg.norm(
+                    np.asarray(protein_atom.position, dtype=float)
+                    - np.asarray(ligand_atom.position, dtype=float)
+                )
+            )
+            if distance <= float(distance_cutoff):
+                contacts.append((distance, ligand_name))
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for _distance, ligand_name in sorted(contacts, key=lambda item: (item[0], item[1])):
+        if ligand_name in seen:
+            continue
+        seen.add(ligand_name)
+        names.append(ligand_name)
+    return names
+
+
 def _candidate_ligand_atom_name_string(
     sdf_file: str | Path,
     ligand_atoms,
@@ -983,7 +1064,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 6
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 8
 
 
 def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
@@ -1693,6 +1774,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     u = mda.Universe(str(pdb_file))
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
+    salt_bridge_lig_names: list[str] = []
     if apo_anchor_names is None:
         lig_name_str = _candidate_ligand_atom_name_string(
             sdf_file,
@@ -1700,8 +1782,27 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             ligand_label=ligand,
             stage="equil",
         )
+        salt_bridge_lig_names = _initial_pose_salt_bridge_ligand_atom_names(
+            sdf_file=sdf_file,
+            ligand_atoms=lig_atoms,
+            protein_atoms=u.select_atoms(f"protein and not resname {mol}"),
+        )
+        if salt_bridge_lig_names:
+            lig_name_str = " ".join(
+                _order_ligand_names_with_priority(
+                    lig_name_str.split(),
+                    salt_bridge_lig_names,
+                )
+            )
+            logger.debug(
+                "[build_complex] Prioritizing initial-pose salt-bridge ligand "
+                "atom(s) for {}: {}",
+                ligand,
+                " ".join(salt_bridge_lig_names),
+            )
     else:
         lig_name_str = " ".join(apo_anchor_names)
+    salt_bridge_lig_name_str = " ".join(salt_bridge_lig_names)
 
     # Build VMD prep.tcl from template, try with candidate names first
     prep_ini = build_dir / "prep-ini.tcl"
@@ -1731,7 +1832,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                     .replace("SDRD", f"{0.0:4.2f}")
                     .replace("OTHRS", str(other_mol_vmd))
                     .replace("LIPIDS", str(lipid_mol_vmd))
-                    .replace("SALTBRIDGELIGANDNAME", "")
+                    .replace("SALTBRIDGELIGANDNAME", salt_bridge_lig_name_str)
                     .replace("LIGANDNAME", ligand_name_str)
                 )
 
@@ -1768,7 +1869,12 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         )
     except RuntimeError:
         # fallback: all ligand atoms
-        lig_name_str2 = " ".join([str(x) for x in lig_names])
+        lig_name_str2 = " ".join(
+            _order_ligand_names_with_priority(
+                [str(x) for x in lig_names],
+                salt_bridge_lig_names,
+            )
+        )
         _write_prep(lig_name_str2)
         run_with_log(
             f"{vmd} -dispdev text -e prep.tcl",

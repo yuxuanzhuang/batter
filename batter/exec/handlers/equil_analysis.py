@@ -90,6 +90,15 @@ def _mda_align():
     return align
 
 
+def _load_no_equil_representative_universe(rep_pdb: Path):
+    """Load the cpptraj-written PDB snapshot for eq_steps=0 analyses."""
+    if not rep_pdb.exists():
+        raise FileNotFoundError(
+            f"Missing representative PDB for no-equil analysis: {rep_pdb}"
+        )
+    return _mda().Universe(str(rep_pdb))
+
+
 def _sim_validator_cls():
     from batter.analysis.sim_validation import SimValidator
 
@@ -1165,14 +1174,12 @@ def _salt_bridge_ligand_atom_preference(
     salt_bridge_residues = _persistent_prolif_salt_bridge_residues(prolif_record)
     empty = {
         "ligand_atom_names": [],
-        "protein_residue_ids": [
-            int(item["resid"]) for item in salt_bridge_residues
-        ],
+        "protein_residue_ids": [],
         "distance_cutoff": float(SALT_BRIDGE_DISTANCE_CUTOFF),
+        "source": "prolif" if salt_bridge_residues else "charged_atom_distance",
+        "used_prolif_residue_filter": bool(salt_bridge_residues),
         "pairs": [],
     }
-    if not salt_bridge_residues:
-        return empty
     if not residue_name:
         return empty
     sdf_file = system_root / "params" / f"{residue_name}.sdf"
@@ -1210,11 +1217,22 @@ def _salt_bridge_ligand_atom_preference(
         return empty
 
     protein_atoms = []
-    for residue in salt_bridge_residues:
+    if salt_bridge_residues:
+        residue_items: Sequence[Any] = salt_bridge_residues
+    else:
+        residue_items = [
+            {"resid": int(residue.resid)}
+            for residue in universe.select_atoms(
+                f"protein and not resname {residue_name}"
+            ).residues
+        ]
+    for residue in residue_items:
         resid = int(residue["resid"])
         atoms = universe.select_atoms(f"protein and resid {resid}")
         if atoms.n_atoms == 0:
-            atoms = universe.select_atoms(f"resid {resid} and not resname {residue_name}")
+            atoms = universe.select_atoms(
+                f"resid {resid} and not resname {residue_name}"
+            )
         for atom in atoms:
             charge = _protein_salt_bridge_atom_charge(atom)
             if charge:
@@ -1295,15 +1313,25 @@ def _salt_bridge_ligand_atom_preference(
     ligand_names = _dedupe_preserve_order(
         str(record["ligand"]["name"]) for record in pair_records
     )
+    protein_residue_ids = []
+    seen_protein_resids: set[int] = set()
+    for record in pair_records:
+        resid = int(record["protein"]["resid"])
+        if resid in seen_protein_resids:
+            continue
+        seen_protein_resids.add(resid)
+        protein_residue_ids.append(resid)
     if ligand_names:
         logger.debug(
-            "[equil_check:{}] Salt-bridge ligand atom preference from ProLIF: {}",
+            "[equil_check:{}] Salt-bridge ligand atom preference from {}: {}",
             ligand_label,
+            empty["source"],
             " ".join(ligand_names),
         )
     return {
         **empty,
         "ligand_atom_names": ligand_names,
+        "protein_residue_ids": protein_residue_ids,
         "pairs": pair_records,
     }
 
@@ -1334,21 +1362,23 @@ def _write_stable_boresch_distance(
     ligand_label: str | None,
     residue_name: str | None,
     universe: mda.Universe,
+    preference_universe: mda.Universe | None = None,
     tail_fraction: float,
     mode: str,
     prolif_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    preference_universe = preference_universe or universe
     ligand_candidate_names = _ligand_candidate_atom_names(
         system_root=system_root,
         residue_name=residue_name,
         ligand_label=ligand_label,
-        universe=universe,
+        universe=preference_universe,
     )
     salt_bridge_preference = _salt_bridge_ligand_atom_preference(
         system_root=system_root,
         residue_name=residue_name,
         ligand_label=ligand_label,
-        universe=universe,
+        universe=preference_universe,
         tail_fraction=tail_fraction,
         prolif_record=prolif_record,
     )
@@ -1358,13 +1388,29 @@ def _write_stable_boresch_distance(
     salt_bridge_ligand_priorities = {
         name: idx for idx, name in enumerate(salt_bridge_ligand_names)
     }
+    salt_bridge_residue_ids = []
+    for resid in salt_bridge_preference.get("protein_residue_ids") or []:
+        value = _int_or_none(resid)
+        if value is not None and value not in salt_bridge_residue_ids:
+            salt_bridge_residue_ids.append(value)
     persistent_residue_ids = _persistent_prolif_residue_ids(prolif_record)
     persistent_residue_priorities = _persistent_prolif_residue_priorities(prolif_record)
+    residue_filter_priorities = dict(persistent_residue_priorities)
+    for idx, resid in enumerate(salt_bridge_residue_ids):
+        residue_filter_priorities[int(resid)] = min(
+            int(residue_filter_priorities.get(int(resid), 99)),
+            idx,
+        )
     min_distance = float(getattr(sim, "min_adis", None) or 3.0)
     max_distance = float(getattr(sim, "max_adis", None) or 7.0)
     used_prolif_filter = False
+    used_salt_bridge_filter = False
     fallback_reason = None
-    if persistent_residue_ids:
+    residue_filter_ids = persistent_residue_ids or salt_bridge_residue_ids
+    if residue_filter_ids:
+        residue_filter_source = (
+            "ProLIF residues" if persistent_residue_ids else "salt-bridge geometry"
+        )
         try:
             stable_record = sim_val.find_stable_boresch_distance(
                 tail_fraction=tail_fraction,
@@ -1372,17 +1418,21 @@ def _write_stable_boresch_distance(
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
                 ligand_atom_priorities=salt_bridge_ligand_priorities,
-                protein_residue_ids=persistent_residue_ids,
-                protein_residue_priorities=persistent_residue_priorities,
+                protein_residue_ids=residue_filter_ids,
+                protein_residue_priorities=residue_filter_priorities,
             )
-            used_prolif_filter = True
+            used_prolif_filter = bool(persistent_residue_ids)
+            used_salt_bridge_filter = bool(
+                salt_bridge_residue_ids and not persistent_residue_ids
+            )
         except Exception as exc:
             fallback_reason = str(exc)
             logger.debug(
-                "[equil_check:{}] Persistent ProLIF residues did not yield a "
+                "[equil_check:{}] {} did not yield a "
                 "stable CA-ligand Boresch distance; falling back to all CA "
                 "candidates: {}",
                 ligand_label,
+                residue_filter_source,
                 exc,
             )
             stable_record = sim_val.find_stable_boresch_distance(
@@ -1391,7 +1441,7 @@ def _write_stable_boresch_distance(
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
                 ligand_atom_priorities=salt_bridge_ligand_priorities,
-                protein_residue_priorities=persistent_residue_priorities,
+                protein_residue_priorities=residue_filter_priorities,
             )
     else:
         stable_record = sim_val.find_stable_boresch_distance(
@@ -1400,7 +1450,7 @@ def _write_stable_boresch_distance(
             max_distance=max_distance,
             ligand_atom_names=ligand_candidate_names,
             ligand_atom_priorities=salt_bridge_ligand_priorities,
-            protein_residue_priorities=persistent_residue_priorities,
+            protein_residue_priorities=residue_filter_priorities,
         )
     stable_record["mode"] = mode
     stable_record["usable"] = True
@@ -1417,7 +1467,9 @@ def _write_stable_boresch_distance(
             {"resid": int(resid), "priority": int(priority)}
             for resid, priority in sorted(persistent_residue_priorities.items())
         ],
+        "salt_bridge_residue_ids": [int(x) for x in salt_bridge_residue_ids],
         "used_residue_filter": used_prolif_filter,
+        "used_salt_bridge_residue_filter": used_salt_bridge_filter,
         "fallback_reason": fallback_reason,
     }
     stable_record["salt_bridge_preference"] = salt_bridge_preference
@@ -1805,10 +1857,6 @@ def equil_analysis_handler(
         raise ValueError(
             "[equil_analysis] Missing simulation configuration in payload."
         )
-    sys_params = payload.sys_params
-    user_anchor_atoms = list(
-        (sys_params.get("anchor_atoms", []) if sys_params is not None else []) or []
-    )
     threshold = float(
         payload.get("unbound_threshold", getattr(sim, "unbound_threshold", 8.0))
     )
@@ -1830,7 +1878,9 @@ def equil_analysis_handler(
     # if representative already exists, we're done (idempotent). For auto-anchor
     # runs, still allow a later invocation to backfill the stable-distance JSON.
     # Always allow a later invocation to backfill ProLIF interaction analysis.
-    stable_distance_needed = not user_anchor_atoms
+    # Always backfill this record. FE preserves user-pinned receptor anchors, but
+    # still reads salt_bridge_preference from this JSON to prioritize ligand L1.
+    stable_distance_needed = True
     prolif_needed = not _prolif_interactions_current(p["prolif_interactions"])
     representative_refresh_needed = _representative_selection_needs_refresh(
         p["equil_dir"]
@@ -1956,11 +2006,9 @@ def equil_analysis_handler(
             f"[equil_check:{lig}] eq_steps=0; copied {eqnpt_appear.name} as representative"
         )
         try:
-            topology = p["equil_dir"] / prmtop
-            if topology.exists() and p["rep_rst"].exists():
-                u_prolif = _mda().Universe(str(topology), str(p["rep_rst"]))
-            else:
-                u_prolif = _mda().Universe(str(p["rep_pdb"]))
+            # eqnpt_appear.rst7 can be a NetCDF restart with a .rst7 suffix.
+            # MDAnalysis cannot infer that reliably; cpptraj already wrote PDB.
+            u_prolif = _load_no_equil_representative_universe(p["rep_pdb"])
             prolif_record = _write_prolif_interactions(
                 prolif_path=p["prolif_interactions"],
                 universe=u_prolif,
@@ -1978,47 +2026,40 @@ def equil_analysis_handler(
                 mode="single_frame_no_equil",
                 reason=exc,
             )
-        if user_anchor_atoms:
-            logger.debug(
-                "[equil_check:{}] explicit create.anchor_atoms were provided; "
-                "skipping stable Boresch distance auto-anchor override.",
-                lig,
+        try:
+            u_static = _load_no_equil_representative_universe(p["rep_pdb"])
+            anchor_masks = _load_equil_anchor_masks(p["equil_dir"])
+            stable_val = _stable_distance_validator(
+                universe=u_static,
+                residue_name=residue_name,
+                directory=p["equil_dir"],
+                protein_anchor_masks=anchor_masks,
             )
-        else:
-            try:
-                u_static = _mda().Universe(str(p["rep_pdb"]))
-                anchor_masks = _load_equil_anchor_masks(p["equil_dir"])
-                stable_val = _stable_distance_validator(
-                    universe=u_static,
-                    residue_name=residue_name,
-                    directory=p["equil_dir"],
-                    protein_anchor_masks=anchor_masks,
-                )
-                _write_stable_boresch_distance(
-                    stable_path=p["stable_boresch_distance"],
-                    system_root=system.root,
-                    sim=sim,
-                    sim_val=stable_val,
-                    ligand_label=lig,
-                    residue_name=residue_name,
-                    universe=u_static,
-                    tail_fraction=1.0,
-                    mode="single_frame_no_equil",
-                    prolif_record=prolif_record,
-                )
-            except Exception as exc:
-                _write_unusable_stable_boresch_distance(
-                    stable_path=p["stable_boresch_distance"],
-                    mode="single_frame_no_equil",
-                    reason=exc,
-                )
-                logger.warning(
-                    "[equil_check:{}] Could not identify a single-frame "
-                    "protein-ligand distance for automatic Boresch anchor "
-                    "refinement: {}",
-                    lig,
-                    exc,
-                )
+            _write_stable_boresch_distance(
+                stable_path=p["stable_boresch_distance"],
+                system_root=system.root,
+                sim=sim,
+                sim_val=stable_val,
+                ligand_label=lig,
+                residue_name=residue_name,
+                universe=u_static,
+                tail_fraction=1.0,
+                mode="single_frame_no_equil",
+                prolif_record=prolif_record,
+            )
+        except Exception as exc:
+            _write_unusable_stable_boresch_distance(
+                stable_path=p["stable_boresch_distance"],
+                mode="single_frame_no_equil",
+                reason=exc,
+            )
+            logger.warning(
+                "[equil_check:{}] Could not identify a single-frame "
+                "protein-ligand distance for automatic Boresch anchor "
+                "refinement: {}",
+                lig,
+                exc,
+            )
         _copy_equil_analysis_artifacts(p["equil_dir"])
         # Skip trajectory-based validation/analysis when no equilibration steps ran.
         artifacts = {
@@ -2044,7 +2085,9 @@ def equil_analysis_handler(
             raise FileNotFoundError(
                 f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
             )
-        u = _mda().Universe(str(p["full_pdb"]), [str(t) for t in trajs])
+        topology = p["equil_dir"] / prmtop
+        analysis_topology = topology if topology.exists() else p["full_pdb"]
+        u = _mda().Universe(str(analysis_topology), [str(t) for t in trajs])
         anchor_masks = _equil_anchor_masks_to_original_resids(
             _load_equil_anchor_masks(p["equil_dir"]),
             p["prot_renum"],
@@ -2067,13 +2110,10 @@ def equil_analysis_handler(
             _maybe_cleanup_equil(payload, p)
             return ExecResult(job_ids=[], artifacts={"unbound": p["unbound"]})
 
+        stable_preference_universe = u
         try:
-            topology = p["equil_dir"] / prmtop
-            u_prolif = (
-                _mda().Universe(str(topology), [str(t) for t in trajs])
-                if topology.exists()
-                else u
-            )
+            u_prolif = u
+            stable_preference_universe = u_prolif
             prolif_record = _write_prolif_interactions(
                 prolif_path=p["prolif_interactions"],
                 universe=u_prolif,
@@ -2092,38 +2132,32 @@ def equil_analysis_handler(
                 reason=exc,
             )
 
-        if user_anchor_atoms:
-            logger.debug(
-                "[equil_check:{}] explicit create.anchor_atoms were provided; "
-                "skipping stable Boresch distance auto-anchor override.",
-                lig,
+        try:
+            _write_stable_boresch_distance(
+                stable_path=p["stable_boresch_distance"],
+                system_root=system.root,
+                sim=sim,
+                sim_val=sim_val,
+                ligand_label=lig,
+                residue_name=residue_name,
+                universe=u,
+                preference_universe=stable_preference_universe,
+                tail_fraction=0.25,
+                mode="trajectory_tail",
+                prolif_record=prolif_record,
             )
-        else:
-            try:
-                _write_stable_boresch_distance(
-                    stable_path=p["stable_boresch_distance"],
-                    system_root=system.root,
-                    sim=sim,
-                    sim_val=sim_val,
-                    ligand_label=lig,
-                    residue_name=residue_name,
-                    universe=u,
-                    tail_fraction=0.25,
-                    mode="trajectory_tail",
-                    prolif_record=prolif_record,
-                )
-            except Exception as exc:
-                _write_unusable_stable_boresch_distance(
-                    stable_path=p["stable_boresch_distance"],
-                    mode="trajectory_tail",
-                    reason=exc,
-                )
-                logger.warning(
-                    "[equil_check:{}] Could not identify a stable protein-ligand "
-                    "distance for automatic Boresch anchor refinement: {}",
-                    lig,
-                    exc,
-                )
+        except Exception as exc:
+            _write_unusable_stable_boresch_distance(
+                stable_path=p["stable_boresch_distance"],
+                mode="trajectory_tail",
+                reason=exc,
+            )
+            logger.warning(
+                "[equil_check:{}] Could not identify a stable protein-ligand "
+                "distance for automatic Boresch anchor refinement: {}",
+                lig,
+                exc,
+            )
         try:
             rep_idx = int(sim_val.find_representative_snapshot())
         except Exception as exc:

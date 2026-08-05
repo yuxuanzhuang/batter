@@ -139,13 +139,51 @@ def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_pat
     assert markers.is_done(auto_anchor_system, "equil_analysis") is True
 
     stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
-    explicit_anchor_system = SimSystem(
+    pinned_receptor_anchor_system = SimSystem(
         name=root.name,
         root=root,
         anchors=("resid 10 and name CA",),
         meta={"ligand": root.name},
     )
-    assert markers.is_done(explicit_anchor_system, "equil_analysis") is True
+    assert markers.is_done(pinned_receptor_anchor_system, "equil_analysis") is False
+
+    stable_path.write_text(
+        json.dumps(
+            {
+                "schema_version": markers._STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+                "usable": True,
+            }
+        )
+        + "\n"
+    )
+    assert markers.is_done(pinned_receptor_anchor_system, "equil_analysis") is True
+
+
+def test_prepare_fe_requires_current_stable_distance_when_equil_is_bound(tmp_path):
+    root = tmp_path / "lig"
+    equil = root / "equil"
+    fe = root / "fe"
+    equil.mkdir(parents=True)
+    fe.mkdir()
+    (equil / "representative.pdb").write_text("MODEL\nENDMDL\n")
+    (fe / "prepare_fe.ok").write_text("done\n")
+    (fe / "prepare_fe_windows.ok").write_text("done\n")
+    stable_path = equil / "stable_boresch_distance.json"
+    stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
+
+    system = _make_system(root)
+    assert markers.is_done(system, "prepare_fe") is False
+
+    stable_path.write_text(
+        json.dumps(
+            {
+                "schema_version": markers._STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+                "usable": True,
+            }
+        )
+        + "\n"
+    )
+    assert markers.is_done(system, "prepare_fe") is True
 
 
 @dataclass
