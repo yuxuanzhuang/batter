@@ -14,6 +14,7 @@ import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
 
+from batter.data import charmmlipid2amber as charmmlipid2amber_csv
 from batter.utils import (
     run_with_log,
     tleap,
@@ -173,6 +174,46 @@ def _resname_group(u: mda.Universe, names: Sequence[str]):
         return _empty_atomgroup(u)
     mask = np.asarray([str(resname) in names_set for resname in u.atoms.resnames])
     return u.atoms[mask]
+
+
+def _pdb_residue_names(path: Path) -> set[str]:
+    names: set[str] = set()
+    if not path.exists():
+        return names
+    with path.open() as handle:
+        for line in handle:
+            if not line.startswith(("ATOM  ", "HETATM")):
+                continue
+            name = line[17:21].strip()
+            if name:
+                names.add(name)
+    return names
+
+
+def _charmm_lipid_source_residue_names() -> set[str]:
+    try:
+        df = pd.read_csv(charmmlipid2amber_csv, header=1)
+    except Exception as exc:
+        logger.warning(
+            "Could not read CHARMM-to-AMBER lipid map {}; "
+            "assuming lipid conversion is needed: {}",
+            charmmlipid2amber_csv,
+            exc,
+        )
+        return set()
+    return {
+        str(residue).strip()
+        for residue in df.get("residue", pd.Series(dtype=str)).dropna()
+        if str(residue).strip()
+    }
+
+
+def _lipids_need_charmm_to_amber_conversion(lipids_pdb: Path) -> bool:
+    lipid_resnames = _pdb_residue_names(lipids_pdb)
+    charmm_resnames = _charmm_lipid_source_residue_names()
+    if not charmm_resnames:
+        return True
+    return bool(lipid_resnames & charmm_resnames)
 
 
 def _python_split_rec_file(
@@ -1663,12 +1704,23 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Convert CHARMM lipids to lipid21 if membrane
     if sim.membrane_simulation:
-        run_with_log(
-            f"{charmmlipid2amber} -i {build_dir/'lipids.pdb'} -o {build_dir/'lipids_amber.pdb'}"
-        )
-        u_lip = mda.Universe(str(build_dir / "lipids_amber.pdb"))
+        lipids_pdb = build_dir / "lipids.pdb"
+        lipids_amber_pdb = build_dir / "lipids_amber.pdb"
+        if not lipids_pdb.exists():
+            raise FileNotFoundError(
+                f"Expected membrane lipid PDB was not created: {lipids_pdb}"
+            )
+        if _lipids_need_charmm_to_amber_conversion(lipids_pdb):
+            run_with_log(
+                f"{charmmlipid2amber} -i {lipids_pdb} -o {lipids_amber_pdb}"
+            )
+            lipid_action = "Converted CHARMM lipids to AMBER"
+        else:
+            shutil.copy2(lipids_pdb, lipids_amber_pdb)
+            lipid_action = "Using already-AMBER lipid residues without conversion"
+        u_lip = mda.Universe(str(lipids_amber_pdb))
         lipid_resnames = list(set(u_lip.residues.resnames))
-        logger.debug(f"[Equil] Converted CHARMM lipids to AMBER: {lipid_resnames}")
+        logger.debug(f"[Equil] {lipid_action}: {lipid_resnames}")
         lipid_mol = lipid_resnames  # updated list
 
     # Merge raw complex (protein + ligand + others + (lipids) + crystal waters)

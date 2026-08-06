@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
+import html
 import inspect
+import json
 import os
 import re
 import shutil
@@ -673,22 +674,37 @@ def _write_prolif_lignetwork_html(
     threshold: float,
 ) -> None:
     if fingerprint is None or ligand_selection is None or prolif_module is None:
-        path.write_text(
-            "<!doctype html><html><body><p>"
-            "ProLIF LigNetwork unavailable: fingerprint object was not provided."
-            "</p></body></html>\n"
+        _write_prolif_lignetwork_unavailable(
+            path,
+            "fingerprint object was not provided",
         )
         return
 
-    ligand_mol = prolif_module.Molecule.from_mda(ligand_selection)
-    view = fingerprint.plot_lignetwork(
-        ligand_mol,
-        kind="aggregate",
-        threshold=float(threshold),
-        height="650px",
-        show_interaction_data=True,
+    try:
+        ligand_mol = prolif_module.Molecule.from_mda(ligand_selection)
+        view = fingerprint.plot_lignetwork(
+            ligand_mol,
+            kind="aggregate",
+            threshold=float(threshold),
+            height="650px",
+            show_interaction_data=True,
+        )
+        view.save(path)
+    except Exception as exc:
+        logger.debug("ProLIF LigNetwork renderer unavailable: {}", exc)
+        _write_prolif_lignetwork_unavailable(
+            path,
+            f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _write_prolif_lignetwork_unavailable(path: Path, reason: str) -> None:
+    safe_reason = html.escape(str(reason), quote=True)
+    path.write_text(
+        "<!doctype html><html><body><p>"
+        f"ProLIF LigNetwork unavailable: {safe_reason}."
+        "</p></body></html>\n"
     )
-    view.save(path)
 
 
 def _write_prolif_artifacts(

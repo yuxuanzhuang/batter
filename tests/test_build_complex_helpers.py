@@ -283,6 +283,42 @@ def _pdb_line(
     )
 
 
+def test_lipids_need_charmm_conversion_skips_amber_split_residues(
+    tmp_path: Path,
+) -> None:
+    lipids_pdb = tmp_path / "lipids.pdb"
+    lipids_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("HETATM", 1, "C31", "PC", "M", 1, 0.0, 0.0, 0.0),
+                _pdb_line("HETATM", 2, "C2", "PA", "M", 2, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 3, "C21", "OL", "M", 3, 2.0, 0.0, 0.0),
+                "END\n",
+            ]
+        )
+    )
+
+    assert not build_complex_mod._lipids_need_charmm_to_amber_conversion(
+        lipids_pdb
+    )
+
+
+def test_lipids_need_charmm_conversion_detects_charmm_residue(
+    tmp_path: Path,
+) -> None:
+    lipids_pdb = tmp_path / "lipids.pdb"
+    lipids_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("HETATM", 1, "C31", "POPC", "M", 1, 0.0, 0.0, 0.0),
+                "END\n",
+            ]
+        )
+    )
+
+    assert build_complex_mod._lipids_need_charmm_to_amber_conversion(lipids_pdb)
+
+
 def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
     tmp_path: Path,
 ) -> None:

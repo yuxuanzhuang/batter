@@ -577,3 +577,44 @@ def test_write_prolif_lignetwork_html_uses_prolif_plot_lignetwork(
             },
         )
     ]
+
+
+def test_prolif_artifact_writer_falls_back_when_lignetwork_renderer_fails(
+    tmp_path: Path,
+) -> None:
+    columns = pd.MultiIndex.from_tuples(
+        [("LIG300.A", "ASP42.A", "HBAcceptor")]
+    )
+    df = pd.DataFrame([[True], [False], [True]], columns=columns)
+    interactions, _persistent = _records_from_prolif_dataframe(
+        df,
+        occupancy_threshold=0.5,
+    )
+
+    class FakeMolecule:
+        @staticmethod
+        def from_mda(selection):
+            return {"selection": selection}
+
+    class FakeProlif:
+        Molecule = FakeMolecule
+
+    class FakeFingerprint:
+        def plot_lignetwork(self, ligand_mol, **kwargs):
+            raise KeyError("ligand")
+
+    artifacts, errors = _write_prolif_artifacts(
+        prolif_path=tmp_path / "prolif_interactions.json",
+        df=df,
+        interactions=interactions,
+        ligand_label="LIG",
+        fingerprint=FakeFingerprint(),
+        ligand_selection="ligand-selection",
+        prolif_module=FakeProlif,
+    )
+
+    assert errors == {}
+    lignetwork = tmp_path / artifacts["lignetwork_html"]
+    text = lignetwork.read_text()
+    assert "ProLIF LigNetwork unavailable" in text
+    assert "ligand" in text
