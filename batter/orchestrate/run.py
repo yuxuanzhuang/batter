@@ -199,6 +199,108 @@ def _rbfe_network_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> Li
     return [name for name in lig_map if name not in present]
 
 
+def _ligand_input_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    config = payload.get("config")
+    create = config.get("create") if isinstance(config, dict) else None
+    if not isinstance(create, dict):
+        return {}
+    return {
+        key: create.get(key)
+        for key in ("ligand_input", "ligand_paths")
+        if key in create
+    }
+
+
+def _format_ligand_name_list(names: set[str]) -> str:
+    ordered = sorted(names)
+    shown = ordered[:20]
+    suffix = (
+        f", ... (+{len(ordered) - len(shown)} more)"
+        if len(ordered) > len(shown)
+        else ""
+    )
+    return ", ".join(shown) + suffix
+
+
+def _resolved_ligand_input_path(run_dir: Path) -> Path:
+    return run_dir / "artifacts" / "config" / "ligand_input.resolved.json"
+
+
+def _resolved_ligand_map_payload(lig_map: Dict[str, Path]) -> Dict[str, str]:
+    return {
+        name: str(Path(path).expanduser().resolve())
+        for name, path in sorted(lig_map.items())
+    }
+
+
+def _load_resolved_ligand_input(run_dir: Path) -> Dict[str, str]:
+    path = _resolved_ligand_input_path(run_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("Could not read resolved ligand input map {}: {}", path, exc)
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def _store_resolved_ligand_input(run_dir: Path, lig_map: Dict[str, Path]) -> None:
+    path = _resolved_ligand_input_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_resolved_ligand_map_payload(lig_map), indent=2))
+
+
+def _raise_if_existing_ligand_input_changed(
+    *,
+    run_dir: Path,
+    staged_lig_map: Dict[str, Path],
+    requested_lig_map: Dict[str, Path],
+    stored_payload: Dict[str, Any] | None,
+    current_payload: Dict[str, Any] | None,
+) -> None:
+    problems: list[str] = []
+
+    stored_input = _ligand_input_payload(stored_payload)
+    current_input = _ligand_input_payload(current_payload)
+    if stored_input and current_input and stored_input != current_input:
+        problems.append("stored ligand input config differs from current config")
+
+    staged_names = set(staged_lig_map)
+    requested_names = set(requested_lig_map)
+    added = requested_names - staged_names
+    removed = staged_names - requested_names
+    if added:
+        problems.append(f"added ligand(s): {_format_ligand_name_list(added)}")
+    if removed:
+        problems.append(f"removed ligand(s): {_format_ligand_name_list(removed)}")
+
+    stored_resolved = _load_resolved_ligand_input(run_dir)
+    requested_resolved = _resolved_ligand_map_payload(requested_lig_map)
+    changed_paths = {
+        name
+        for name in staged_names & requested_names & set(stored_resolved)
+        if stored_resolved.get(name) != requested_resolved.get(name)
+    }
+    if changed_paths:
+        problems.append(
+            "changed ligand path(s): "
+            f"{_format_ligand_name_list(changed_paths)}"
+        )
+
+    if not problems:
+        return
+
+    raise RuntimeError(
+        "Changing create.ligand_input/create.ligand_paths for an existing BATTER "
+        f"execution is not supported: {run_dir}. "
+        f"{'; '.join(problems)}. Use a new run_id/output_folder or remove the "
+        "existing execution directory before changing ligand input."
+    )
+
+
 def _parent_phase_done_for_ligands(
     system: SimSystem,
     phase_name: str,
@@ -1164,6 +1266,16 @@ def _run_from_yaml_impl(
         )
 
     if staged_lig_map:
+        if requested_lig_map:
+            _raise_if_existing_ligand_input_changed(
+                run_dir=run_dir,
+                staged_lig_map=staged_lig_map,
+                requested_lig_map=requested_lig_map,
+                stored_payload=stored_payload,
+                current_payload=config_payload,
+            )
+            if not _load_resolved_ligand_input(run_dir):
+                _store_resolved_ligand_input(run_dir, requested_lig_map)
         lig_map = dict(staged_lig_map)
         lig_original_names = dict(stored_names)
         if lig_original_names:
@@ -1173,22 +1285,13 @@ def _run_from_yaml_impl(
                 _ligand_names_path(run_dir),
             )
 
-        added_ligands: List[str] = []
-        for name, lig_path in requested_lig_map.items():
-            lig_original_names[name] = requested_original_names.get(name, name)
-            if name in lig_map:
-                continue
-            lig_map[name] = lig_path
-            added_ligands.append(name)
+        for name in lig_map:
+            if name in requested_original_names:
+                lig_original_names[name] = requested_original_names.get(name, name)
 
         logger.info(
             f"Resuming with {len(staged_lig_map)} staged ligand(s) discovered under {run_dir}"
         )
-        if added_ligands:
-            logger.info(
-                "Added ligand(s) from current input to existing execution: {}",
-                ", ".join(added_ligands),
-            )
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
     else:
@@ -1197,6 +1300,7 @@ def _run_from_yaml_impl(
         lig_original_names = requested_original_names
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
+        _store_resolved_ligand_input(run_dir, lig_map)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
 
     # Build system-prep params exactly once (after run_dir is known)

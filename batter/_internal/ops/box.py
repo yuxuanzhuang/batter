@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
+import copy
 import glob
 import json
+import os
 import shutil
 import re
 import tempfile
@@ -118,6 +119,39 @@ _WATER_RESNAMES = {
 }
 _WATER_OXYGEN_NAMES = {"O", "OW", "OH2"}
 _PERIODIC_WATER_CLASH_DISTANCE = 1.8
+_FE_NONWATER_VAC_COMPONENTS = {"d", "l", "z"}
+
+
+def _is_water_residue_name(name: str) -> bool:
+    return str(name).strip().upper() in _WATER_RESNAMES
+
+
+def _copy_structure_without_water(structure):
+    nonwater = copy.copy(structure)
+    water_selection = [
+        _is_water_residue_name(atom.residue.name) for atom in nonwater.atoms
+    ]
+    if any(water_selection):
+        nonwater.strip(water_selection)
+    return nonwater
+
+
+def _copy_structure_only_water(structure):
+    water = copy.copy(structure)
+    nonwater_selection = [
+        not _is_water_residue_name(atom.residue.name) for atom in water.atoms
+    ]
+    if any(nonwater_selection):
+        water.strip(nonwater_selection)
+    return water
+
+
+def _split_structure_nonwater_then_water(structure):
+    nonwater = _copy_structure_without_water(structure)
+    water = _copy_structure_only_water(structure)
+    if len(water.atoms) == 0:
+        return nonwater, water, nonwater
+    return nonwater, water, nonwater + water
 
 
 def _repair_lipid_hydrogens_in_amber_files(
@@ -2293,7 +2327,7 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
 
     charge_ligand_index = len(vac_p.residues)
     combined = vac_p + charge_ligand_p + other_part_p
-    vac = vac_p + charge_ligand_p
+    vac, _, combined = _split_structure_nonwater_then_water(combined)
     _rename_parmed_residues(combined, [charge_ligand_index], mol)
     _rename_parmed_residues(vac, [charge_ligand_index], mol)
     _make_residues_nonsteric(combined, [charge_ligand_index])
@@ -3181,6 +3215,9 @@ def create_box(ctx: BuildContext) -> None:
                 float(reference_translation[2]),
             )
 
+    if comp in _FE_NONWATER_VAC_COMPONENTS:
+        vac, other_parts_pmd, combined = _split_structure_nonwater_then_water(combined)
+
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
     combined.save(str(window_dir / "full.pdb"), overwrite=True)
@@ -3349,12 +3386,12 @@ def create_box_x(ctx: BuildContext) -> None:
             f"{tleap} -s -f tleap_ions.in > tleap_ions.log", working_dir=window_dir
         )
         ion_p = pmd.load_file(
-        str(window_dir / "ions.prmtop"),
-        str(window_dir / "ions.inpcrd"),
+            str(window_dir / "ions.prmtop"),
+            str(window_dir / "ions.inpcrd"),
         )
         combined += ion_p
 
-    vac = vac_p + alter_ligands_p_site + alter_ligands_p_solvent
+    vac, _, combined = _split_structure_nonwater_then_water(combined)
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)

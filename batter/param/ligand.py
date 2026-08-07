@@ -306,6 +306,27 @@ def _validate_openff_export_stack(ligand_ff: str) -> None:
         ) from exc
 
 
+def _is_charged_monoatomic_ion(mol: Chem.Mol) -> bool:
+    """Return True for simple single-atom charged ions such as Na+ or Cl-."""
+    if mol.GetNumAtoms() != 1 or mol.GetNumBonds() != 0:
+        return False
+    return int(mol.GetAtomWithIdx(0).GetFormalCharge()) != 0
+
+
+def _formal_charge(mol: Chem.Mol) -> int:
+    return int(sum(atom.GetFormalCharge() for atom in mol.GetAtoms()))
+
+
+_OPC_MONOATOMIC_ION_PARAMS: dict[str, tuple[float, float, float]] = {
+    "Li+": (6.94, 1.242, 0.00216058),
+    "Na+": (22.99, 1.467, 0.02960343),
+    "K+": (39.10, 1.702, 0.13953816),
+    "Cl-": (35.45, 2.360, 0.67878870),
+    "Mg2+": (24.305, 1.330, 0.00716930),
+    "Ca2+": (40.08, 1.608, 0.08337961),
+}
+
+
 def _has_complete_ligand_artifacts(target_dir: Path, ligand_name: str = "lig") -> bool:
     required = (
         "sdf",
@@ -402,6 +423,18 @@ class LigandProcessing(ABC):
 
         self.unique_mol_names = set(unique_mol_names or [])
         ligand_rdkit = self._load_ligand()
+        self._is_monoatomic_ion = _is_charged_monoatomic_ion(ligand_rdkit)
+        self._formal_charge = _formal_charge(ligand_rdkit)
+        self._monoatomic_symbol: str | None = None
+        self._monoatomic_coords: tuple[float, float, float] | None = None
+        if self._is_monoatomic_ion:
+            atom = ligand_rdkit.GetAtomWithIdx(0)
+            self._monoatomic_symbol = atom.GetSymbol()
+            if ligand_rdkit.GetNumConformers():
+                pos = ligand_rdkit.GetConformer().GetAtomPosition(0)
+                self._monoatomic_coords = (float(pos.x), float(pos.y), float(pos.z))
+            else:
+                self._monoatomic_coords = (0.0, 0.0, 0.0)
         self._cano_smiles = Chem.MolToSmiles(ligand_rdkit, canonical=True)
 
         if ligand_name is None:
@@ -477,6 +510,16 @@ class LigandProcessing(ABC):
 
     def _calculate_partial_charge(self) -> None:
         """Estimate the net charge using the configured partial-charge method."""
+        if self._is_monoatomic_ion:
+            self.ligand_charge = float(self._formal_charge)
+            logger.debug(
+                "Net charge of monoatomic ion {} in {} is {} from formal charge.",
+                self.name,
+                self.ligand_file,
+                self.ligand_charge,
+            )
+            return
+
         molecule = self.openff_molecule
         charge_method = self.charge if self.force_field == "openff" else "gasteiger"
         molecule.assign_partial_charges(partial_charge_method=charge_method)
@@ -491,6 +534,110 @@ class LigandProcessing(ABC):
             self.ligand_charge,
         )
 
+    @staticmethod
+    def _amber_ion_atom_type(symbol: str, charge: int) -> str:
+        sign = "+" if charge > 0 else "-"
+        magnitude = abs(int(charge))
+        suffix = sign if magnitude == 1 else f"{magnitude}{sign}"
+        return f"{symbol}{suffix}"
+
+    @staticmethod
+    def _monoatomic_atom_name(symbol: str) -> str:
+        name = re.sub(r"[^A-Za-z0-9]", "", symbol).upper()
+        return (name or "ION")[:4]
+
+    def _prepare_monoatomic_ion_parameters(self) -> None:
+        """Write Amber-compatible artifacts for a charged single-atom ion."""
+        if not self._is_monoatomic_ion:
+            raise ValueError("Monoatomic ion parameter writer called for non-ion ligand.")
+
+        self._calculate_partial_charge()
+        mol = self.name
+        symbol = self._monoatomic_symbol or "Na"
+        charge = int(round(float(self.ligand_charge)))
+        x, y, z = self._monoatomic_coords or (0.0, 0.0, 0.0)
+        atom_name = self._monoatomic_atom_name(symbol)
+        atom_type = self._amber_ion_atom_type(symbol, charge)
+        out = Path(self.output_dir)
+        try:
+            mass, radius, epsilon = _OPC_MONOATOMIC_ION_PARAMS[atom_type]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported monoatomic ion atom type {atom_type!r}. "
+                "Add its Amber mass and OPC nonbonded parameters before using it "
+                "as a ligand."
+            ) from exc
+
+        (out / f"{mol}.mol2").write_text(
+            "\n".join(
+                [
+                    "@<TRIPOS>MOLECULE",
+                    mol,
+                    " 1 0 1 0 0",
+                    "SMALL",
+                    "USER_CHARGES",
+                    "",
+                    "@<TRIPOS>ATOM",
+                    (
+                        f"{1:7d} {atom_name:<4s} "
+                        f"{x:10.4f} {y:10.4f} {z:10.4f} "
+                        f"{atom_type:<8s} {1:4d} {mol:<8s} {float(charge):10.6f}"
+                    ),
+                    "@<TRIPOS>BOND",
+                    "@<TRIPOS>SUBSTRUCTURE",
+                    f"{1:6d} {mol:<8s} {1:5d} TEMP              0 ****  ****    0 ROOT",
+                    "",
+                ]
+            )
+        )
+        (out / f"{mol}.frcmod").write_text(
+            "\n".join(
+                [
+                    f"Monoatomic ion parameters for {atom_type}",
+                    "MASS",
+                    f"{atom_type:<4s} {mass:.6f}",
+                    "",
+                    "BOND",
+                    "",
+                    "ANGLE",
+                    "",
+                    "DIHE",
+                    "",
+                    "IMPROPER",
+                    "",
+                    "NONBON",
+                    f"{atom_type:<4s} {radius:.6f} {epsilon:.8f}",
+                    "",
+                ]
+            )
+        )
+
+        tleap_script = "\n".join(
+            [
+                "source leaprc.protein.ff14SB",
+                "source leaprc.water.opc",
+                f"loadamberparams {mol}.frcmod",
+                f"lig = loadmol2 {mol}.mol2",
+                f"saveoff lig {mol}.lib",
+                f"saveamberparm lig {mol}.prmtop {mol}.inpcrd",
+                f"savepdb lig {mol}.pdb",
+                "quit",
+                "",
+            ]
+        )
+        (out / "tleap_monoatomic_ion.in").write_text(tleap_script)
+        run_with_log(
+            f"{tleap} -s -f tleap_monoatomic_ion.in > tleap_monoatomic_ion.log",
+            working_dir=out,
+        )
+        self.atomnames = [atom_name]
+        self._ligand_mol2_path = str(out / f"{mol}.mol2")
+        logger.info(
+            "Ligand {} is a monoatomic ion; wrote Amber ion artifacts with atom type {}.",
+            mol,
+            atom_type,
+        )
+
     def prepare_ligand_parameters(self) -> None:
         """
         Generate parameters using either AMBER (GAFF/GAFF2) or OpenFF path.
@@ -500,7 +647,9 @@ class LigandProcessing(ABC):
         - OpenFF path first creates AMBER artifacts for tleap-based system build.
         - Writes a ``<name>.json`` metadata file to the output folder.
         """
-        if self.force_field == "openff":
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+        elif self.force_field == "openff":
             self.prepare_ligand_parameters_openff()
         elif self.force_field == "amber":
             self.prepare_ligand_parameters_amberff()
@@ -521,6 +670,15 @@ class LigandProcessing(ABC):
         - Runs a **fast** AMBER bootstrap (GAFF2 + gas charges) so tleap artifacts exist.
         - Generates an OpenFF `prmtop` for downstream if you prefer OpenMM/OpenFF.
         """
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+            logger.info(
+                "Ligand {} is a monoatomic ion; using Amber ion artifacts and "
+                "skipping OpenFF interchange export.",
+                self.name,
+            )
+            return
+
         # Bootstrap via AMBER with fast charges
         ligand_ff_openff = self.ligand_ff
         self.ligand_ff = "gaff2"
@@ -564,6 +722,10 @@ class LigandProcessing(ABC):
         charge_method
             Antechamber charge method (e.g., ``"bcc"`` or ``"gas"``).
         """
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+            return
+
         mol = self.name
         logger.debug(
             "Preparing ligand {} parameters with AMBER force field {}.",

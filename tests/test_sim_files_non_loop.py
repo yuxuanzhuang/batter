@@ -133,6 +133,26 @@ def test_solvent_ligand_restraint_mask_abfe_diff_uses_full_residue(tmp_path: Pat
     assert sim_files._solvent_ligand_restraint_mask(pdb, resid=6, comp="d") == ":6"
 
 
+def test_fe_ntwprt_atom_count_includes_ion_prefix_before_water(tmp_path: Path) -> None:
+    (tmp_path / "vac.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    (tmp_path / "full.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3 Na+  Na+ A   2       2.000   0.000   0.000  1.00  0.00          NA\n"
+        "ATOM      4 Cl-  Cl- A   3       3.000   0.000   0.000  1.00  0.00          CL\n"
+        "ATOM      5  O   WAT A   4       4.000   0.000   0.000  1.00  0.00           O\n"
+        "ATOM      6  H1  WAT A   4       4.700   0.000   0.000  1.00  0.00           H\n"
+        "END\n"
+    )
+
+    assert sim_files._fe_ntwprt_atom_count(tmp_path, "no") == 4
+    assert sim_files._fe_ntwprt_atom_count(tmp_path, "yes") == 6
+
+
 def test_write_sim_files_replaces_non_loop_from_dssp_manifest(tmp_path: Path) -> None:
     dssp = [["-", "H", "H", "H", "H", "-", "E", "E", "E", "E", "-", "-"]]
     ctx = _ctx(tmp_path, with_manifest=True, dssp_results=dssp)
@@ -517,6 +537,16 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
         "ATOM      4  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
+    (windows_dir / "full.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C1  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5 Na+  Na+ A   3       4.000   0.000   0.000  1.00  0.00          NA\n"
+        "ATOM      6 Cl-  Cl- A   4       5.000   0.000   0.000  1.00  0.00          CL\n"
+        "ATOM      7  O   WAT A   5       6.000   0.000   0.000  1.00  0.00           O\n"
+        "END\n"
+    )
     (amber_dir / "mdin-unorest").write_text(
         "&cntrl\n"
         "  ntx = 5,\n"
@@ -573,6 +603,7 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
     assert "@3" not in eq_text
 
     assert "restraintmask = '(:1-2 | @3) & !@H='" in template_text
+    assert "ntwprt = 6" in template_text
 
     assert ":LIG" in mini_text
     assert "@3" not in mini_text
@@ -807,12 +838,24 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
         "ATOM      6  C4  ALT A   4       5.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
+    (windows_dir / "full.pdb").write_text(
+        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C2  REF A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  ALT A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C3  ALT A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C4  ALT A   4       5.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      7 Na+  Na+ A   5       6.000   0.000   0.000  1.00  0.00          NA\n"
+        "ATOM      8 Cl-  Cl- A   6       7.000   0.000   0.000  1.00  0.00          CL\n"
+        "ATOM      9  O   WAT A   7       8.000   0.000   0.000  1.00  0.00           O\n"
+        "END\n"
+    )
     (amber_dir / "mdin-ex").write_text(
         "&cntrl\n"
         "  ntx = 5,\n"
         "  irest = 1,\n"
         "  ntwx = 100,\n"
-        "  ntwprt = 10,\n"
+        "  ntwprt = _num-atoms_,\n"
         "  dt = _step_,\n"
         "  nmropt = 0,\n"
         "  restraint_wt = 50.0,\n"
@@ -857,6 +900,7 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     assert re.search(r"\|\s*@10\s*\|", eq_text) is None
 
     assert "(:1-2 | @10 | @20) & !@H=" in template_text
+    assert "ntwprt = 8" in template_text
 
     assert ":REF" in mini_text
     assert ":ALT" in mini_text

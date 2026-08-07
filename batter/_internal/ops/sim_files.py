@@ -474,6 +474,58 @@ def _maybe_extra_mask(
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
+
+_FE_WATER_RESNAMES = {"WAT", "HOH", "SOL", "TIP3", "TIP3P", "TIP4P", "SPC", "SPCE"}
+
+
+def _pdb_atom_record_count(pdb_path: Path) -> int:
+    return sum(
+        1
+        for line in pdb_path.read_text().splitlines()
+        if line.startswith(("ATOM", "HETATM"))
+    )
+
+
+def _leading_nonwater_pdb_atom_count(pdb_path: Path) -> int:
+    count = 0
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+        if line[17:20].strip().upper() in _FE_WATER_RESNAMES:
+            break
+        count += 1
+    return count
+
+
+def _fe_ntwprt_atom_count(window_dir: Path, all_atoms: str) -> int:
+    full_pdb = window_dir / "full.pdb"
+    if str(all_atoms).lower() != "no":
+        if not full_pdb.exists():
+            raise FileNotFoundError(f"Missing required file: {full_pdb}")
+        return _pdb_atom_record_count(full_pdb)
+
+    vac_pdb = window_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    vac_atoms = _pdb_atom_record_count(vac_pdb)
+
+    if not full_pdb.exists():
+        return vac_atoms
+
+    reduced_atoms = _leading_nonwater_pdb_atom_count(full_pdb)
+    if reduced_atoms >= vac_atoms:
+        return reduced_atoms
+
+    logger.warning(
+        "[ntwprt] Leading non-water atom count in {} ({}) is smaller than "
+        "vac.pdb atom count ({}); using vac.pdb count.",
+        full_pdb,
+        reduced_atoms,
+        vac_atoms,
+    )
+    return vac_atoms
+
+
 def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 10000, n_lambdas = 5):
     dynlmb = 1 / (n_lambdas-1)
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
@@ -1108,16 +1160,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[win if win != -1 else 0]
 
-    # Count atoms
-    if all_atoms.lower() == "no":
-        vac_pdb = windows_dir / "vac.pdb"
-        if not vac_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-        vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
-    else:
-        full_pdb = windows_dir / "full.pdb"
-        vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"
+    # Count the FE trajectory prefix: reduced trajectories keep the non-water
+    # system prefix, including ions, while all_atoms=yes writes the full system.
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ntwprt_atoms = _fe_ntwprt_atom_count(windows_dir, all_atoms)
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
@@ -1150,7 +1198,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         _sim_files_d_sdr_charge_transfer(
             ctx,
             lambdas,
-            vac_atoms=vac_atoms,
+            vac_atoms=ntwprt_atoms,
             vac_pdb=vac_pdb,
             ligand_resids=ligand_resids_ordered,
             non_loop_mask=non_loop_mask,
@@ -1204,7 +1252,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", str(n_steps_run))
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1261,7 +1309,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1355,7 +1403,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         #line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1397,7 +1445,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1745,19 +1793,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
 
-    # Count atoms (vac or full)
+    # Count the FE trajectory prefix: reduced trajectories keep the non-water
+    # system prefix, including ions, while all_atoms=yes writes the full system.
     all_atoms = sim.all_atoms
-    if all_atoms.lower() == "no":
-        vac_pdb = windows_dir / "vac.pdb"
-        if not vac_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-        vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
-    else:
-        full_pdb = windows_dir / "full.pdb"
-        if not full_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {full_pdb}")
-        vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ntwprt_atoms = _fe_ntwprt_atom_count(windows_dir, all_atoms)
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
@@ -1893,7 +1935,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-atoms_", str(ntwprt_atoms))
                 .replace("_num-steps_", str(n_steps_run))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("timk1", mk1)
@@ -1950,7 +1992,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-atoms_", str(ntwprt_atoms))
                 .replace("_num-steps_", str(steps2))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("timk1", str(mk1))

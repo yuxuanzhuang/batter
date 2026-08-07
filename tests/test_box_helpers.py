@@ -149,6 +149,38 @@ def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
     )
 
 
+def test_split_structure_nonwater_then_water_keeps_ions_in_vacuum_prefix(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "full.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.0, 0.0, 0.0, "C"),
+                _pdb_atom(2, "NA", "Na+", "A", 2, 1.0, 0.0, 0.0, "Na"),
+                _pdb_atom(3, "O", "WAT", "A", 3, 2.0, 0.0, 0.0, "O"),
+                _pdb_atom(4, "H1", "WAT", "A", 3, 2.1, 0.0, 0.0, "H"),
+                _pdb_atom(5, "CL", "Cl-", "A", 4, 3.0, 0.0, 0.0, "Cl"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    structure = pmd.load_file(str(pdb))
+
+    nonwater, water, reordered = box._split_structure_nonwater_then_water(structure)
+
+    assert [atom.residue.name for atom in nonwater.atoms] == ["LIG", "Na+", "Cl-"]
+    assert [atom.residue.name for atom in water.atoms] == ["WAT", "WAT"]
+    assert [atom.residue.name for atom in reordered.atoms] == [
+        "LIG",
+        "Na+",
+        "Cl-",
+        "WAT",
+        "WAT",
+    ]
+
+
 def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(
     tmp_path: Path,
 ) -> None:

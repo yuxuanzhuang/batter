@@ -96,7 +96,7 @@ def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:
 
     sim_dir = run_dir / "simulations"
     if sim_dir.exists():
-        for sub in sim_dir.iterdir():
+        for sub in sorted(sim_dir.iterdir()):
             if not sub.is_dir():
                 continue
             inp = sub / "inputs"
@@ -112,7 +112,7 @@ def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:
     if not lig_map:
         inp_dir = run_dir / "inputs"
         if inp_dir.exists():
-            for p in inp_dir.iterdir():
+            for p in sorted(inp_dir.iterdir()):
                 if p.suffix.lower() in {".sdf", ".mol2", ".pdb"}:
                     lig_map[sanitize_user_ligand_name(p.stem)] = p
 

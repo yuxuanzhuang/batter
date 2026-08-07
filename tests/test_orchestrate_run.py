@@ -76,6 +76,65 @@ def test_preflight_required_python_packages_passes_when_available(
     run_mod._preflight_required_python_packages()
 
 
+def test_existing_ligand_input_guard_allows_same_ligand_set(tmp_path: Path) -> None:
+    staged = tmp_path / "run1" / "simulations" / "LIG1" / "inputs" / "ligand.sdf"
+    run_mod._raise_if_existing_ligand_input_changed(
+        run_dir=tmp_path / "run1",
+        staged_lig_map={"LIG1": staged},
+        requested_lig_map={"LIG1": tmp_path / "inputs" / "lig1.sdf"},
+        stored_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+        current_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+    )
+
+
+def test_existing_ligand_input_guard_rejects_added_ligand(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="added ligand.*LIG2"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=tmp_path / "run1",
+            staged_lig_map={"LIG1": tmp_path / "staged.sdf"},
+            requested_lig_map={
+                "LIG1": tmp_path / "lig1.sdf",
+                "LIG2": tmp_path / "lig2.sdf",
+            },
+            stored_payload={"config": {"create": {"ligand_input": "old.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "old.json"}}},
+        )
+
+
+def test_existing_ligand_input_guard_rejects_payload_change(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="stored ligand input config differs"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=tmp_path / "run1",
+            staged_lig_map={"LIG1": tmp_path / "staged.sdf"},
+            requested_lig_map={"LIG1": tmp_path / "lig1.sdf"},
+            stored_payload={"config": {"create": {"ligand_input": "old.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "new.json"}}},
+        )
+
+
+def test_existing_ligand_input_guard_rejects_changed_ligand_path(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    old_ligand = tmp_path / "old.sdf"
+    run_mod._store_resolved_ligand_input(run_dir, {"LIG1": old_ligand})
+
+    with pytest.raises(RuntimeError, match="changed ligand path.*LIG1"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=run_dir,
+            staged_lig_map={
+                "LIG1": run_dir
+                / "simulations"
+                / "LIG1"
+                / "inputs"
+                / "ligand.sdf"
+            },
+            requested_lig_map={"LIG1": tmp_path / "new.sdf"},
+            stored_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+        )
+
+
 @pytest.mark.parametrize("has_results", [False])
 def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     run_dir = tmp_path / "run1"
