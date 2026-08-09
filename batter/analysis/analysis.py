@@ -57,6 +57,9 @@ COMPONENT_DIRECTION_DICT = {
     "Boresch": -1,
     "Boresch_REF": -1,
     "Boresch_ALT": +1,
+    "Reduced_TR": -1,
+    "Reduced_TR_REF": -1,
+    "Reduced_TR_ALT": +1,
 }
 
 
@@ -463,8 +466,19 @@ class MBARAnalysis(FEAnalysisBase):
         self.results["convergence"]["mbar"] = mbar
 
         # Convergence summaries are diagnostic; short smoke tests may not have
-        # enough frames for alchemlyb's forward/backward slices.
+        # enough frames for alchemlyb's forward/backward slices or 10 blocks.
+        diagnostic_points = 10
+        window_sample_counts = [len(df) for df in self.data_list]
         try:
+            if (
+                not window_sample_counts
+                or min(window_sample_counts) < diagnostic_points
+            ):
+                raise ValueError(
+                    "too few samples for convergence diagnostics "
+                    f"(per-window counts={window_sample_counts}, "
+                    f"minimum required={diagnostic_points})"
+                )
             with SilenceAlchemlybOnly():
                 tc = forward_backward_convergence(
                     self.data_list, "MBAR", error_tol=100, method="default"
@@ -487,7 +501,10 @@ class MBARAnalysis(FEAnalysisBase):
 
                 # block average (10 blocks)
                 ba = block_average(
-                    self.data_list, estimator="MBAR", num=10, method="default"
+                    self.data_list,
+                    estimator="MBAR",
+                    num=diagnostic_points,
+                    method="default",
                 )
                 self.results["convergence"]["block_convergence"] = ba
 
@@ -609,17 +626,29 @@ class MBARAnalysis(FEAnalysisBase):
                 df.index = df.index.map(lambda t: (t[0] - threshold, *t[1:]))
         # Mixed precision spikes guard
         df = exclude_outliers(df, iclam=win_i)
+        if df.empty:
+            df = pd.concat(dfs)
+            logger.warning(
+                f"[MBARAnalysis] {component}{win_i:02d} WARNING: "
+                "outlier filtering removed all samples; using unfiltered data."
+            )
 
         # detect_equilibration on the reference column of this window
         if truncate:
-            with SilenceAlchemlybOnly():
-                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
-                df = df.iloc[t0:, :]
-                indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
-                df = df.iloc[indices, :]
-            logger.debug(
-                f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
-            )
+            if len(df) < 2:
+                logger.warning(
+                    f"[MBARAnalysis] {component}{win_i:02d} has only {len(df)} "
+                    "sample(s); skipping equilibration detection."
+                )
+            else:
+                with SilenceAlchemlybOnly():
+                    t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                    df = df.iloc[t0:, :]
+                    indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
+                    df = df.iloc[indices, :]
+                logger.debug(
+                    f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
+                )
         # subtract reference (this window) to yield reduced potentials
         # do it later
         # ref = df.iloc[:, win_i]
@@ -1082,9 +1111,13 @@ class BoreschAnalysis(FEAnalysisBase):
 
             if self.restraint_tag:
                 tag = f"#{str(self.restraint_tag).lstrip('#')}"
-                tr_lines = [line for line in lines if tag in line]
+                tr_lines = [
+                    line for line in lines if (line.split() or [""])[-1] == tag
+                ]
             else:
-                tr_lines = [line for line in lines if "#Lig_TR" in line]
+                tr_lines = [
+                    line for line in lines if (line.split() or [""])[-1] == "#Lig_TR"
+                ]
             if len(tr_lines) < 6:
                 label = (
                     str(self.restraint_tag).lstrip("#")
@@ -1188,13 +1221,117 @@ class BoreschAnalysis(FEAnalysisBase):
         )
 
 
+class ReducedExternalRestraintAnalysis(FEAnalysisBase):
+    def __init__(self, disangfile, k_r, k_a, temperature, restraint_tag="Lig_TR"):
+        """Analytical correction for reduced external restraints.
+
+        This covers ligands with too few atoms for a full Boresch frame:
+        three terms restrain a point ligand in spherical coordinates and five
+        terms restrain a two-anchor ligand with the irrelevant axial rotation
+        omitted.
+        """
+        super().__init__()
+        self.disangfile = disangfile
+        self.k_r = k_r
+        self.k_a = k_a
+        assert self.k_r > 0.0, "k_r must be positive"
+        assert self.k_a > 0.0, "k_a must be positive"
+        self.temperature = temperature
+        self.restraint_tag = restraint_tag
+
+    def run_analysis(self):
+        tag = f"#{str(self.restraint_tag).lstrip('#')}"
+        with open(self.disangfile, "r") as f_in:
+            tr_lines = [
+                line.rstrip()
+                for line in f_in
+                if (line.split() or [""])[-1] == tag
+            ]
+        if len(tr_lines) not in {3, 5}:
+            raise ValueError(
+                f"Expected 3 or 5 reduced external restraint lines tagged {tag} "
+                f"in {self.disangfile}, found {len(tr_lines)}"
+            )
+
+        values = [_parse_amber_rst_float(_parse_amber_rst_line(line), "r2", line) for line in tr_lines]
+        fe_reduced = self.fe_int(values, self.k_r, self.k_a, self.temperature)
+        self.results["fe"] = fe_reduced
+        self.results["fe_error"] = 0.0
+        logger.debug(
+            "Analytical release reduced ligand TR ({} terms): {:.2f} kcal/mol",
+            len(values),
+            fe_reduced,
+        )
+
+    def plot_convergence(self, ax=None, **kwargs):
+        pass
+
+    @staticmethod
+    def fe_int(values, k_r, k_a, temperature):
+        R = 1.987204118e-3  # kcal/mol-K
+        beta = 1 / (temperature * R)
+        r1lb, r1ub, r1st = [0.0, 100.0, 0.0001]
+        a1lb, a1ub, a1st = [0.0, np.pi, 0.00005]
+        t1lb, t1ub, t1st = [-np.pi, np.pi, 0.00005]
+
+        def dih_per(lb, ub, st, t_0):
+            drange = np.arange(lb, ub, st)
+            delta = drange - np.radians(t_0)
+            for i in range(0, len(delta)):
+                if delta[i] >= np.pi:
+                    delta[i] = delta[i] - (2 * np.pi)
+                if delta[i] <= -np.pi:
+                    delta[i] = delta[i] + (2 * np.pi)
+            return delta
+
+        def f_r1(val):
+            return (val**2) * np.exp(-beta * k_r * (val - values[0]) ** 2)
+
+        def f_a(val, target_degrees):
+            return np.sin(val) * np.exp(
+                -beta * k_a * (val - np.radians(target_degrees)) ** 2
+            )
+
+        def f_t(delta):
+            return np.exp(-beta * k_a * (delta) ** 2)
+
+        intrange = np.arange(r1lb, r1ub, r1st)
+        product = _trapezoid(f_r1(intrange), intrange)
+        intrange = np.arange(a1lb, a1ub, a1st)
+        product *= _trapezoid(f_a(intrange, values[1]), intrange)
+        intrange = dih_per(t1lb, t1ub, t1st, values[2])
+        product *= _trapezoid(f_t(intrange), intrange)
+
+        denominator = 1660.0
+        if len(values) == 5:
+            intrange = np.arange(a1lb, a1ub, a1st)
+            product *= _trapezoid(f_a(intrange, values[3]), intrange)
+            intrange = dih_per(t1lb, t1ub, t1st, values[4])
+            product *= _trapezoid(f_t(intrange), intrange)
+            denominator *= 4.0 * np.pi
+        elif len(values) != 3:
+            raise ValueError(
+                "Reduced external restraint correction requires 3 or 5 values."
+            )
+
+        return R * temperature * np.log(product / denominator)
+
+
 def _disang_has_restraint_tag(disangfile: str | Path, tag: str) -> bool:
+    return _disang_restraint_tag_count(disangfile, tag) > 0
+
+
+def _disang_restraint_tag_count(disangfile: str | Path, tag: str) -> int:
     needle = f"#{tag.lstrip('#')}"
     try:
         with open(disangfile, "r") as f_in:
-            return any(needle in line for line in f_in)
+            return sum(1 for line in f_in if (line.split() or [""])[-1] == needle)
     except FileNotFoundError:
-        return False
+        return 0
+
+
+def _disang_has_complete_boresch_block(disangfile: str | Path, tag: str) -> bool:
+    return _disang_restraint_tag_count(disangfile, tag) >= 6
 
 
 def generate_results_rest(
@@ -1297,6 +1434,59 @@ def analyze_lig_task(
                 f"{label}\t{direction * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
             )
 
+        def _add_reduced_tr_contribution(
+            label: str,
+            disangfile: str | Path,
+            restraint_tag: str = "Lig_TR",
+        ) -> None:
+            k_r, k_a = rest[2], rest[3]
+            direction = COMPONENT_DIRECTION_DICT[label]
+            reduced = ReducedExternalRestraintAnalysis(
+                disangfile=disangfile,
+                k_r=k_r,
+                k_a=k_a,
+                temperature=temperature,
+                restraint_tag=restraint_tag,
+            )
+            reduced.run_analysis()
+            fe_values.append(direction * reduced.results["fe"])
+            fe_stds.append(reduced.results["fe_error"])
+            fe_timeseries[label] = np.asarray([reduced.results["fe"], 0.0])
+            fe_timeseries_backward[label] = np.asarray([reduced.results["fe"], 0.0])
+            results_entries.append(
+                f"{label}\t{direction * reduced.results['fe']:.2f}\t{reduced.results['fe_error']:.2f}"
+            )
+
+        def _add_external_restraint_contribution(
+            *,
+            boresch_label: str,
+            reduced_label: str,
+            disangfile: str | Path,
+            restraint_tag: str = "Lig_TR",
+        ) -> None:
+            count = _disang_restraint_tag_count(disangfile, restraint_tag)
+            if count >= 6:
+                _add_boresch_contribution(
+                    boresch_label,
+                    disangfile,
+                    restraint_tag=None if restraint_tag == "Lig_TR" else restraint_tag,
+                )
+            elif count in {3, 5}:
+                _add_reduced_tr_contribution(
+                    reduced_label,
+                    disangfile,
+                    restraint_tag=restraint_tag,
+                )
+            elif count:
+                logger.warning(
+                    "Skipping analytical restraint correction for {} tag #{}: "
+                    "expected 3, 5, or 6 restraints in {}, found {}.",
+                    lig,
+                    str(restraint_tag).lstrip("#"),
+                    disangfile,
+                    count,
+                )
+
         # Analytical Boresch (if present)
         if "v" in components:
             boresch_file = f"{lig_path}/v/v-1/disang.rest"
@@ -1308,19 +1498,26 @@ def analyze_lig_task(
             boresch_file = None
 
         if boresch_file:
-            _add_boresch_contribution("Boresch", boresch_file)
+            _add_external_restraint_contribution(
+                boresch_label="Boresch",
+                reduced_label="Reduced_TR",
+                disangfile=boresch_file,
+                restraint_tag="Lig_TR",
+            )
 
         septop_boresch_file = Path(lig_path) / "x" / "x-1" / "disang.rest"
-        if (
-            "x" in components
-            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_REF")
-            and _disang_has_restraint_tag(septop_boresch_file, "Lig_TR_ALT")
-        ):
-            _add_boresch_contribution(
-                "Boresch_REF", septop_boresch_file, restraint_tag="Lig_TR_REF"
+        if "x" in components:
+            _add_external_restraint_contribution(
+                boresch_label="Boresch_REF",
+                reduced_label="Reduced_TR_REF",
+                disangfile=septop_boresch_file,
+                restraint_tag="Lig_TR_REF",
             )
-            _add_boresch_contribution(
-                "Boresch_ALT", septop_boresch_file, restraint_tag="Lig_TR_ALT"
+            _add_external_restraint_contribution(
+                boresch_label="Boresch_ALT",
+                reduced_label="Reduced_TR_ALT",
+                disangfile=septop_boresch_file,
+                restraint_tag="Lig_TR_ALT",
             )
 
         for comp in components:

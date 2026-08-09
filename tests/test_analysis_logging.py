@@ -313,6 +313,75 @@ def test_analyze_lig_task_adds_septop_boresch_corrections(
     assert payload["fe_value"][:2] == [11.0, 11.0]
 
 
+def test_disang_restraint_tag_count_matches_exact_tag(tmp_path: Path) -> None:
+    disang = tmp_path / "disang.rest"
+    disang.write_text(
+        "&rst iat=1,2, r2=1.0, &end #Lig_TR\n"
+        "&rst iat=1,2, r2=2.0, &end #Lig_TR_REF\n"
+        "&rst iat=1,2, r2=3.0, &end #Lig_TR_ALT\n"
+    )
+
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR") == 1
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR_REF") == 1
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR_ALT") == 1
+    assert not analysis_mod._disang_has_complete_boresch_block(disang, "Lig_TR")
+
+
+def test_analyze_lig_task_adds_reduced_abfe_correction(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lig_path = tmp_path / "fe"
+    z_boresch = lig_path / "z" / "z-1" / "disang.rest"
+    z_boresch.parent.mkdir(parents=True)
+    z_boresch.write_text(
+        "\n".join(
+            f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR"
+            for value in [2, 20, 21]
+        )
+    )
+
+    class FakeMBARAnalysis:
+        def __init__(self, **kwargs):
+            self.results = {}
+
+        def run_analysis(self):
+            self.results = {
+                "fe": 10.0,
+                "fe_error": 1.0,
+                "fe_timeseries": np.array([[10.0, 1.0], [10.0, 1.0]]),
+                "fe_timeseries_backward": np.array([[10.0, 1.0], [10.0, 1.0]]),
+            }
+
+        def plot_convergence(self, save_path=None, title=None):
+            if save_path:
+                Path(save_path).write_bytes(b"png")
+
+    monkeypatch.setattr(analysis_mod, "MBARAnalysis", FakeMBARAnalysis)
+    monkeypatch.setattr(
+        analysis_mod.ReducedExternalRestraintAnalysis,
+        "fe_int",
+        staticmethod(lambda values, *args: float(values[0])),
+    )
+
+    analysis_mod.analyze_lig_task(
+        lig_path=str(lig_path),
+        lig="SOD",
+        components=["z"],
+        rest=(0.0, 0.0, 5.0, 250.0, 0.0),
+        temperature=300.0,
+        water_model="TIP3P",
+        component_windows_dict={"z": [0, 1]},
+        raise_on_error=True,
+        dt=0.004,
+    )
+
+    results = (lig_path / "Results" / "Results.dat").read_text()
+    assert "Boresch" not in results
+    assert "Reduced_TR\t-2.00\t0.00" in results
+    assert "z\t-10.00\t1.00" in results
+    assert "Total\t-12.00\t1.00" in results
+
+
 def test_ligand_rest_component_direction_registered() -> None:
     assert analysis_mod.COMPONENT_DIRECTION_DICT["l"] == 1
 
@@ -399,6 +468,43 @@ def test_mbar_extract_window_skips_incomplete_mdout(tmp_path: Path, monkeypatch)
     )
 
     assert not out.empty
+
+
+def test_mbar_extract_window_skips_detect_equilibration_for_single_sample(
+    tmp_path: Path, monkeypatch
+) -> None:
+    win_dir = tmp_path / "z00"
+    win_dir.mkdir()
+    (win_dir / "md-01.out").write_text("short smoke-test amber output\n")
+
+    index = pd.MultiIndex.from_arrays(
+        [[0.0], [0.0]],
+        names=["time", "lambdas"],
+    )
+    parsed = pd.DataFrame({0.0: [0.0], 1.0: [0.5]}, index=index)
+
+    monkeypatch.setattr(analysis_mod.logger, "debug", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod.logger, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod, "extract_u_nk", lambda *a, **k: parsed)
+    monkeypatch.setattr(analysis_mod, "exclude_outliers", lambda df, iclam: df.iloc[0:0])
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("detect_equilibration should be skipped")
+        ),
+    )
+
+    out = analysis_mod.MBARAnalysis._extract_all_for_window(
+        win_i=0,
+        comp_folder=str(tmp_path),
+        component="z",
+        temperature=300.0,
+        analysis_start_step=0,
+        truncate=True,
+    )
+
+    assert len(out) == 1
 
 
 def test_rest_mbar_extract_window_does_not_remove_global_logger(

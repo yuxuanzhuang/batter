@@ -684,6 +684,13 @@ class LigandProcessing(ABC):
         self.ligand_ff = "gaff2"
         self.prepare_ligand_parameters_amberff(charge_method="gas")
         self.ligand_ff = ligand_ff_openff
+        if self._is_monoatomic_ion:
+            logger.info(
+                "Ligand {} is a monoatomic ion; using Amber ion artifacts and "
+                "skipping OpenFF interchange export.",
+                self.name,
+            )
+            return
 
         from openff.toolkit import ForceField, Topology
 

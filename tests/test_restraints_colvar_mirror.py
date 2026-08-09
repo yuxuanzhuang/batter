@@ -529,6 +529,231 @@ def test_equil_anchor_restraint_expressions_allow_single_ligand_anchor() -> None
     assert all("None" not in expr for expr in exprs)
 
 
+def test_build_restraints_z_allows_single_atom_ligand_anchor(tmp_path: Path) -> None:
+    work_dir = tmp_path
+    windows_dir = work_dir / "z00"
+    windows_dir.mkdir()
+    build_dir = work_dir / "z_build_files"
+    build_dir.mkdir()
+
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "HETATM    4  NA  SOD A   4       1.000   1.000   0.000  1.00  0.00          NA\n",
+                "END\n",
+            ]
+        )
+    )
+    (windows_dir / "ion.pdb").write_text(
+        "HETATM    1  NA  SOD A   1       1.000   1.000   0.000  1.00  0.00          NA\nEND\n"
+    )
+    for path in [
+        windows_dir / "vac_ligand.prmtop",
+        windows_dir / "full.prmtop",
+        windows_dir / "full.inpcrd",
+    ]:
+        path.write_text("stub\n")
+
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@NA",
+                "L2": None,
+                "L3": None,
+                "lig_res": "3",
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        working_dir=work_dir,
+        window_dir=windows_dir,
+        equil_dir=work_dir / "equil",
+        comp="z",
+        ligand="ion",
+        residue_name="SOD",
+        sim=types.SimpleNamespace(
+            hmr="no",
+            dec_method="dd",
+            rest=[0, 0, 5.0, 250.0, 0, 10.0, 20.0],
+        ),
+        extra={},
+        win=0,
+    )
+
+    original_scan = restraints._scan_dihedrals_from_prmtop
+    original_assign = restraints._write_assign_and_read_vals
+    try:
+        restraints._scan_dihedrals_from_prmtop = lambda *args, **kwargs: []
+        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [1.0] * 6
+        restraints._build_restraints_v_o_z(None, ctx)
+    finally:
+        restraints._scan_dihedrals_from_prmtop = original_scan
+        restraints._write_assign_and_read_vals = original_assign
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert "None" not in disang_text
+    assert disang_text.count("#Lig_TR") == 3
+
+
+def test_build_restraints_l_allows_monoatomic_ion_without_dihedrals(
+    tmp_path: Path,
+) -> None:
+    windows_dir = tmp_path / "l00"
+    windows_dir.mkdir()
+    build_dir = tmp_path / "l_build_files"
+    build_dir.mkdir()
+
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "HETATM    4  NA  SOD A   4       1.000   1.000   0.000  1.00  0.00          NA\n",
+                "END\n",
+            ]
+        )
+    )
+    (windows_dir / "vac_ligand.pdb").write_text(
+        "HETATM    1  NA  SOD A   1       1.000   1.000   0.000  1.00  0.00          NA\nEND\n"
+    )
+    for path in [
+        windows_dir / "vac_ligand.prmtop",
+        windows_dir / "full.prmtop",
+        windows_dir / "full.inpcrd",
+    ]:
+        path.write_text("stub\n")
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@NA",
+                "L2": None,
+                "L3": None,
+                "lig_res": "4",
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        build_dir=build_dir,
+        window_dir=windows_dir,
+        comp="l",
+        win=0,
+        ligand="ion",
+        residue_name="SOD",
+        sim=types.SimpleNamespace(
+            hmr="no",
+            component_lambdas={"l": [0.0]},
+            lig_dihcf_force=10.0,
+            lig_distance_force=5.0,
+            lig_angle_force=250.0,
+        ),
+    )
+
+    original_scan = restraints._scan_dihedrals_from_prmtop
+    try:
+        restraints._scan_dihedrals_from_prmtop = lambda *args, **kwargs: []
+        restraints._build_restraints_l(None, ctx)
+    finally:
+        restraints._scan_dihedrals_from_prmtop = original_scan
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    metadata = json.loads((windows_dir / "ligand_dihedral_restraints.json").read_text())
+    assert "None" not in disang_text
+    assert "#Lig_TR" not in disang_text
+    assert "#Lig_D" not in disang_text
+    assert metadata["boresch_restraints"] == []
+    assert metadata["restraints"] == []
+    assert metadata["reference_source"] is None
+
+
+def test_append_x_septop_boresch_uses_reduced_small_endpoint(
+    tmp_path: Path,
+) -> None:
+    windows_dir = tmp_path / "x00"
+    windows_dir.mkdir()
+    build_dir = tmp_path / "x_build_files"
+    build_dir.mkdir()
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "HETATM    4  NA  REF A   4       1.000   1.000   0.000  1.00  0.00          NA\n",
+                "HETATM    5  C1  ALT A   5       1.000   1.000   1.000  1.00  0.00           C\n",
+                "HETATM    6  C2  ALT A   5       1.500   1.000   1.000  1.00  0.00           C\n",
+                "HETATM    7  C3  ALT A   5       1.000   1.500   1.000  1.00  0.00           C\n",
+                "END\n",
+            ]
+        )
+    )
+    for path in [windows_dir / "full.prmtop", windows_dir / "full.inpcrd"]:
+        path.write_text("stub\n")
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@NA",
+                "L2": None,
+                "L3": None,
+                "lig_res": "4",
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        build_dir=build_dir,
+        window_dir=windows_dir,
+        system_root=tmp_path,
+        ligand="ref",
+        residue_name="REF",
+        extra={"residue_ref": "REF", "residue_alt": "ALT", "ligand_alt": "alt"},
+        sim=types.SimpleNamespace(hmr="no", dec_method="dd", rest=[0, 0, 5, 250, 0, 10, 20]),
+    )
+
+    original_assign = restraints._write_assign_and_read_vals
+    try:
+        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [
+            1.0,
+            2.0,
+            2.0,
+            1.5,
+            90.0,
+            180.0,
+            2.5,
+            100.0,
+            170.0,
+            95.0,
+            160.0,
+            150.0,
+        ]
+        exprs = restraints._append_x_septop_boresch_restraints(ctx, disang)
+    finally:
+        restraints._write_assign_and_read_vals = original_assign
+
+    disang_text = disang.read_text()
+    assert len(exprs) == 9
+    assert disang_text.count("#Lig_TR_REF") == 3
+    assert disang_text.count("#Lig_TR_ALT") == 6
+    assert "Skipping SEPTOP Boresch restraints" not in disang_text
+
+
 def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
     windows_dir = tmp_path / "y00"
     windows_dir.mkdir()

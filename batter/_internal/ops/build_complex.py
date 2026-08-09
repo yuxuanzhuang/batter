@@ -1712,7 +1712,8 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             )
         if _lipids_need_charmm_to_amber_conversion(lipids_pdb):
             run_with_log(
-                f"{charmmlipid2amber} -i {lipids_pdb} -o {lipids_amber_pdb}"
+                f"{charmmlipid2amber} -c {charmmlipid2amber_csv} "
+                f"-i {lipids_pdb} -o {lipids_amber_pdb}"
             )
             lipid_action = "Converted CHARMM lipids to AMBER"
         else:
@@ -1826,6 +1827,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     u = mda.Universe(str(pdb_file))
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
+    lig_heavy_count = sum(1 for atom in lig_atoms if not _atom_is_hydrogen(atom))
     salt_bridge_lig_names: list[str] = []
     if apo_anchor_names is None:
         lig_name_str = _candidate_ligand_atom_name_string(
@@ -1855,6 +1857,30 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     else:
         lig_name_str = " ".join(apo_anchor_names)
     salt_bridge_lig_name_str = " ".join(salt_bridge_lig_names)
+    anchor_file = build_dir / "anchors.txt"
+
+    def _anchor_names_from_file(path: Path) -> list[str]:
+        if not path.exists() or path.stat().st_size == 0:
+            return []
+        try:
+            return path.read_text().splitlines()[0].split()
+        except Exception:
+            return []
+
+    def _partial_ligand_anchors_are_expected(path: Path) -> bool:
+        names = _anchor_names_from_file(path)
+        if not names or len(names) >= 3:
+            return False
+        if lig_heavy_count >= 3:
+            return False
+        logger.warning(
+            "Ligand {} has only {} non-hydrogen atom(s); using reduced ligand "
+            "anchor set {} and omitting unavailable Boresch angle/dihedral terms.",
+            ligand,
+            lig_heavy_count,
+            " ".join(names),
+        )
+        return True
 
     # Build VMD prep.tcl from template, try with candidate names first
     prep_ini = build_dir / "prep-ini.tcl"
@@ -1920,23 +1946,25 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             working_dir=build_dir,
         )
     except RuntimeError:
-        # fallback: all ligand atoms
-        lig_name_str2 = " ".join(
-            _order_ligand_names_with_priority(
-                [str(x) for x in lig_names],
-                salt_bridge_lig_names,
+        if _partial_ligand_anchors_are_expected(anchor_file):
+            pass
+        else:
+            # fallback: all ligand atoms
+            lig_name_str2 = " ".join(
+                _order_ligand_names_with_priority(
+                    [str(x) for x in lig_names],
+                    salt_bridge_lig_names,
+                )
             )
-        )
-        _write_prep(lig_name_str2)
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=build_dir,
-        )
+            _write_prep(lig_name_str2)
+            run_with_log(
+                f"{vmd} -dispdev text -e prep.tcl",
+                error_match="anchor not found",
+                shell=False,
+                working_dir=build_dir,
+            )
 
     # Verify anchors.txt
-    anchor_file = build_dir / "anchors.txt"
     if anchor_file.stat().st_size == 0:
         logger.warning(
             f"Could not find ligand L1 for {ligand}. Most likely not in binding site."
@@ -1947,6 +1975,9 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     with open(anchor_file) as f:
         line = f.readline().strip()
     if len(line.split()) < 3:
+        if _partial_ligand_anchors_are_expected(anchor_file):
+            os.rename(anchor_file, build_dir / f"anchors-{ligand}.txt")
+            return True
         os.rename(anchor_file, build_dir / f"anchors-{ligand}.txt")
         logger.warning(
             f"Could not find ligand L2/L3 anchors for {ligand}. Try reducing min_adis."
@@ -2226,6 +2257,7 @@ def build_complex_z(ctx) -> bool:
     sdf_file = _p(f"{mol}.sdf")
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
+    lig_heavy_count = sum(1 for atom in lig_atoms if not _atom_is_hydrogen(atom))
     lig_name_str = _candidate_ligand_atom_name_string(
         sdf_file,
         lig_atoms,
@@ -2357,6 +2389,29 @@ def build_complex_z(ctx) -> bool:
                     .replace("LIGANDNAME", ligand_name_str)
                 )
 
+    def _anchor_names_from_file(path: Path) -> list[str]:
+        if not path.exists() or path.stat().st_size == 0:
+            return []
+        try:
+            return path.read_text().splitlines()[0].split()
+        except Exception:
+            return []
+
+    def _partial_ligand_anchors_are_expected(path: Path) -> bool:
+        names = _anchor_names_from_file(path)
+        if not names or len(names) >= 3:
+            return False
+        if lig_heavy_count >= 3:
+            return False
+        logger.warning(
+            "Ligand {} has only {} non-hydrogen atom(s); using reduced FE ligand "
+            "anchor set {} and omitting unavailable Boresch angle/dihedral terms.",
+            ligand,
+            lig_heavy_count,
+            " ".join(names),
+        )
+        return True
+
     def _run_prep(ligand_name_str: str) -> None:
         _write_prep(ligand_name_str)
         if vmd_available:
@@ -2393,40 +2448,49 @@ def build_complex_z(ctx) -> bool:
     try:
         _run_prep(lig_name_str)
     except RuntimeError:
-        logger.debug(
-            "[build_complex_z] Candidate ligand anchors failed for {}; "
-            "retrying with all ligand atoms.",
-            ligand,
-        )
-        all_lig_name_str = " ".join(
-            _order_ligand_names_with_priority(
-                [str(x) for x in lig_names],
-                salt_bridge_lig_names,
-            )
-        )
-        try:
-            _run_prep(all_lig_name_str)
-            lig_name_str = all_lig_name_str
-        except RuntimeError:
-            if not stable_preference_applied:
-                raise
+        if _partial_ligand_anchors_are_expected(_p("anchors.txt")):
+            pass
+        else:
             logger.debug(
-                "[build_complex_z] Stable-distance preferred geometry failed for {}; "
-                "retrying original receptor anchor geometry.",
+                "[build_complex_z] Candidate ligand anchors failed for {}; "
+                "retrying with all ligand atoms.",
                 ligand,
             )
-            _restore_anchor_state(default_anchor_state)
-            try:
-                _run_prep(lig_name_str)
-            except RuntimeError:
-                all_lig_name_str = " ".join(
-                    _order_ligand_names_with_priority(
-                        [str(x) for x in lig_names],
-                        salt_bridge_lig_names,
-                    )
+            all_lig_name_str = " ".join(
+                _order_ligand_names_with_priority(
+                    [str(x) for x in lig_names],
+                    salt_bridge_lig_names,
                 )
+            )
+            try:
                 _run_prep(all_lig_name_str)
                 lig_name_str = all_lig_name_str
+            except RuntimeError:
+                if _partial_ligand_anchors_are_expected(_p("anchors.txt")):
+                    lig_name_str = all_lig_name_str
+                else:
+                    if not stable_preference_applied:
+                        raise
+                    logger.debug(
+                        "[build_complex_z] Stable-distance preferred geometry failed for {}; "
+                        "retrying original receptor anchor geometry.",
+                        ligand,
+                    )
+                    _restore_anchor_state(default_anchor_state)
+                    try:
+                        _run_prep(lig_name_str)
+                    except RuntimeError:
+                        if _partial_ligand_anchors_are_expected(_p("anchors.txt")):
+                            pass
+                        else:
+                            all_lig_name_str = " ".join(
+                                _order_ligand_names_with_priority(
+                                    [str(x) for x in lig_names],
+                                    salt_bridge_lig_names,
+                                )
+                            )
+                            _run_prep(all_lig_name_str)
+                            lig_name_str = all_lig_name_str
 
     prep_translation = _translate_pdb_to_reference_frame(
         target_pdb=_p(f"fe-{mol}.pdb"),
@@ -2438,15 +2502,11 @@ def build_complex_z(ctx) -> bool:
 
     # 12) anchors.txt -> validate, rename with ligand tag, write header into fe-<mol>.pdb
     anchors_txt = _p("anchors.txt")
-    if (not anchors_txt.exists()) or (anchors_txt.stat().st_size == 0):
+    anchor_names = _anchor_names_from_file(anchors_txt)
+    if not anchor_names:
         logger.warning("anchors.txt missing or empty")
         return False
-    good = True
-    with anchors_txt.open() as f:
-        for ln in f:
-            if len(ln.split()) < 3:
-                good = False
-                break
+    good = len(anchor_names) >= 3 or _partial_ligand_anchors_are_expected(anchors_txt)
     tagged = _p(f"anchors-{ligand}.txt")
     anchors_txt.rename(tagged)
     if not good:
@@ -2457,37 +2517,39 @@ def build_complex_z(ctx) -> bool:
     fe_pdb = _p(f"fe-{mol}.pdb")
     if not fe_pdb.exists():
         raise FileNotFoundError(f"Missing {fe_pdb}")
-    with tagged.open() as f:
-        a = f.readline().split()
-    a = _guard_abfe_boresch_ligand_anchor_names(
-        fe_pdb=fe_pdb,
-        mol=mol,
-        ligand_label=ligand,
-        P1=P1,
-        P2=P2,
-        P3=P3,
-        lig_resid=lig_resid,
-        selected_names=a,
-        preferred_first_names=_dedupe_names(
-            [
-                *salt_bridge_lig_names,
-                *(
-                    [stable_preference["stable_ligand_name"]]
-                    if stable_preference_applied and stable_preference is not None
-                    else []
-                ),
-            ]
-        ),
-    )
+    a = anchor_names
+    if len(a) >= 3:
+        a = _guard_abfe_boresch_ligand_anchor_names(
+            fe_pdb=fe_pdb,
+            mol=mol,
+            ligand_label=ligand,
+            P1=P1,
+            P2=P2,
+            P3=P3,
+            lig_resid=lig_resid,
+            selected_names=a,
+            preferred_first_names=_dedupe_names(
+                [
+                    *salt_bridge_lig_names,
+                    *(
+                        [stable_preference["stable_ligand_name"]]
+                        if stable_preference_applied and stable_preference is not None
+                        else []
+                    ),
+                ]
+            ),
+        )
     tagged.write_text(" ".join(a[:3]) + "\n")
     L1 = f":{lig_resid}@{a[0]}"
-    L2 = f":{lig_resid}@{a[1]}"
-    L3 = f":{lig_resid}@{a[2]}"
+    L2 = f":{lig_resid}@{a[1]}" if len(a) > 1 else None
+    L3 = f":{lig_resid}@{a[2]}" if len(a) > 2 else None
+    L2_label = L2 or "NA"
+    L3_label = L3 or "NA"
 
     lines = fe_pdb.read_text().splitlines(True)
     with fe_pdb.open("wt") as fout:
         fout.write(
-            f"{'REMARK A':<8s}  {P1:6s}  {P2:6s}  {P3:6s}  {L1:6s}  {L2:6s}  {L3:6s}  {first_res:6s}  {recep_last:4s}\n"
+            f"{'REMARK A':<8s}  {P1:6s}  {P2:6s}  {P3:6s}  {L1:6s}  {L2_label:6s}  {L3_label:6s}  {first_res:6s}  {recep_last:4s}\n"
         )
         fout.writelines(lines[1:])
 

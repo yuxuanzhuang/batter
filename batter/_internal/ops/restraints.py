@@ -674,6 +674,66 @@ def _equil_anchor_restraint_expressions(
     return rst + ligand_rst, len(ligand_rst)
 
 
+def _ligand_anchor_count(L1: Optional[str], L2: Optional[str], L3: Optional[str]) -> int:
+    return sum(1 for mask in (L1, L2, L3) if mask)
+
+
+def _resid_from_anchor_mask(mask: str | None) -> str | None:
+    if not mask:
+        return None
+    match = _ANCHOR_MASK_RE.match(str(mask).strip())
+    return match.group(1) if match else None
+
+
+def _validate_ligand_anchor_set(
+    *,
+    comp: str,
+    L1: Optional[str],
+    L2: Optional[str],
+    L3: Optional[str],
+    ligand_heavy_count: int,
+) -> None:
+    """Allow reduced ligand anchors only when the ligand is too small for Boresch."""
+    anchor_count = _ligand_anchor_count(L1, L2, L3)
+    if anchor_count == 3:
+        return
+    if 0 < anchor_count < 3 and 0 < int(ligand_heavy_count) < 3:
+        labels = [str(mask) for mask in (L1, L2, L3) if mask]
+        logger.warning(
+            "[restraints:{}] ligand has only {} heavy atom(s); using reduced "
+            "ligand anchor set {} and omitting unavailable Boresch terms.",
+            comp,
+            ligand_heavy_count,
+            labels,
+        )
+        return
+    raise ValueError(
+        f"[restraints:{comp}] Boresch restraints require ligand anchors L1/L2/L3; "
+        f"got L1={L1!r}, L2={L2!r}, L3={L3!r} for ligand with "
+        f"{ligand_heavy_count} heavy atom(s)."
+    )
+
+
+def _heavy_atom_count_from_pdb(
+    pdb_path: Path,
+    *,
+    resname: str | None = None,
+    resid: str | int | None = None,
+) -> int:
+    """Count heavy atoms in a PDB, optionally restricted to one residue."""
+    u = mda.Universe(str(pdb_path))
+    selection = "all"
+    clauses: list[str] = []
+    if resname:
+        clauses.append(f"resname {resname}")
+    if resid not in (None, ""):
+        clauses.append(f"resid {int(resid)}")
+    if clauses:
+        selection = " and ".join(clauses)
+    atoms = u.select_atoms(selection)
+    return sum(1 for atom in atoms if not _is_hydrogen_atom(atom))
+
+
 def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
                                             restraints: Iterable[Iterable]) -> list[str]:
     """
@@ -1156,21 +1216,31 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     else:
         offset = 0
     hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
+    ligand_heavy_count = _heavy_atom_count_from_pdb(
+        vac_pdb,
+        resname=mol,
+        resid=_resid_from_anchor_mask(L1),
+    )
+    if ligand_heavy_count == 0:
+        ligand_heavy_count = len(hvy_lig)
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
 
-    # protein triad
-    rst: List[str] = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
-    # TR chain (unless skipping or ligand-only)
+    rst: List[str]
+    ligand_anchor_rst_count = 0
     if (not lig_only) and (not skip_lig_tr):
-        rst += [
-            f"{P1} {L1}",
-            f"{P2} {P1} {L1}",
-            f"{P3} {P2} {P1} {L1}",
-            f"{P1} {L1} {L2}",
-            f"{P2} {P1} {L1} {L2}",
-            f"{P1} {L1} {L2} {L3}",
-        ]
+        _validate_ligand_anchor_set(
+            comp=comp,
+            L1=L1,
+            L2=L2,
+            L3=L3,
+            ligand_heavy_count=ligand_heavy_count,
+        )
+        rst, ligand_anchor_rst_count = _equil_anchor_restraint_expressions(
+            P1, P2, P3, L1, L2, L3
+        )
+    else:
+        rst = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
 
     # ligand dihedrals
     lig_msks = _scan_dihedrals_from_prmtop(vac_lig_prmtop, ligand_atm_num)
@@ -1212,7 +1282,10 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     # disang.rest
     disang = windows_dir / "disang.rest"
     with disang.open("w") as df:
-        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}  comp={comp}\n")
+        l1_label = L1 or "NA"
+        l2_label = L2 or "NA"
+        l3_label = L3 or "NA"
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {l1_label} {l2_label} {l3_label}  comp={comp}\n")
         for i, expr in enumerate(rst_full):
             fields = expr.split()
             n = len(fields)
@@ -1224,7 +1297,12 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                          % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
                 continue
             # TR (if included)
-            if (not lig_only) and (i >= 3) and (i < 9):
+            if (
+                (not lig_only)
+                and (not skip_lig_tr)
+                and (i >= 3)
+                and (i < 3 + ligand_anchor_rst_count)
+            ):
                 if n == 2:
                     iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")
@@ -1472,10 +1550,6 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
     lig_res = anchors.lig_res
     atm_num = num_to_mask(vac_pdb.as_posix())
-    boresch_exprs = _ligand_boresch_expressions(P1, P2, P3, L1, L2, L3)
-    boresch_exprs = [_canonicalize_restraint_expr(expr, atm_num) for expr in boresch_exprs]
-    boresch_vals = _write_assign_and_read_vals(windows_dir, boresch_exprs, full_prmtop, full_inpcrd)
-
     vac_lig_pdb = windows_dir / "vac_ligand.pdb"
     if not vac_lig_pdb.exists():
         vac_lig_pdb = windows_dir / f"{lig}.pdb"
@@ -1483,8 +1557,34 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
         vac_lig_pdb = windows_dir / f"{mol}.pdb"
     if vac_lig_pdb.exists():
         ligand_atm_num = num_to_mask(vac_lig_pdb.as_posix())
+        ligand_heavy_count = _heavy_atom_count_from_pdb(vac_lig_pdb)
     else:
         ligand_atm_num = _ligand_atom_masks_from_vac_pdb(vac_pdb, mol, lig_res)
+        ligand_heavy_count = _heavy_atom_count_from_pdb(
+            vac_pdb,
+            resname=mol,
+            resid=_resid_from_anchor_mask(L1) or lig_res,
+        )
+
+    if _ligand_anchor_count(L1, L2, L3) == 3:
+        boresch_exprs = _ligand_boresch_expressions(P1, P2, P3, L1, L2, L3)
+        boresch_exprs = [
+            _canonicalize_restraint_expr(expr, atm_num) for expr in boresch_exprs
+        ]
+        boresch_vals = _write_assign_and_read_vals(
+            windows_dir, boresch_exprs, full_prmtop, full_inpcrd
+        )
+    else:
+        _validate_ligand_anchor_set(
+            comp=comp,
+            L1=L1,
+            L2=L2,
+            L3=L3,
+            ligand_heavy_count=ligand_heavy_count,
+        )
+        boresch_exprs = []
+        boresch_vals = []
+
     raw_lig_msks = _scan_dihedrals_from_prmtop(vac_lig_prmtop, ligand_atm_num)
     if lig_mol2.exists():
         raw_lig_msks = _filter_sp_carbons(raw_lig_msks, lig_mol2)
@@ -1500,17 +1600,27 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     lig_msks = [m.replace(":1", f":{lig_res}") for m in raw_lig_msks]
     lig_msks = [_canonicalize_restraint_expr(expr, atm_num) for expr in lig_msks]
     if not lig_msks:
-        raise ValueError(f"[restraints:{comp}] no ligand heavy-atom dihedrals found for {lig}")
-    if len(relative_dihedrals) != len(lig_msks):
+        if ligand_heavy_count < 4:
+            logger.warning(
+                "[restraints:{}] ligand has only {} heavy atom(s); no ligand "
+                "dihedral restraints can be generated.",
+                comp,
+                ligand_heavy_count,
+            )
+            vals: list[float] = []
+            reference_source: Path | None = None
+        else:
+            raise ValueError(f"[restraints:{comp}] no ligand heavy-atom dihedrals found for {lig}")
+    elif len(relative_dihedrals) != len(lig_msks):
         raise ValueError(
             f"[restraints:{comp}] could not map all ligand dihedrals to input conformer atom order"
         )
-
-    vals, reference_source = _reference_dihedral_values_from_input(
-        ctx,
-        windows_dir,
-        relative_dihedrals,
-    )
+    else:
+        vals, reference_source = _reference_dihedral_values_from_input(
+            ctx,
+            windows_dir,
+            relative_dihedrals,
+        )
 
     base_force = float(getattr(ctx.sim, "lig_dihcf_force", 0.0) or 0.0)
     window_weight = _lambda_weight_for_window(ctx)
@@ -1533,14 +1643,18 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     used_msks: list[str] = []
     disang = windows_dir / "disang.rest"
     with disang.open("w") as df:
+        reference_label = reference_source.as_posix() if reference_source else "none"
+        l1_label = L1 or "NA"
+        l2_label = L2 or "NA"
+        l3_label = L3 or "NA"
         df.write(
             f"# Ligand Boresch and conformational restraints comp={comp} "
             f"base_distance_force={base_distance_force:.8g} "
             f"base_angle_force={base_angle_force:.8g} "
             f"base_dihedral_force={base_force:.8g} lambda={window_weight:.8g} "
-            f"force_scale={force_scale:.8g} reference={reference_source}\n"
+            f"force_scale={force_scale:.8g} reference={reference_label}\n"
         )
-        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}\n")
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {l1_label} {l2_label} {l3_label}\n")
         for idx, (expr, val) in enumerate(zip(boresch_exprs, boresch_vals)):
             fields = expr.split()
             n = len(fields)
@@ -1622,7 +1736,7 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
                 }
             )
 
-    if not used_msks:
+    if lig_msks and not used_msks:
         raise ValueError(f"[restraints:{comp}] no ligand dihedrals could be mapped into vac.pdb")
 
     (windows_dir / "ligand_dihedral_restraints.json").write_text(
@@ -1637,7 +1751,7 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
                 "lambda": window_weight,
                 "force_scale": force_scale,
                 "restraints": restraint_records,
-                "reference_source": reference_source.as_posix(),
+                "reference_source": reference_source.as_posix() if reference_source else None,
             },
             indent=2,
         )
@@ -1933,6 +2047,10 @@ def _atom_name_from_anchor_mask(mask: str | None) -> str:
     if "@" in str(mask):
         return str(mask).rsplit("@", 1)[1].strip()
     return str(mask).strip()
+
+
+def _optional_atom_name_from_anchor_mask(mask: str | None) -> str:
+    return _atom_name_from_anchor_mask(mask) if mask else ""
 
 
 def _first_residue_with_resname(universe: mda.Universe, resname: str, *, label: str):
@@ -2471,6 +2589,33 @@ def _boresch_tr_expressions(
     ]
 
 
+def _reduced_or_boresch_tr_expressions(
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_masks: Sequence[str],
+) -> list[str]:
+    if len(lig_masks) >= 3:
+        return _boresch_tr_expressions(P1, P2, P3, *list(lig_masks[:3]))
+    if len(lig_masks) == 2:
+        L1, L2 = lig_masks
+        return [
+            f"{P1} {L1}",
+            f"{P2} {P1} {L1}",
+            f"{P3} {P2} {P1} {L1}",
+            f"{P1} {L1} {L2}",
+            f"{P2} {P1} {L1} {L2}",
+        ]
+    if len(lig_masks) == 1:
+        L1 = lig_masks[0]
+        return [
+            f"{P1} {L1}",
+            f"{P2} {P1} {L1}",
+            f"{P3} {P2} {P1} {L1}",
+        ]
+    raise ValueError("[restraints:x] no ligand anchor masks available.")
+
+
 def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list[str]:
     """Append lambda-dependent Boresch restraints for both site ligands."""
     windows_dir = ctx.window_dir
@@ -2505,11 +2650,13 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         receptor_atoms.append(atom)
     ref_residue = _first_residue_with_resname(universe, str(mol_ref), label="reference ligand")
     alt_residue = _first_residue_with_resname(universe, str(mol_alt), label="alternate ligand")
+    ref_heavy_names = _heavy_atom_names_from_residue(ref_residue)
+    alt_heavy_names = _heavy_atom_names_from_residue(alt_residue)
 
     anchor_names = [
-        _atom_name_from_anchor_mask(anchors.L1),
-        _atom_name_from_anchor_mask(anchors.L2),
-        _atom_name_from_anchor_mask(anchors.L3),
+        _optional_atom_name_from_anchor_mask(anchors.L1),
+        _optional_atom_name_from_anchor_mask(anchors.L2),
+        _optional_atom_name_from_anchor_mask(anchors.L3),
     ]
 
     def _unique_names(names: Iterable[str]) -> list[str]:
@@ -2560,28 +2707,50 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         else []
     )
     alt_preferred = _unique_names(alt_common_preference_names + alt_preferred)
-    ref_names = _resolve_ref_boresch_atom_names(
-        ref_residue,
-        anchor_names,
-        receptor_atoms=receptor_atoms,
-        preferred_atom_names=ref_common_preference_names,
-        preferred_first_names=ref_preferred,
-    )
-    alt_names = _resolve_alt_boresch_atom_names(
-        ref_residue=ref_residue,
-        alt_residue=alt_residue,
-        ref_names=ref_names,
-        mapping_path=mapping_path,
-        receptor_atoms=receptor_atoms,
-        preferred_atom_names=alt_common_preference_names,
-        preferred_first_names=alt_preferred,
-    )
+    if len(ref_heavy_names) < 3:
+        ref_names = ref_heavy_names
+        logger.warning(
+            "[restraints:x] reference ligand {}:{} has only {} heavy atom(s); "
+            "writing reduced external restraints {}.",
+            mol_ref,
+            int(ref_residue.resid),
+            len(ref_heavy_names),
+            ref_names,
+        )
+    else:
+        ref_names = _resolve_ref_boresch_atom_names(
+            ref_residue,
+            anchor_names,
+            receptor_atoms=receptor_atoms,
+            preferred_atom_names=ref_common_preference_names,
+            preferred_first_names=ref_preferred,
+        )
+    if len(alt_heavy_names) < 3:
+        alt_names = alt_heavy_names
+        logger.warning(
+            "[restraints:x] alternate ligand {}:{} has only {} heavy atom(s); "
+            "writing reduced external restraints {}.",
+            mol_alt,
+            int(alt_residue.resid),
+            len(alt_heavy_names),
+            alt_names,
+        )
+    else:
+        alt_names = _resolve_alt_boresch_atom_names(
+            ref_residue=ref_residue,
+            alt_residue=alt_residue,
+            ref_names=ref_names,
+            mapping_path=mapping_path,
+            receptor_atoms=receptor_atoms,
+            preferred_atom_names=alt_common_preference_names,
+            preferred_first_names=alt_preferred,
+        )
 
     ref_lig_masks = [f":{int(ref_residue.resid)}@{name}" for name in ref_names]
     alt_lig_masks = [f":{int(alt_residue.resid)}@{name}" for name in alt_names]
     receptor_exprs = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
-    ref_exprs = _boresch_tr_expressions(P1, P2, P3, *ref_lig_masks)
-    alt_exprs = _boresch_tr_expressions(P1, P2, P3, *alt_lig_masks)
+    ref_exprs = _reduced_or_boresch_tr_expressions(P1, P2, P3, ref_lig_masks)
+    alt_exprs = _reduced_or_boresch_tr_expressions(P1, P2, P3, alt_lig_masks)
     rst_full = [
         _canonicalize_restraint_expr(expr, atm_num)
         for expr in (receptor_exprs + ref_exprs + alt_exprs)
@@ -2601,7 +2770,12 @@ def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list
         for i, expr in enumerate(rst_full):
             fields = expr.split()
             n = len(fields)
-            tag = "Rec_C" if i < 3 else ("Lig_TR_REF" if i < 9 else "Lig_TR_ALT")
+            if i < 3:
+                tag = "Rec_C"
+            elif i < 3 + len(ref_exprs):
+                tag = "Lig_TR_REF"
+            else:
+                tag = "Lig_TR_ALT"
             if i < 3 and n == 2:
                 iat = f"{_mask_index(atm_num, fields[0])},{_mask_index(atm_num, fields[1])},"
                 df.write(f"&rst iat={iat:<23s} ")

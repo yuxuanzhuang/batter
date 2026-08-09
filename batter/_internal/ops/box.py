@@ -2786,7 +2786,7 @@ def create_box(ctx: BuildContext) -> None:
         final_system_dum = final_system.select_atoms("resname DUM")
         final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
         ligand_residues = final_system.select_atoms(f"resname {mol}").residues
-        if comp in {"z", "d"} and len(ligand_residues) > 1:
+        if comp in {"z", "d"} and len(final_system_dum) > 1 and len(ligand_residues) > 1:
             final_system_dum[1].position = ligand_residues[1].atoms.center_of_mass()
         final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
