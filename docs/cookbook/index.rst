@@ -16,3 +16,4 @@ need a full tutorial.
    results_folder
    rbfe
    fek_schedule
+   small_ligands_and_ions

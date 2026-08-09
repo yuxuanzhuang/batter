@@ -16,6 +16,7 @@ packages results in a portable artifact store.
    developer_guide/pipeline_payloads_and_metadata
    developer_guide/authoring_pipelines
    developer_guide/internal_builders
+   developer_guide/small_ligands_and_ions
    developer_guide/storage_cleanup
 
 .. contents::
