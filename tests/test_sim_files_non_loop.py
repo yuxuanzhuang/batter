@@ -40,6 +40,23 @@ def test_eqnpt0_uno_template_uses_short_z_seed_equilibration() -> None:
     assert "  nstlim = 2000," in template.read_text()
 
 
+def test_shipped_mdin_templates_wrap_coordinates() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    template_dir = repo_root / "batter" / "_internal" / "templates" / "amber_files_orig"
+    md_inputs = [
+        path
+        for path in template_dir.iterdir()
+        if path.is_file() and (path.name.startswith("mdin") or path.name.startswith("eqn"))
+    ]
+
+    assert md_inputs
+    for path in md_inputs:
+        text = path.read_text()
+        if "iwrap" in text:
+            assert "iwrap = 0," not in text, path.name
+            assert "iwrap = 1," in text, path.name
+
+
 def _write_minimal_equil_templates(amber_dir: Path) -> None:
     amber_dir.mkdir(parents=True, exist_ok=True)
     (amber_dir / "mini.in").write_text("_lig_name_\n")

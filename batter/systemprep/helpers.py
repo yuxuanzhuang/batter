@@ -1205,7 +1205,7 @@ def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = False) -> Lis
             anchor_candidates.append(atom.GetIdx())
 
     if len(anchor_candidates) < 3:
-        logger.warning(
+        logger.debug(
             "Fewer than three candidate ligand anchors found; using all non-H atoms instead."
         )
         anchor_candidates = non_h

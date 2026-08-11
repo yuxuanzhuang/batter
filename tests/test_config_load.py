@@ -566,6 +566,25 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
+def test_simulation_config_ion_guard_defaults_to_yes() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.ion_guard == "yes"
+
+
+def test_ion_guard_from_sections_can_be_disabled(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        n_steps={"z": 300_000},
+        ion_guard=False,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert cfg.ion_guard == "no"
+
+
 def test_component_lambdas_override_and_default() -> None:
     base = base_sim_kwargs(
         component_windows={"c": [0.0, 0.25, 1.0]},

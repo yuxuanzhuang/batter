@@ -98,6 +98,14 @@ Use more than endpoint lambdas for ion decoupling. A schedule such as
 ``[0.0, 1.0]`` is usually inadequate for charged ion transformations and can
 produce effectively zero MBAR overlap even when the simulation completes.
 
+``fe_sim.ion_guard`` is enabled by default for FE window generation. It writes
+``#Ion_Guard`` flat-bottom lower-wall restraints in ``fe/z/*/disang.rest`` for
+ABFE and ``fe/x/*/disang.rest`` for RBFE/RBFE-SEPTOP, keeping configured bulk
+ions at least 15 Å from the ligand reference atoms in solvent and in the binding
+site. This guard is not applied to top-level equilibration. Disable it with
+``fe_sim.ion_guard: no`` only when those ion-ligand close approaches are expected
+for the system being modeled.
+
 .. code-block:: yaml
 
    fe_sim:

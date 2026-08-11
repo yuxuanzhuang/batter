@@ -12,6 +12,10 @@ pmd = pytest.importorskip("parmed")
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import box
+from batter._internal.ops.helpers import (
+    merge_first_n_and_lipid_fragments_in_prmtop,
+    revised_resids_for_lipid_fragments,
+)
 
 
 def _pdb_atom(
@@ -31,6 +35,64 @@ def _pdb_atom(
     )
 
 
+def _format_prmtop_ints(values: list[int], per_line: int = 10) -> str:
+    return "\n".join(
+        "".join(f"{value:8d}" for value in values[i : i + per_line])
+        for i in range(0, len(values), per_line)
+    )
+
+
+def _format_prmtop_names(values: list[str], per_line: int = 20) -> str:
+    return "\n".join(
+        "".join(f"{value:<4}" for value in values[i : i + per_line])
+        for i in range(0, len(values), per_line)
+    )
+
+
+def _write_minimal_prmtop(
+    path: Path,
+    *,
+    atoms_per_molecule: list[int],
+    residue_labels: list[str],
+    residue_pointers: list[int],
+    solvent_pointers: list[int],
+) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "%FLAG RESIDUE_LABEL",
+                "%FORMAT(20a4)",
+                _format_prmtop_names(residue_labels),
+                "%FLAG RESIDUE_POINTER",
+                "%FORMAT(10I8)",
+                _format_prmtop_ints(residue_pointers),
+                "%FLAG ATOMS_PER_MOLECULE",
+                "%FORMAT(10I8)",
+                _format_prmtop_ints(atoms_per_molecule),
+                "%FLAG SOLVENT_POINTERS",
+                "%FORMAT(3I8)",
+                _format_prmtop_ints(solvent_pointers, per_line=3),
+                "",
+            ]
+        )
+    )
+
+
+def _read_prmtop_int_flag(path: Path, flag: str) -> list[int]:
+    lines = path.read_text().splitlines()
+    start = lines.index(f"%FLAG {flag}") + 2
+    end = start
+    while end < len(lines) and not lines[end].startswith("%FLAG"):
+        end += 1
+    values: list[int] = []
+    for line in lines[start:end]:
+        for i in range(0, len(line), 8):
+            chunk = line[i : i + 8].strip()
+            if chunk:
+                values.append(int(chunk))
+    return values
+
+
 def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
     parm = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
@@ -43,6 +105,89 @@ def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     assert parm.parm_data["SOLVENT_POINTERS"] == [1, 1, 2]
     assert parm.parm_data["ATOMS_PER_MOLECULE"] == [len(parm.atoms)]
     assert len(copy.copy(parm).atoms) == len(parm.atoms)
+
+
+def test_merge_first_n_and_lipid_fragments_groups_split_popc(tmp_path: Path) -> None:
+    src = tmp_path / "full.prmtop"
+    out = tmp_path / "full_merged.prmtop"
+    _write_minimal_prmtop(
+        src,
+        atoms_per_molecule=[1, 1, 10, 5, 5, 46, 38, 50, 3],
+        residue_labels=["DUM", "DUM", "PRO", "LIG", "LIG", "PA", "PC", "OL", "WAT"],
+        residue_pointers=[1, 2, 3, 13, 18, 23, 69, 107, 157],
+        solvent_pointers=[9, 9, 9],
+    )
+
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        src.as_posix(),
+        5,
+        ["POPC"],
+        out.as_posix(),
+    )
+
+    assert _read_prmtop_int_flag(out, "ATOMS_PER_MOLECULE") == [22, 134, 3]
+    assert _read_prmtop_int_flag(out, "SOLVENT_POINTERS") == [9, 3, 3]
+
+
+def test_merge_first_n_and_lipid_fragments_leaves_grouped_popc_alone(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "full.prmtop"
+    out = tmp_path / "full_merged.prmtop"
+    _write_minimal_prmtop(
+        src,
+        atoms_per_molecule=[1, 1, 10, 5, 5, 134, 3],
+        residue_labels=["DUM", "DUM", "PRO", "LIG", "LIG", "PA", "PC", "OL", "WAT"],
+        residue_pointers=[1, 2, 3, 13, 18, 23, 69, 107, 157],
+        solvent_pointers=[9, 7, 7],
+    )
+
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        src.as_posix(),
+        5,
+        ["POPC"],
+        out.as_posix(),
+    )
+
+    assert _read_prmtop_int_flag(out, "ATOMS_PER_MOLECULE") == [22, 134, 3]
+    assert _read_prmtop_int_flag(out, "SOLVENT_POINTERS") == [9, 3, 3]
+
+
+def test_revised_resids_for_lipid_fragments_groups_split_popc() -> None:
+    records = [
+        ("ALA", "A", 10),
+        ("LIG", "L", 220),
+        ("PA", "X", 289),
+        ("PC", "X", 290),
+        ("OL", "X", 291),
+        ("PA", "X", 292),
+        ("PC", "X", 293),
+        ("OL", "X", 294),
+        ("WAT", "X", 295),
+    ]
+
+    assert revised_resids_for_lipid_fragments(records, ["POPC"]) == [
+        1,
+        2,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        5,
+    ]
+    assert revised_resids_for_lipid_fragments(records, ["PC", "PA", "OL"]) == [
+        1,
+        2,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        5,
+    ]
 
 
 def test_restore_reference_hydrogen_coordinates_repairs_existing_lipid_protons(

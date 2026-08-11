@@ -602,6 +602,75 @@ def test_build_restraints_z_allows_single_atom_ligand_anchor(tmp_path: Path) -> 
     assert disang_text.count("#Lig_TR") == 3
 
 
+def test_ion_guard_adds_two_lower_walls_per_bulk_ion_for_z(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "z00"
+    windows_dir.mkdir()
+    (windows_dir / "full.pdb").write_text(
+        "".join(
+            [
+                "HETATM    1  NA  SOD A   1       0.000   0.000   0.000  1.00  0.00          NA\n",
+                "HETATM    2  NA  SOD A   2      30.000   0.000   0.000  1.00  0.00          NA\n",
+                "HETATM    3  NA  SOD A   3       7.000   0.000   0.000  1.00  0.00          NA\n",
+                "HETATM    4  CL  CL  A   4      12.000   0.000   0.000  1.00  0.00          CL\n",
+                "END\n",
+            ]
+        )
+    )
+    disang = windows_dir / "disang.rest"
+    disang.write_text("# base restraints\n")
+
+    ctx = types.SimpleNamespace(
+        comp="z",
+        window_dir=windows_dir,
+        sim=types.SimpleNamespace(ion_guard="yes", cation="Na+", anion="Cl-"),
+    )
+
+    written = restraints._append_ion_guard_restraints(
+        ctx,
+        disang,
+        ligand_resnames=["SOD"],
+    )
+
+    text = disang.read_text()
+    assert written == 4
+    assert text.count("#Ion_Guard") == 4
+    assert "iat=3,1," in text
+    assert "iat=3,2," in text
+    assert "iat=4,1," in text
+    assert "iat=4,2," in text
+    assert "r2=   15.0000" in text
+    assert "rk2= 10.0000000" in text
+    assert "rk3=  0.0000000" in text
+
+
+def test_ion_guard_can_be_disabled(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "z00"
+    windows_dir.mkdir()
+    (windows_dir / "full.pdb").write_text(
+        "HETATM    1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    2  C1  LIG A   2      30.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    3  NA  NA  A   3       7.000   0.000   0.000  1.00  0.00          NA\n"
+        "END\n"
+    )
+    disang = windows_dir / "disang.rest"
+    disang.write_text("# base restraints\n")
+
+    ctx = types.SimpleNamespace(
+        comp="z",
+        window_dir=windows_dir,
+        sim=types.SimpleNamespace(ion_guard="no", cation="Na+", anion="Cl-"),
+    )
+
+    written = restraints._append_ion_guard_restraints(
+        ctx,
+        disang,
+        ligand_resnames=["LIG"],
+    )
+
+    assert written == 0
+    assert "#Ion_Guard" not in disang.read_text()
+
+
 def test_build_restraints_l_allows_monoatomic_ion_without_dihedrals(
     tmp_path: Path,
 ) -> None:
@@ -976,6 +1045,59 @@ def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None
     assert disang_text.count("&rst") == 1
     assert "igr1=1,0" in disang_text
     assert "igr1=2,0" not in disang_text
+
+
+def test_ion_guard_uses_rbfe_scmask_solvent_and_site_atoms(tmp_path: Path) -> None:
+    work_dir = tmp_path
+    windows_dir = work_dir / "x00"
+    windows_dir.mkdir()
+    equil_dir = work_dir / "x-1"
+    equil_dir.mkdir()
+    (equil_dir / "scmask.json").write_text(
+        json.dumps(
+            {
+                "scmk1_cc_solvent_indices": [10],
+                "scmk1_cc_site_indices": [11],
+                "scmk2_cc_solvent_indices": [20],
+                "scmk2_cc_site_indices": [21],
+            }
+        )
+    )
+    (windows_dir / "full.pdb").write_text(
+        "".join(
+            [
+                f"ATOM  {idx:5d}  CA  ALA A{idx:4d}    {float(idx):8.3f}{0.0:8.3f}{0.0:8.3f}  1.00  0.00           C\n"
+                for idx in range(1, 10)
+            ]
+            + [
+                "HETATM   10  C1  REF A  10      10.000   0.000   0.000  1.00  0.00           C\n",
+                "HETATM   11  C1  REF A  11      11.000   0.000   0.000  1.00  0.00           C\n",
+                "HETATM   12  NA  NA  A  12      12.000   0.000   0.000  1.00  0.00          NA\n",
+                "END\n",
+            ]
+        )
+    )
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+
+    ctx = types.SimpleNamespace(
+        comp="x",
+        window_dir=windows_dir,
+        residue_name="REF",
+        sim=types.SimpleNamespace(ion_guard="yes", cation="Na+", anion="Cl-"),
+    )
+
+    written = restraints._append_ion_guard_restraints(
+        ctx,
+        disang,
+        ligand_resnames=["REF", "ALT"],
+    )
+
+    text = disang.read_text()
+    assert written == 2
+    assert text.count("#Ion_Guard") == 2
+    assert "iat=12,10," in text
+    assert "iat=12,11," in text
 
 
 def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:

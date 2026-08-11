@@ -22,6 +22,9 @@ from batter._internal.ops.helpers import (
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
+ION_GUARD_DISTANCE = 15.0
+ION_GUARD_FORCE = 10.0
+ION_GUARD_TAG = "Ion_Guard"
 COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
 ABFE_DIFF_POSE_RADIUS = 8.0
 ABFE_DIFF_POSE_MAX_ANCHORS = 8
@@ -699,7 +702,7 @@ def _validate_ligand_anchor_set(
         return
     if 0 < anchor_count < 3 and 0 < int(ligand_heavy_count) < 3:
         labels = [str(mask) for mask in (L1, L2, L3) if mask]
-        logger.warning(
+        logger.debug(
             "[restraints:{}] ligand has only {} heavy atom(s); using reduced "
             "ligand anchor set {} and omitting unavailable Boresch terms.",
             comp,
@@ -975,6 +978,245 @@ def _append_colvar_rst_blocks(cv_file: Path, disang_file: Path) -> None:
         handle.write("# Mirrored from cv.in\n")
         for rst_block in rst_blocks:
             handle.write(rst_block)
+
+
+def _ion_guard_is_enabled(ctx: BuildContext) -> bool:
+    value = getattr(ctx.sim, "ion_guard", "yes")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() not in {
+        "no",
+        "false",
+        "0",
+        "off",
+        "disable",
+        "disabled",
+    }
+
+
+def _ion_token_aliases(value: object) -> set[str]:
+    token = re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    if not token:
+        return set()
+    aliases = {token}
+    aliases.add(re.sub(r"\d+$", "", token))
+    return {alias for alias in aliases if alias}
+
+
+def _first_int_from_keys(data: dict, keys: Sequence[str]) -> int | None:
+    for key in keys:
+        values = data.get(key) or []
+        if not values:
+            continue
+        try:
+            value = int(values[0])
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _ion_guard_reference_indices_from_scmask(ctx: BuildContext) -> list[int]:
+    """Return RBFE solvent/site ligand reference atoms from scmask.json when present."""
+    if str(getattr(ctx, "comp", "")).lower() != "x":
+        return []
+
+    scmask_path = ctx.window_dir.parent / "x-1" / "scmask.json"
+    if not scmask_path.exists():
+        return []
+
+    try:
+        data = json.loads(scmask_path.read_text())
+    except Exception as exc:
+        logger.warning(f"[restraints:x] ion_guard could not read {scmask_path}: {exc}")
+        return []
+
+    refs: list[int] = []
+    for idx in (
+        _first_int_from_keys(
+            data,
+            ("scmk1_cc_solvent_indices", "scmk2_cc_solvent_indices"),
+        ),
+        _first_int_from_keys(
+            data,
+            ("scmk1_cc_site_indices", "scmk2_cc_site_indices"),
+        ),
+    ):
+        if idx is not None and idx not in refs:
+            refs.append(idx)
+    return refs
+
+
+def _first_ligand_heavy_atom_indices(
+    universe: mda.Universe,
+    ligand_resnames: Sequence[str],
+    *,
+    limit: int = 2,
+) -> list[int]:
+    wanted = {
+        str(resname).strip()
+        for resname in ligand_resnames
+        if str(resname).strip()
+    }
+    if not wanted:
+        return []
+
+    refs: list[int] = []
+    for residue in universe.residues:
+        if str(residue.resname).strip() not in wanted:
+            continue
+        heavy_atoms = [atom for atom in residue.atoms if not _is_hydrogen_atom(atom)]
+        if not heavy_atoms:
+            continue
+        idx = int(heavy_atoms[0].ix) + 1
+        if idx not in refs:
+            refs.append(idx)
+        if len(refs) >= limit:
+            break
+    return refs
+
+
+def _residue_ix_for_atom_indices(
+    universe: mda.Universe,
+    atom_indices: Sequence[int],
+) -> set[int]:
+    residue_ix: set[int] = set()
+    n_atoms = int(universe.atoms.n_atoms)
+    for idx in atom_indices:
+        if idx < 1 or idx > n_atoms:
+            continue
+        residue_ix.add(int(universe.atoms[idx - 1].residue.ix))
+    return residue_ix
+
+
+def _ion_guard_ion_indices(
+    universe: mda.Universe,
+    ctx: BuildContext,
+    *,
+    exclude_atom_indices: set[int],
+    exclude_residue_ix: set[int],
+) -> list[int]:
+    ion_aliases: set[str] = set()
+    ion_aliases.update(_ion_token_aliases(getattr(ctx.sim, "cation", "Na+")))
+    ion_aliases.update(_ion_token_aliases(getattr(ctx.sim, "anion", "Cl-")))
+    if not ion_aliases:
+        return []
+
+    ion_indices: list[int] = []
+    for atom in universe.atoms:
+        idx = int(atom.ix) + 1
+        if idx in exclude_atom_indices:
+            continue
+        if int(atom.residue.ix) in exclude_residue_ix:
+            continue
+
+        res_aliases = _ion_token_aliases(getattr(atom, "resname", ""))
+        element_aliases = _ion_token_aliases(getattr(atom, "element", ""))
+        name_aliases = _ion_token_aliases(getattr(atom, "name", ""))
+        residue_is_single_atom = len(atom.residue.atoms) == 1
+
+        if (
+            res_aliases & ion_aliases
+            or element_aliases & ion_aliases
+            or (residue_is_single_atom and name_aliases & ion_aliases)
+        ):
+            ion_indices.append(idx)
+    return ion_indices
+
+
+def _append_ion_guard_restraints(
+    ctx: BuildContext,
+    disang: Path,
+    *,
+    ligand_resnames: Sequence[str],
+) -> int:
+    """Append FE-only ion lower-wall restraints to ``disang.rest``."""
+    comp = str(getattr(ctx, "comp", "")).lower()
+    if comp not in {"z", "x"} or not _ion_guard_is_enabled(ctx):
+        return 0
+
+    full_pdb = ctx.window_dir / "full.pdb"
+    if not full_pdb.exists():
+        logger.debug(f"[restraints:{comp}] ion_guard skipped; missing {full_pdb}")
+        return 0
+
+    try:
+        universe = mda.Universe(full_pdb.as_posix())
+    except Exception as exc:
+        logger.warning(
+            f"[restraints:{comp}] ion_guard could not parse {full_pdb}: {exc}"
+        )
+        return 0
+
+    reference_indices = _ion_guard_reference_indices_from_scmask(ctx)
+    if len(reference_indices) < 2:
+        for idx in _first_ligand_heavy_atom_indices(universe, ligand_resnames):
+            if idx not in reference_indices:
+                reference_indices.append(idx)
+            if len(reference_indices) >= 2:
+                break
+    reference_indices = reference_indices[:2]
+    if not reference_indices:
+        logger.warning(
+            f"[restraints:{comp}] ion_guard enabled but no ligand reference atoms "
+            f"were found in {full_pdb}"
+        )
+        return 0
+
+    exclude_atoms = set(reference_indices)
+    exclude_residues = _residue_ix_for_atom_indices(universe, reference_indices)
+    ion_indices = _ion_guard_ion_indices(
+        universe,
+        ctx,
+        exclude_atom_indices=exclude_atoms,
+        exclude_residue_ix=exclude_residues,
+    )
+    if not ion_indices:
+        logger.debug(
+            f"[restraints:{comp}] ion_guard found no configured bulk ions in {full_pdb}"
+        )
+        return 0
+
+    existing = disang.read_text() if disang.exists() else ""
+    written = 0
+    with disang.open("a") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        if existing.strip():
+            handle.write("\n")
+        handle.write(
+            "# Ion guard lower-wall restraints: each configured ion to ligand "
+            "solvent/site reference atoms\n"
+        )
+        for ion_idx in ion_indices:
+            for ref_idx in reference_indices:
+                if ion_idx == ref_idx:
+                    continue
+                iat = f"{ion_idx},{ref_idx},"
+                handle.write(f"&rst iat={iat:<23s} ")
+                handle.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (
+                        0.0,
+                        ION_GUARD_DISTANCE,
+                        999.0,
+                        999.0,
+                        ION_GUARD_FORCE,
+                        0.0,
+                        ION_GUARD_TAG,
+                    )
+                )
+                written += 1
+
+    logger.debug(
+        f"[restraints:{comp}] ion_guard wrote {written} restraints for "
+        f"{len(ion_indices)} ions and {len(reference_indices)} ligand reference atoms"
+    )
+    return written
+
 
 def _maybe_append_extra_conf_blocks(ctx: BuildContext, work_dir: Path, cv_file: Path, *, comp: Optional[str]=None) -> None:
     """
@@ -1341,6 +1583,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_ion_guard_restraints(ctx, disang, ligand_resnames=[mol])
     _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
     rest_in = windows_dir / "restraints.in"
@@ -2891,6 +3134,11 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     septop_exprs: list[str] = []
     if septop:
         septop_exprs = _append_x_septop_boresch_restraints(ctx, disang)
+    _append_ion_guard_restraints(
+        ctx,
+        disang,
+        ligand_resnames=[name for name in (mol_ref, mol_alt) if name],
+    )
     _append_colvar_rst_blocks(cv_in, disang)
 
     # analysis driver

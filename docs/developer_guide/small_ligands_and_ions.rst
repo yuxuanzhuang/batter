@@ -9,6 +9,8 @@ The feature spans three layers:
 * parameterisation detects charged monoatomic ions and writes AMBER artifacts;
 * build/restraint preparation permits partial ligand anchors only when the ligand
   is physically too small for a full frame;
+* FE restraint preparation can add ion guard lower walls so bulk ions do not
+  approach the bound or solvent ligand reference atoms during alchemical windows;
 * analysis applies an analytical reduced external-restraint correction when
   ``disang.rest`` contains three or five ligand translation/rotation terms.
 
@@ -75,6 +77,37 @@ normal ligand it emits six.
 ``anchors.txt`` parsing via ``_partial_ligand_anchors_are_expected``. This keeps
 ABFE preparation from failing just because VMD can only find one or two ligand
 anchors for a genuinely small ligand.
+
+Ion guard path
+--------------
+
+``fe_sim.ion_guard`` defaults to ``"yes"`` and is resolved onto
+``SimulationConfig.ion_guard``. The FE restraint writers for ABFE ``z`` and RBFE
+``x`` components call ``_append_ion_guard_restraints`` after the normal
+``disang.rest`` terms are written.
+
+The helper reads ``full.pdb`` because the guarded ions are part of the full FE
+topology. For ABFE it uses the first heavy atom in the first two ligand residues
+as the bound and solvent references. For RBFE and RBFE-SEPTOP it first checks
+``x-1/scmask.json`` and uses the explicit common-core solvent/site indices when
+available, then falls back to ligand residue order. Ligand reference residues are
+excluded from the ion list so a monoatomic ion ligand is not restrained against
+itself.
+
+Each configured ``cation``/``anion`` atom receives lower-wall distance restraints
+tagged ``#Ion_Guard``:
+
+.. code-block:: text
+
+   r1 = 0.0
+   r2 = 15.0
+   r3 = 999.0
+   r4 = 999.0
+   rk2 = 10.0
+   rk3 = 0.0
+
+The tag is intentionally distinct from ``#Lig_TR`` so reduced/Boresch analytical
+correction detection ignores these guard terms.
 
 Analysis path
 -------------
@@ -147,4 +180,6 @@ For real-workflow smoke tests, inspect:
 * ``equil/anchors.txt`` and ``equil/anchors.json`` for partial ligand anchors;
 * ``fe/<component>/<component>-1/disang.rest`` for three, five, or six
   ``#Lig_TR`` terms;
+* ``fe/z/*/disang.rest`` or ``fe/x/*/disang.rest`` for ``#Ion_Guard`` terms when
+  bulk ions are present and ``fe_sim.ion_guard`` is enabled;
 * ``fe/Results/Results.dat`` for ``Reduced_TR`` or ``Boresch`` labels.

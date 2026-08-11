@@ -27,7 +27,8 @@ from batter._internal.ops.helpers import (
     PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     run_parmed_hmr_if_enabled,
-    merge_first_n_molecules_in_prmtop,
+    merge_first_n_and_lipid_fragments_in_prmtop,
+    revised_resids_for_lipid_fragments,
     save_anchors,
 )
 from batter._internal.ops.ring_repair import (
@@ -2382,9 +2383,10 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
         if hmr_enabled
         else str(window_dir / "full.prmtop")
     )
-    merge_first_n_molecules_in_prmtop(
+    merge_first_n_and_lipid_fragments_in_prmtop(
         full_prmtop,
         6,
+        getattr(sim, "lipid_mol", []),
         str(window_dir / "full_merged.prmtop"),
     )
 
@@ -2662,16 +2664,13 @@ def create_box(ctx: BuildContext) -> None:
     renum_df["new_resname"] = renum_df["new_resname"].replace(
         ["HIS", "HIE", "HIP", "HID"], "HIS"
     )
-    revised_resids = []
-    resid_counter = 1
-    prev_resid = 0
-    for _, row in renum_df.iterrows():
-        if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
-            revised_resids.append(resid_counter)
-            resid_counter += 1
-        else:
-            revised_resids.append(resid_counter - 1)
-        prev_resid = row["old_resid"]
+    revised_resids = revised_resids_for_lipid_fragments(
+        (
+            (row["old_resname"], row["old_chain"], row["old_resid"])
+            for _, row in renum_df.iterrows()
+        ),
+        lipid_mol,
+    )
     disulfide_pairs = _map_disulfide_pairs_to_resids(
         _read_disulfide_pairs(window_dir / "build_amber_sslink"), revised_resids
     )
@@ -3275,8 +3274,11 @@ def create_box(ctx: BuildContext) -> None:
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
     # merge DUM + DUM + PROT plus all ligand copies before applying AMBER masks.
     merge_molecule_count = 6 if comp == "d" and dec_method == "sdr" else 5
-    merge_first_n_molecules_in_prmtop(
-        full_prmtop, merge_molecule_count, str(window_dir / "full_merged.prmtop")
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        full_prmtop,
+        merge_molecule_count,
+        lipid_mol,
+        str(window_dir / "full_merged.prmtop"),
     )
     return
 
@@ -3438,7 +3440,12 @@ def create_box_x(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        full_prmtop,
+        5,
+        lipid_mol,
+        str(window_dir / "full_merged.prmtop"),
+    )
 
     # get mapping file
 

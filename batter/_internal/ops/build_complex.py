@@ -34,6 +34,7 @@ from batter._internal.ops.helpers import (
     get_ligand_candidates,
     select_ions_away_from_complex,
     Anchors,
+    revised_resids_for_lipid_fragments,
     save_anchors,
 )
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
@@ -1873,7 +1874,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             return False
         if lig_heavy_count >= 3:
             return False
-        logger.warning(
+        logger.debug(
             "Ligand {} has only {} non-hydrogen atom(s); using reduced ligand "
             "anchor set {} and omitting unavailable Boresch angle/dihedral terms.",
             ligand,
@@ -2110,19 +2111,14 @@ def build_complex_z(ctx) -> bool:
         # also skip ANC, which is a anchored dummy atom for rmsf restraint
         non_water_ag = u.select_atoms("not resname WAT Na+ Cl- K+ ANC")
         # fix lipid resids
-        revised_resids = []
-        resid_counter = 1
-        prev_resid = 0
-        for i, row in renum.iterrows():
-            # skip water and ions as they will not be present later
-            if row["old_resname"] in ["WAT", "Na+", "Cl-", "K+"]:
-                continue
-            if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
-                revised_resids.append(resid_counter)
-                resid_counter += 1
-            else:
-                revised_resids.append(resid_counter - 1)
-            prev_resid = row["old_resid"]
+        revised_resids = revised_resids_for_lipid_fragments(
+            (
+                (row["old_resname"], row["old_chain"], row["old_resid"])
+                for _, row in renum.iterrows()
+                if row["old_resname"] not in ["WAT", "Na+", "Cl-", "K+"]
+            ),
+            lipid_mol,
+        )
 
         revised_resids = np.array(revised_resids)
         total_residues = non_water_ag.residues.n_residues
@@ -2403,7 +2399,7 @@ def build_complex_z(ctx) -> bool:
             return False
         if lig_heavy_count >= 3:
             return False
-        logger.warning(
+        logger.debug(
             "Ligand {} has only {} non-hydrogen atom(s); using reduced FE ligand "
             "anchor set {} and omitting unavailable Boresch angle/dihedral terms.",
             ligand,

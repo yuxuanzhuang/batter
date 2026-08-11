@@ -292,6 +292,7 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
+            "ion_guard": coerce_yes_no(_fe_attr("ion_guard", lambda: "yes")),
             "abfe_diff_pose_restraint_type": _fe_attr(
                 "abfe_diff_pose_restraint_type", lambda: "local_frame"
             ),
@@ -477,6 +478,13 @@ class SimulationConfig(BaseModel):
     )
     rec_com_force: float = Field(0.0, description="Protein COM spring")
     lig_com_force: float = Field(0.0, description="Ligand COM spring")
+    ion_guard: Literal["yes", "no"] = Field(
+        "yes",
+        description=(
+            "FE-only ion guard restraints that keep configured bulk ions at least "
+            "15 Å from the bound and solvent ligand reference atoms."
+        ),
+    )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
         "local_frame",
         description="ABFE_diff bound-dummy pose restraint style.",
@@ -638,6 +646,7 @@ class SimulationConfig(BaseModel):
         "rocklin_correction",
         "enable_mcwat",
         "remd",
+        "ion_guard",
         "abfe_diff_pose_internal_restraints",
         mode="before",
     )

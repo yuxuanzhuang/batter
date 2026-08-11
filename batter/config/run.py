@@ -500,6 +500,13 @@ class FESimArgs(BaseModel):
         10.0,
         description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
     )
+    ion_guard: Literal["yes", "no"] = Field(
+        "yes",
+        description=(
+            "Add FE-stage ion guard flat-bottom restraints that keep configured "
+            "bulk ions at least 15 Å from the bound and solvent ligand reference atoms."
+        ),
+    )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
         "local_frame",
         description=(
@@ -597,6 +604,7 @@ class FESimArgs(BaseModel):
         "rocklin_correction",
         "hmr",
         "enable_mcwat",
+        "ion_guard",
         "abfe_diff_pose_internal_restraints",
         mode="before",
     )

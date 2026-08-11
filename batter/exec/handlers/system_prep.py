@@ -807,7 +807,7 @@ class _SystemPrepRunner:
             u_sys, system_aligned_path
         )
         if normalized_prot_residues or normalized_sys_residues:
-            logger.warning(
+            logger.debug(
                 "Detected mixed per-atom protein segid assignments; normalized segids "
                 f"for {normalized_prot_residues} residue(s) in the aligned protein and "
                 f"{normalized_sys_residues} residue(s) in the aligned system before grouping."

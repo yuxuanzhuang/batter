@@ -188,6 +188,17 @@ clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane sy
 the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
 bulk solvent above the membrane even if the YAML specifies a smaller buffer.
 
+FE ion guard
+------------
+
+``fe_sim.ion_guard`` defaults to ``"yes"`` for ABFE, RBFE, and RBFE-SEPTOP FE
+windows. When enabled, BATTER appends ``#Ion_Guard`` lower-wall distance
+restraints to ``disang.rest`` for ``z`` and ``x`` components. Each configured
+bulk ion (from ``create.cation`` / ``create.anion``) is restrained from coming
+within 15 Å of the ligand reference atom in solvent and the corresponding
+reference atom in the binding site. Set ``fe_sim.ion_guard: no`` to disable this
+FE-stage guard; equilibration restraints are unchanged.
+
 Equilibration options
 ---------------------
 
