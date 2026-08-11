@@ -33,7 +33,11 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from batter.utils import run_with_log, cpptraj
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
 from batter.analysis.utils import exclude_outliers
+
+MIN_BOOTSTRAP_SAMPLES_PER_WINDOW = 10
+MAX_MBAR_BOOTSTRAPS = 200
 
 
 COMPONENTS_DICT = {
@@ -255,6 +259,14 @@ class FEAnalysisBase(ABC):
             "fe_timeseries_backward": fets_back_list,
             "convergence": _convergence_to_json(self.convergence),
         }
+        for key in (
+            "requested_n_bootstraps",
+            "effective_n_bootstraps",
+            "bootstrap_sample_counts",
+            "bootstrap_warning",
+        ):
+            if key in self.results:
+                payload[key] = self.results[key]
         with open(filename, "w") as f:
             json.dump(_json_safe(payload), f, indent=2)
 
@@ -298,7 +310,7 @@ class MBARAnalysis(FEAnalysisBase):
         energy_unit: str = "kcal/mol",
         analysis_start_step: int = 0,
         detect_equil: bool = True,
-        n_bootstraps: int = 0,
+        n_bootstraps: int = DEFAULT_N_BOOTSTRAPS,
         n_jobs: int = 6,
         load: bool = False,
         dt: float = 0.0,
@@ -337,6 +349,48 @@ class MBARAnalysis(FEAnalysisBase):
         self.n_jobs = int(n_jobs)
         self.load = bool(load)
         self._data_initialized = False
+
+    def _effective_n_bootstraps(self) -> int:
+        """Return a bootstrap count that is unlikely to stall sparse MBAR fits."""
+        requested = max(0, int(self.n_bootstraps))
+        counts = [int(len(df)) for df in getattr(self, "_data_list", [])]
+        self.results["requested_n_bootstraps"] = requested
+        self.results["bootstrap_sample_counts"] = counts
+
+        if requested == 0:
+            self.results["effective_n_bootstraps"] = 0
+            return 0
+
+        warning: str | None = None
+        if not counts or min(counts) <= 0:
+            effective = 0
+            warning = (
+                f"Disabled MBAR bootstrapping for {self.component}: no samples were "
+                "available in at least one window."
+            )
+        else:
+            min_samples = min(counts)
+            if min_samples < MIN_BOOTSTRAP_SAMPLES_PER_WINDOW:
+                effective = 0
+                warning = (
+                    f"Disabled MBAR bootstrapping for {self.component}: only "
+                    f"{min_samples} post-filtered samples in the smallest window "
+                    f"(minimum {MIN_BOOTSTRAP_SAMPLES_PER_WINDOW})."
+                )
+            else:
+                effective = min(requested, min_samples, MAX_MBAR_BOOTSTRAPS)
+                if effective < requested:
+                    warning = (
+                        f"Reduced MBAR bootstraps for {self.component} from "
+                        f"{requested} to {effective} based on post-filtered sample "
+                        f"counts {counts} and maximum {MAX_MBAR_BOOTSTRAPS}."
+                    )
+
+        if warning:
+            self.results["bootstrap_warning"] = warning
+            logger.warning(warning)
+        self.results["effective_n_bootstraps"] = int(effective)
+        return int(effective)
 
     # public props used after get_mbar_data()
     @property
@@ -424,7 +478,8 @@ class MBARAnalysis(FEAnalysisBase):
         if not self._data_initialized:
             self.get_mbar_data()
 
-        mbar = MBAR(n_bootstraps=self.n_bootstraps)
+        effective_n_bootstraps = self._effective_n_bootstraps()
+        mbar = MBAR(n_bootstraps=effective_n_bootstraps)
         mbar.fit(self.u_df)
         self._mbar = mbar
 
@@ -1393,7 +1448,7 @@ def analyze_lig_task(
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
-    n_bootstraps: int = 0,
+    n_bootstraps: int = DEFAULT_N_BOOTSTRAPS,
     dt: float = 0.0,
     ntwx: int = 0,
 ):

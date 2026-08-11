@@ -10,6 +10,7 @@ from loguru import logger
 
 from batter._internal.ops.cleanup import cleanup_fe_after_analysis
 from batter.analysis.analysis import analyze_lig_task
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
@@ -93,7 +94,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     n_workers: int = int(n_workers_override) if n_workers_override is not None else 4
     rest: Tuple[str, ...] = tuple()
     sim_start_step: Optional[int] = None
-    sim_n_bootstraps: int = 0
+    sim_n_bootstraps: int = DEFAULT_N_BOOTSTRAPS
     sim_dt: float = 0.0
     sim_ntwx: int = 0
 

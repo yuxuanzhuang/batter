@@ -134,6 +134,88 @@ def test_mbar_convergence_fallback_repeats_final_estimate(tmp_path: Path) -> Non
     ]
 
 
+def _bootstrap_guard_analysis(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    n_bootstraps: int,
+    n_samples: int,
+) -> tuple[analysis_mod.MBARAnalysis, dict[str, int]]:
+    (tmp_path / "z").mkdir(exist_ok=True)
+    seen: dict[str, int] = {}
+
+    class FakeMBAR:
+        def __init__(self, n_bootstraps=0):
+            seen["n_bootstraps"] = n_bootstraps
+
+        def fit(self, _u_df):
+            self.delta_f_ = pd.DataFrame([[0.0, 1.0], [-1.0, 0.0]])
+            self.d_delta_f_ = pd.DataFrame([[0.0, 0.2], [0.2, 0.0]])
+            self.overlap_matrix = np.eye(2)
+            return self
+
+    monkeypatch.setattr(analysis_mod, "MBAR", FakeMBAR)
+    monkeypatch.setattr(analysis_mod.pickle, "dump", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        analysis_mod,
+        "forward_backward_convergence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("skip diagnostics")),
+    )
+
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=False,
+        n_bootstraps=n_bootstraps,
+        dt=0.004,
+    )
+    index = pd.MultiIndex.from_arrays(
+        [np.arange(n_samples, dtype=float), np.zeros(n_samples)],
+        names=["time", "lambdas"],
+    )
+    df0 = pd.DataFrame({0.0: np.zeros(n_samples), 1.0: np.ones(n_samples)}, index=index)
+    df1 = pd.DataFrame({0.0: np.ones(n_samples), 1.0: np.zeros(n_samples)}, index=index)
+    ana._data_list = [df0, df1]
+    ana._u_df = pd.concat([df0, df1])
+    ana._data_initialized = True
+
+    ana.run_analysis()
+    return ana, seen
+
+
+def test_mbar_bootstrap_guard_disables_sparse_data(tmp_path: Path, monkeypatch) -> None:
+    ana, seen = _bootstrap_guard_analysis(
+        tmp_path,
+        monkeypatch,
+        n_bootstraps=64,
+        n_samples=6,
+    )
+
+    assert seen["n_bootstraps"] == 0
+    assert ana.results["requested_n_bootstraps"] == 64
+    assert ana.results["effective_n_bootstraps"] == 0
+    assert ana.results["bootstrap_sample_counts"] == [6, 6]
+    assert "Disabled MBAR bootstrapping" in ana.results["bootstrap_warning"]
+
+
+def test_mbar_bootstrap_guard_caps_large_request_by_sample_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ana, seen = _bootstrap_guard_analysis(
+        tmp_path,
+        monkeypatch,
+        n_bootstraps=64,
+        n_samples=12,
+    )
+
+    assert seen["n_bootstraps"] == 12
+    assert ana.results["requested_n_bootstraps"] == 64
+    assert ana.results["effective_n_bootstraps"] == 12
+    assert "Reduced MBAR bootstraps" in ana.results["bootstrap_warning"]
+
+
 def test_boresch_analysis_selects_ligand_specific_tag(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -43,6 +43,7 @@ from loguru import logger
 from tqdm import tqdm
 
 from ._version import __version__  # semantic version string
+from .config.defaults import DEFAULT_N_BOOTSTRAPS
 from .config.simulation import SimulationConfig
 from .config.run import RunConfig
 from .config import (
@@ -243,7 +244,8 @@ def run_analysis_from_execution(
     analysis_start_step : int, optional
         First production step to include in analysis (per window); overrides config.
     n_bootstraps : int, optional
-        Number of MBAR bootstrap resamples; overrides config.
+        Requested number of MBAR bootstrap resamples; overrides config. Sparse
+        component data may reduce or disable the effective bootstrap count.
     overwrite: bool, optional
         When ``True`` (default), overwrite any existing analysis results for the run_id.
         When ``False``, skip ligands that already have analysis outputs.
@@ -407,7 +409,10 @@ def run_analysis_from_execution(
         payload_data["n_bootstraps"] = n_bootstraps_val
         logger.info(f"MBAR bootstrap resamples set to: {n_bootstraps_val}")
     else:
-        n_bootstraps_val = int(getattr(sim_cfg, "n_bootstraps", 0) or 0)
+        n_bootstraps_raw = getattr(sim_cfg, "n_bootstraps", DEFAULT_N_BOOTSTRAPS)
+        n_bootstraps_val = (
+            DEFAULT_N_BOOTSTRAPS if n_bootstraps_raw is None else int(n_bootstraps_raw)
+        )
         payload_data["n_bootstraps"] = n_bootstraps_val
         logger.info(f"MBAR bootstrap resamples loaded: {n_bootstraps_val}")
 

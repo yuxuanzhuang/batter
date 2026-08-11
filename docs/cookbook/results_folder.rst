@@ -40,12 +40,14 @@ such as:
 * ``total_dG`` and ``total_se``
 * ``canonical_smiles``, ``original_name``, and ``original_path`` when available
 * ``protocol``
-* ``analysis_start_step`` and ``n_bootstraps``
+* ``analysis_start_step`` and requested ``n_bootstraps``
 * ``status`` and ``failure_reason``
 * ``created_at``
 
 When BATTER saves the same ``(run_id, ligand, analysis_start_step, n_bootstraps)``
 combination again, the row is replaced rather than duplicated.
+When sparse-data guards reduce or disable bootstrapping for a component, the
+effective count is written in that component's ``*_results.json`` artifact.
 
 Successful Record Directory
 ---------------------------

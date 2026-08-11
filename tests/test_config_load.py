@@ -848,7 +848,7 @@ def test_n_bootstraps_default(tmp_path: Path) -> None:
         n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.n_bootstraps == 0
+    assert cfg.n_bootstraps == 10
 
 
 def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:

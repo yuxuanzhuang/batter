@@ -91,7 +91,8 @@ class FERecord(BaseModel):
     analysis_start_step : int, optional
         First production step included in analysis.
     n_bootstraps : int, optional
-        Number of MBAR bootstrap resamples used during analysis.
+        Requested number of MBAR bootstrap resamples. Component result JSON files
+        record the effective count if sparse-data guards reduce or disable it.
     include_in_analysis : bool
         Whether downstream aggregate analyses, such as Cinnabar export, should use
         this record.

@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.remd import RemdArgs
 from batter.config.utils import (
@@ -581,7 +582,7 @@ class FESimArgs(BaseModel):
         description="Only analyze FE production steps after this step (per window).",
     )
     n_bootstraps: int = Field(
-        0,
+        DEFAULT_N_BOOTSTRAPS,
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )

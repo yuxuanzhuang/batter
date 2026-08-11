@@ -14,6 +14,7 @@ import re
 import os
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
 from batter.config.utils import coerce_yes_no
 from batter.config.remd import RemdArgs
 
@@ -207,7 +208,7 @@ class SimulationConfig(BaseModel):
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
 
-        n_bootstraps_val = 0
+        n_bootstraps_val = DEFAULT_N_BOOTSTRAPS
         if hasattr(fe, "n_bootstraps"):
             n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
         elif isinstance(fe, Mapping) and "n_bootstraps" in fe:
@@ -447,7 +448,7 @@ class SimulationConfig(BaseModel):
         description="Analyze only steps after this (per FE window).",
     )
     n_bootstraps: int = Field(
-        0,
+        DEFAULT_N_BOOTSTRAPS,
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
