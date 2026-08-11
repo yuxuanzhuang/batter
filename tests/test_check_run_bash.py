@@ -372,6 +372,125 @@ def test_check_sim_failure_rejects_gpu_box_change_without_md_restart(
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.out"))
 
 
+def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
+    _write_ascii_restart(tmp_path / "md-previous.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        "|  Final Performance Info:\n"
+        "|  Total wall time: 1 seconds\n"
+    )
+    (tmp_path / "md-01.nc").write_text("previous trajectory\n")
+    (tmp_path / "cmass-01.txt").write_text("previous cmass\n")
+    (tmp_path / "md-02.out").write_text(
+        " NSTEP =    45000   TIME(PS) =      90.000  TEMP(K) =      NaN\n"
+        " Etot   =            NaN  EKtot   =            NaN\n"
+    )
+    (tmp_path / "md-02.nc").write_text("failed trajectory\n")
+    (tmp_path / "cmass-02.txt").write_text("failed cmass\n")
+    (tmp_path / "run.log").write_text("segmentation fault\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=5 "
+        "check_sim_failure 'MD segment 2' run.log md-current.rst7 '' 5 "
+        "md-02.out md-02.nc cmass-02.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Command exited with status 255" in result.stdout
+    assert "Archiving previous MD segment 1 because MD segment 2 failed" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_5"))
+    assert len(archive_dirs) == 1
+    archive_dir = archive_dirs[0]
+    for name in (
+        "run.log",
+        "md-current.rst7",
+        "md-previous.rst7",
+        "md-01.out",
+        "md-01.nc",
+        "cmass-01.txt",
+        "md-02.out",
+        "md-02.nc",
+        "cmass-02.txt",
+    ):
+        assert not (tmp_path / name).exists(), name
+        assert (archive_dir / name).exists(), name
+    assert "dt=0.001000" in (tmp_path / "mdin-template").read_text()
+
+
+def test_check_sim_failure_archives_all_prior_md_segments_without_segment_restarts(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
+    _write_ascii_restart(tmp_path / "md-previous.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    for idx in (1, 2):
+        (tmp_path / f"md-{idx:02d}.out").write_text(
+            "CONTROL DATA FOR THE RUN\n"
+            "|  Final Performance Info:\n"
+            "|  Total wall time: 1 seconds\n"
+        )
+        (tmp_path / f"md-{idx:02d}.nc").write_text(f"trajectory {idx}\n")
+        (tmp_path / f"cmass-{idx:02d}.txt").write_text(f"cmass {idx}\n")
+    (tmp_path / "md-03.out").write_text(
+        " NSTEP =    45000   TIME(PS) =      90.000  TEMP(K) =      NaN\n"
+        " Etot   =            NaN  EKtot   =            NaN\n"
+    )
+    (tmp_path / "md-03.nc").write_text("failed trajectory\n")
+    (tmp_path / "cmass-03.txt").write_text("failed cmass\n")
+    (tmp_path / "run.log").write_text("segmentation fault\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=5 "
+        "check_sim_failure 'MD segment 3' run.log md-current.rst7 '' 5 "
+        "md-03.out md-03.nc cmass-03.txt"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Archiving previous MD segments 1-2 because MD segment 3 failed" in result.stdout
+    archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_5"))
+    assert len(archive_dirs) == 1
+    archive_dir = archive_dirs[0]
+    for name in (
+        "md-previous.rst7",
+        "md-01.out",
+        "md-01.nc",
+        "cmass-01.txt",
+        "md-02.out",
+        "md-02.nc",
+        "cmass-02.txt",
+        "md-03.out",
+        "md-03.nc",
+        "cmass-03.txt",
+    ):
+        assert not (tmp_path / name).exists(), name
+        assert (archive_dir / name).exists(), name
+
+
 def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
     tmp_path: Path,
 ) -> None:

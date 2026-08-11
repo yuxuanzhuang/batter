@@ -352,6 +352,38 @@ cmass_file_for_md_stem() {
     fi
 }
 
+md_segment_index_from_stage() {
+    local stage=$1
+
+    if [[ $stage =~ ^MD[[:space:]]+segment[[:space:]]+([0-9]+)$ ]]; then
+        printf "%d\n" "$((10#${BASH_REMATCH[1]}))"
+        return 0
+    fi
+    return 1
+}
+
+previous_md_segment_files_for_stage() {
+    local stage=$1
+    local seg prev stem cmass_file
+
+    seg=$(md_segment_index_from_stage "$stage") || return 0
+    (( seg > 1 )) || return 0
+
+    for (( prev = 1; prev < seg; prev++ )); do
+        for stem in "$(printf "md-%02d" "$prev")" "$(printf "md%02d" "$prev")"; do
+            printf "%s\n" \
+                "${stem}.out" \
+                "${stem}.nc" \
+                "${stem}.log" \
+                "${stem}.mden" \
+                "${stem}.mdinfo"
+            cmass_file=$(cmass_file_for_md_stem "$stem")
+            [[ -n $cmass_file ]] && printf "%s\n" "$cmass_file"
+        done
+    done
+    printf "%s\n" "md-previous.rst7"
+}
+
 archive_incomplete_md_out_if_present() {
     local path=$1
     local retry_count=${2:-}
@@ -623,11 +655,28 @@ check_sim_failure() {
     SIM_COMMAND_STATUS=0
 
     cleanup_outputs() {
+        local -a files_to_archive=("$log_file" "$rst_file")
+        local -a previous_md_files=()
+        local f previous_idx
+
         if (( extra_file_count > 0 )); then
-            archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
-        else
-            archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
+            files_to_archive+=("${extra_files[@]}")
         fi
+        while IFS= read -r f; do
+            [[ -n $f ]] && previous_md_files+=("$f")
+        done < <(previous_md_segment_files_for_stage "$stage")
+        if (( ${#previous_md_files[@]} > 0 )); then
+            previous_idx=$(md_segment_index_from_stage "$stage")
+            previous_idx=$((previous_idx - 1))
+            if (( previous_idx == 1 )); then
+                echo "[INFO] Archiving previous MD segment 1 because ${stage} failed."
+            else
+                echo "[INFO] Archiving previous MD segments 1-${previous_idx} because ${stage} failed."
+            fi
+            files_to_archive+=("${previous_md_files[@]}")
+        fi
+
+        archive_failed_job_files "$retry_count" "${files_to_archive[@]}"
     }
 
     remove_previous_restart() {
