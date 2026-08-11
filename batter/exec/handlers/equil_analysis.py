@@ -1063,7 +1063,7 @@ def _write_prolif_interactions(
             "artifacts": {},
             "artifact_errors": {},
         }
-        logger.warning("[equil_check:{}] ProLIF analysis unavailable: {}", ligand_label, exc)
+        logger.debug("[equil_check:{}] ProLIF analysis unavailable: {}", ligand_label, exc)
 
     prolif_path.write_text(json.dumps(record, indent=2) + "\n")
     return record
@@ -2181,7 +2181,7 @@ def equil_analysis_handler(
             sim_val.results["representative_frame_index"] = int(rep_idx)
             sim_val.results["representative_selection_mode"] = "last_frame_fallback"
             sim_val.results["representative_selection_reason"] = str(exc)
-            logger.warning(
+            logger.debug(
                 "[equil_check:{}] Could not choose representative from ligand "
                 "dihedrals; using last trajectory frame {}: {}",
                 lig,

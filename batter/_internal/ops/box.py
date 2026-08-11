@@ -2217,7 +2217,7 @@ def _sync_ligand_anchor_residue_with_pdb(
             lig_res=str(actual_lig_res),
         ),
     )
-    logger.info(
+    logger.debug(
         "Updated ligand anchor residue from {} to {} after LEaP residue numbering.",
         anchors.lig_res,
         actual_lig_res,

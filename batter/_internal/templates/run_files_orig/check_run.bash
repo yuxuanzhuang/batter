@@ -369,17 +369,16 @@ previous_md_segment_files_for_stage() {
     seg=$(md_segment_index_from_stage "$stage") || return 0
     (( seg > 1 )) || return 0
 
-    for (( prev = 1; prev < seg; prev++ )); do
-        for stem in "$(printf "md-%02d" "$prev")" "$(printf "md%02d" "$prev")"; do
-            printf "%s\n" \
-                "${stem}.out" \
-                "${stem}.nc" \
-                "${stem}.log" \
-                "${stem}.mden" \
-                "${stem}.mdinfo"
-            cmass_file=$(cmass_file_for_md_stem "$stem")
-            [[ -n $cmass_file ]] && printf "%s\n" "$cmass_file"
-        done
+    prev=$((seg - 1))
+    for stem in "$(printf "md-%02d" "$prev")" "$(printf "md%02d" "$prev")"; do
+        printf "%s\n" \
+            "${stem}.out" \
+            "${stem}.nc" \
+            "${stem}.log" \
+            "${stem}.mden" \
+            "${stem}.mdinfo"
+        cmass_file=$(cmass_file_for_md_stem "$stem")
+        [[ -n $cmass_file ]] && printf "%s\n" "$cmass_file"
     done
     printf "%s\n" "md-previous.rst7"
 }
@@ -668,11 +667,7 @@ check_sim_failure() {
         if (( ${#previous_md_files[@]} > 0 )); then
             previous_idx=$(md_segment_index_from_stage "$stage")
             previous_idx=$((previous_idx - 1))
-            if (( previous_idx == 1 )); then
-                echo "[INFO] Archiving previous MD segment 1 because ${stage} failed."
-            else
-                echo "[INFO] Archiving previous MD segments 1-${previous_idx} because ${stage} failed."
-            fi
+            echo "[INFO] Archiving previous MD segment ${previous_idx} because ${stage} failed."
             files_to_archive+=("${previous_md_files[@]}")
         fi
 

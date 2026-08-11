@@ -432,7 +432,7 @@ def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
     assert "dt=0.001000" in (tmp_path / "mdin-template").read_text()
 
 
-def test_check_sim_failure_archives_all_prior_md_segments_without_segment_restarts(
+def test_check_sim_failure_archives_only_immediate_prior_md_segment(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -458,8 +458,8 @@ def test_check_sim_failure_archives_all_prior_md_segments_without_segment_restar
 
     cmd = (
         f"source '{check_run}' "
-        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=5 "
-        "check_sim_failure 'MD segment 3' run.log md-current.rst7 '' 5 "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
+        "check_sim_failure 'MD segment 3' run.log md-current.rst7 '' 1 "
         "md-03.out md-03.nc cmass-03.txt"
     )
     result = subprocess.run(
@@ -471,15 +471,12 @@ def test_check_sim_failure_archives_all_prior_md_segments_without_segment_restar
     )
 
     assert result.returncode == 1
-    assert "Archiving previous MD segments 1-2 because MD segment 3 failed" in result.stdout
-    archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_5"))
+    assert "Archiving previous MD segment 2 because MD segment 3 failed" in result.stdout
+    archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_1"))
     assert len(archive_dirs) == 1
     archive_dir = archive_dirs[0]
     for name in (
         "md-previous.rst7",
-        "md-01.out",
-        "md-01.nc",
-        "cmass-01.txt",
         "md-02.out",
         "md-02.nc",
         "cmass-02.txt",
@@ -489,6 +486,9 @@ def test_check_sim_failure_archives_all_prior_md_segments_without_segment_restar
     ):
         assert not (tmp_path / name).exists(), name
         assert (archive_dir / name).exists(), name
+    for name in ("md-01.out", "md-01.nc", "cmass-01.txt"):
+        assert (tmp_path / name).exists(), name
+        assert not (archive_dir / name).exists(), name
 
 
 def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
