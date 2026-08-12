@@ -386,7 +386,7 @@ if (( remaining_steps > 0 )); then
         fi
     fi
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref $rst_in >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry_count" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the rolling restart.

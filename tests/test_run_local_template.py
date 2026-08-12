@@ -22,6 +22,35 @@ def _restart_time(path: Path) -> str:
     return path.read_text().splitlines()[1].split()[1]
 
 
+def test_production_md_uses_restart_input_as_reference() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    template_dir = repo_root / "batter" / "_internal" / "templates" / "run_files_orig"
+
+    for name in [
+        "run-local.bash",
+        "run-local-rbfe.bash",
+        "run-local-vacuum.bash",
+        "run-equil.bash",
+    ]:
+        text = (template_dir / name).read_text()
+        assert (
+            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-x ${out_tag}.nc -ref $rst_in"
+        ) in text
+        assert (
+            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-x ${out_tag}.nc -ref ${win_00}/eq.rst7"
+        ) not in text
+        assert (
+            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-x ${out_tag}.nc -ref mini.in.rst7"
+        ) not in text
+        assert (
+            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-x ${out_tag}.nc -ref eqnpt04.rst7"
+        ) not in text
+
+
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:
     """run-local.bash should honor mdin-template total_steps via md-current rolling restarts."""
     repo_root = Path(__file__).resolve().parents[1]
@@ -53,14 +82,21 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
 out=""
 rst=""
 nc=""
+restart=""
+ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -c) shift; restart="$1";;
     -o) shift; out="$1";;
     -r) shift; rst="$1";;
     -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
   esac
   shift
 done
+if [[ "$out" == md-*.out ]]; then
+  printf "%s %s %s\\n" "$out" "$restart" "$ref" >> md_ref_calls.txt
+fi
 seg=0
 if [[ "$out" =~ md-([0-9]+)\\.out ]]; then
   seg=$((10#${BASH_REMATCH[1]}))
@@ -156,6 +192,10 @@ exit 0
     assert (work / "md-current.rst7").exists()
     assert (work / "md-previous.rst7").exists()
     assert (work / "output.pdb").exists()
+    assert (work / "md_ref_calls.txt").read_text().splitlines() == [
+        "md-01.out eq.rst7 eq.rst7",
+        "md-02.out md-previous.rst7 md-previous.rst7",
+    ]
 
 
 def test_run_local_does_not_skip_exact_100ps_debug_window_before_md(tmp_path: Path) -> None:
@@ -478,16 +518,19 @@ out=""
 rst=""
 nc=""
 restart=""
+ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c) shift; restart="$1";;
     -o) shift; out="$1";;
     -r) shift; rst="$1";;
     -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
   esac
   shift
 done
 printf "%s\\n" "$restart" > restart_in.txt
+printf "%s\\n" "$ref" > reference_in.txt
 [[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 20.010000\\n" > "$out"
 [[ -n "$rst" ]] && printf "Stub Amber restart\\n1  20.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && echo "ok" > "$nc"
@@ -541,6 +584,7 @@ exit 0
     assert "Archived incomplete MD segment" not in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
     assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "md-previous.rst7"
     assert (work / "md-01.out").exists()
     assert (work / "md-01.nc").exists()
     assert _restart_time(work / "md-previous.rst7") == "50.0000000000"
@@ -589,16 +633,19 @@ out=""
 rst=""
 nc=""
 restart=""
+ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c) shift; restart="$1";;
     -o) shift; out="$1";;
     -r) shift; rst="$1";;
     -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
   esac
   shift
 done
 printf "%s\\n" "$restart" > restart_in.txt
+printf "%s\\n" "$ref" > reference_in.txt
 [[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 50.010000\\n" > "$out"
 [[ -n "$rst" ]] && printf "Stub Amber restart\\n1  50.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && echo "ok" > "$nc"
@@ -652,6 +699,7 @@ exit 0
     assert "Archived invalid MD restart md-current.rst7" in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
     assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "md-previous.rst7"
     assert _restart_time(work / "md-current.rst7") == "50.0100000000"
     assert (work / "md-02.out").read_text().startswith("CONTROL DATA FOR THE RUN")
     assert list((work / "WRONG_FAIL").glob("*/md-current.rst7"))
