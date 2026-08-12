@@ -1019,42 +1019,42 @@ def _first_int_from_keys(data: dict, keys: Sequence[str]) -> int | None:
     return None
 
 
-def _ion_guard_reference_indices_from_scmask(ctx: BuildContext) -> list[int]:
-    """Return RBFE solvent/site ligand reference atoms from scmask.json when present."""
+def _ion_guard_indices_from_scmask(ctx: BuildContext) -> tuple[list[int], list[int]]:
+    """Return (bound-site references, ligand-copy exclusions) from RBFE scmask.json."""
     if str(getattr(ctx, "comp", "")).lower() != "x":
-        return []
-
+        return [], []
     scmask_path = ctx.window_dir.parent / "x-1" / "scmask.json"
     if not scmask_path.exists():
-        return []
+        return [], []
 
     try:
         data = json.loads(scmask_path.read_text())
     except Exception as exc:
         logger.warning(f"[restraints:x] ion_guard could not read {scmask_path}: {exc}")
-        return []
+        return [], []
 
-    refs: list[int] = []
-    for idx in (
-        _first_int_from_keys(
-            data,
-            ("scmk1_cc_solvent_indices", "scmk2_cc_solvent_indices"),
-        ),
-        _first_int_from_keys(
-            data,
-            ("scmk1_cc_site_indices", "scmk2_cc_site_indices"),
-        ),
-    ):
-        if idx is not None and idx not in refs:
-            refs.append(idx)
-    return refs
+    site_idx = _first_int_from_keys(
+        data,
+        ("scmk1_cc_site_indices", "scmk2_cc_site_indices"),
+    )
+    solvent_idx = _first_int_from_keys(
+        data,
+        ("scmk1_cc_solvent_indices", "scmk2_cc_solvent_indices"),
+    )
+
+    reference_indices = [site_idx] if site_idx is not None else []
+    exclude_indices: list[int] = []
+    for idx in (site_idx, solvent_idx):
+        if idx is not None and idx not in exclude_indices:
+            exclude_indices.append(idx)
+    return reference_indices, exclude_indices
 
 
 def _first_ligand_heavy_atom_indices(
     universe: mda.Universe,
     ligand_resnames: Sequence[str],
     *,
-    limit: int = 2,
+    limit: int = 1,
 ) -> list[int]:
     wanted = {
         str(resname).strip()
@@ -1151,14 +1151,21 @@ def _append_ion_guard_restraints(
         )
         return 0
 
-    reference_indices = _ion_guard_reference_indices_from_scmask(ctx)
-    if len(reference_indices) < 2:
-        for idx in _first_ligand_heavy_atom_indices(universe, ligand_resnames):
+    reference_indices, ligand_exclusion_indices = _ion_guard_indices_from_scmask(ctx)
+    fallback_ligand_indices = _first_ligand_heavy_atom_indices(
+        universe,
+        ligand_resnames,
+        limit=2,
+    )
+    if not reference_indices:
+        for idx in fallback_ligand_indices[:1]:
             if idx not in reference_indices:
                 reference_indices.append(idx)
-            if len(reference_indices) >= 2:
+            if reference_indices:
                 break
-    reference_indices = reference_indices[:2]
+    reference_indices = reference_indices[:1]
+    if not ligand_exclusion_indices:
+        ligand_exclusion_indices = fallback_ligand_indices
     if not reference_indices:
         logger.warning(
             f"[restraints:{comp}] ion_guard enabled but no ligand reference atoms "
@@ -1166,8 +1173,8 @@ def _append_ion_guard_restraints(
         )
         return 0
 
-    exclude_atoms = set(reference_indices)
-    exclude_residues = _residue_ix_for_atom_indices(universe, reference_indices)
+    exclude_atoms = set(reference_indices) | set(ligand_exclusion_indices)
+    exclude_residues = _residue_ix_for_atom_indices(universe, sorted(exclude_atoms))
     ion_indices = _ion_guard_ion_indices(
         universe,
         ctx,
@@ -1189,7 +1196,7 @@ def _append_ion_guard_restraints(
             handle.write("\n")
         handle.write(
             "# Ion guard lower-wall restraints: each configured ion to ligand "
-            "solvent/site reference atoms\n"
+            "binding-site reference atom\n"
         )
         for ion_idx in ion_indices:
             for ref_idx in reference_indices:
@@ -1213,7 +1220,7 @@ def _append_ion_guard_restraints(
 
     logger.debug(
         f"[restraints:{comp}] ion_guard wrote {written} restraints for "
-        f"{len(ion_indices)} ions and {len(reference_indices)} ligand reference atoms"
+        f"{len(ion_indices)} ions and {len(reference_indices)} ligand reference atom"
     )
     return written
 

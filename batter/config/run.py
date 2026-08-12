@@ -226,7 +226,7 @@ class CreateArgs(BaseModel):
         description="Anion species for ion placement.",
     )
     ion_conc: float = Field(
-        0.15,
+        0.05,
         description="Target salt concentration (M).",
     )
     neutralize_only: Literal["yes", "no"] = Field(

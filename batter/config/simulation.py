@@ -543,7 +543,7 @@ class SimulationConfig(BaseModel):
     neutralize_only: Literal["yes", "no"] = Field("no", description="Neutralize only")
     cation: str = Field("Na+", description="Cation species")
     anion: str = Field("Cl-", description="Anion species")
-    ion_conc: float = Field(0.15, description="Target salt concentration (M)")
+    ion_conc: float = Field(0.05, description="Target salt concentration (M)")
 
     # --- Simulation params ---
     hmr: Literal["yes", "no"] = Field("no", description="Hydrogen mass repartitioning")

@@ -571,6 +571,19 @@ def test_simulation_config_ion_guard_defaults_to_yes() -> None:
     assert cfg.ion_guard == "yes"
 
 
+def test_default_ion_conc_is_50_mm(tmp_path: Path) -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.ion_conc == pytest.approx(0.05)
+    assert cfg.ion_def[:2] == ["Na+", "Cl-"]
+    assert cfg.ion_def[2] == pytest.approx(0.05)
+
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0.0, 1.0], n_steps={"z": 300_000})
+    section_cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert section_cfg.ion_conc == pytest.approx(0.05)
+    assert section_cfg.ion_def[2] == pytest.approx(0.05)
+
+
 def test_ion_guard_from_sections_can_be_disabled(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(

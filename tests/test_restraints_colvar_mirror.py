@@ -602,7 +602,7 @@ def test_build_restraints_z_allows_single_atom_ligand_anchor(tmp_path: Path) -> 
     assert disang_text.count("#Lig_TR") == 3
 
 
-def test_ion_guard_adds_two_lower_walls_per_bulk_ion_for_z(tmp_path: Path) -> None:
+def test_ion_guard_adds_one_lower_wall_per_bulk_ion_for_z(tmp_path: Path) -> None:
     windows_dir = tmp_path / "z00"
     windows_dir.mkdir()
     (windows_dir / "full.pdb").write_text(
@@ -632,12 +632,12 @@ def test_ion_guard_adds_two_lower_walls_per_bulk_ion_for_z(tmp_path: Path) -> No
     )
 
     text = disang.read_text()
-    assert written == 4
-    assert text.count("#Ion_Guard") == 4
+    assert written == 2
+    assert text.count("#Ion_Guard") == 2
     assert "iat=3,1," in text
-    assert "iat=3,2," in text
     assert "iat=4,1," in text
-    assert "iat=4,2," in text
+    assert "iat=3,2," not in text
+    assert "iat=4,2," not in text
     assert "r2=   15.0000" in text
     assert "rk2= 10.0000000" in text
     assert "rk3=  0.0000000" in text
@@ -1047,7 +1047,7 @@ def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None
     assert "igr1=2,0" not in disang_text
 
 
-def test_ion_guard_uses_rbfe_scmask_solvent_and_site_atoms(tmp_path: Path) -> None:
+def test_ion_guard_uses_rbfe_scmask_site_atom(tmp_path: Path) -> None:
     work_dir = tmp_path
     windows_dir = work_dir / "x00"
     windows_dir.mkdir()
@@ -1094,9 +1094,9 @@ def test_ion_guard_uses_rbfe_scmask_solvent_and_site_atoms(tmp_path: Path) -> No
     )
 
     text = disang.read_text()
-    assert written == 2
-    assert text.count("#Ion_Guard") == 2
-    assert "iat=12,10," in text
+    assert written == 1
+    assert text.count("#Ion_Guard") == 1
+    assert "iat=12,10," not in text
     assert "iat=12,11," in text
 
 

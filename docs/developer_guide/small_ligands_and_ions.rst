@@ -87,10 +87,10 @@ Ion guard path
 ``disang.rest`` terms are written.
 
 The helper reads ``full.pdb`` because the guarded ions are part of the full FE
-topology. For ABFE it uses the first heavy atom in the first two ligand residues
-as the bound and solvent references. For RBFE and RBFE-SEPTOP it first checks
-``x-1/scmask.json`` and uses the explicit common-core solvent/site indices when
-available, then falls back to ligand residue order. Ligand reference residues are
+topology. For ABFE it uses the first heavy atom in the first ligand residue as
+the binding-site reference. For RBFE and RBFE-SEPTOP it first checks
+``x-1/scmask.json`` and uses the explicit common-core site index when available,
+then falls back to the first ligand residue. The ligand reference residue is
 excluded from the ion list so a monoatomic ion ligand is not restrained against
 itself.
 

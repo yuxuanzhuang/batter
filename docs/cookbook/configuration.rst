@@ -159,7 +159,8 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
      - Define ion names that ``addionsrand`` inserts.
    * - ``ion_conc``
      - :attr:`SimulationConfig.ion_def` → ``create_box``
-     - Drives salt concentration when ``neutralize_only = "no"``.
+     - Drives salt concentration when ``neutralize_only = "no"``; defaults to
+       ``0.05`` M (50 mM).
    * - ``neutralize_only``
      - :attr:`SimulationConfig.neut` → ``create_box``
      - Toggles between neutralisation-only or salt+neutralisation workflows.
@@ -195,8 +196,8 @@ FE ion guard
 windows. When enabled, BATTER appends ``#Ion_Guard`` lower-wall distance
 restraints to ``disang.rest`` for ``z`` and ``x`` components. Each configured
 bulk ion (from ``create.cation`` / ``create.anion``) is restrained from coming
-within 15 Å of the ligand reference atom in solvent and the corresponding
-reference atom in the binding site. Set ``fe_sim.ion_guard: no`` to disable this
+within 15 Å of the ligand reference atom in the binding site. Set
+``fe_sim.ion_guard: no`` to disable this
 FE-stage guard; equilibration restraints are unchanged.
 
 Equilibration options
