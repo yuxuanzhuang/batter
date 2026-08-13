@@ -520,6 +520,25 @@ def _pdb_atom_xyz(line: str) -> np.ndarray | None:
             return None
 
 
+def _translate_pdb_atom_line(line: str, delta: np.ndarray) -> str:
+    xyz = _pdb_atom_xyz(line)
+    if xyz is None:
+        return line
+    shifted = xyz + np.asarray(delta, dtype=float)
+    if len(line) < 54:
+        line = line.ljust(54)
+    return (
+        f"{line[:30]}{shifted[0]:8.3f}{shifted[1]:8.3f}{shifted[2]:8.3f}"
+        f"{line[54:]}"
+    )
+
+
+def _translate_pdb_block(block: Sequence[str], delta: np.ndarray) -> list[str]:
+    if not np.any(np.asarray(delta, dtype=float)):
+        return list(block)
+    return [_translate_pdb_atom_line(line, delta) for line in block]
+
+
 def _pdb_atom_name_is_hydrogen(name: str) -> bool:
     stripped = name.strip().upper()
     return stripped.startswith("H") or (
@@ -955,6 +974,7 @@ def _write_membrane_water_chunks_from_build(
     ligand_resname: str,
     box: Sequence[float],
     z_max: float | None = None,
+    reference_z_period: float | None = None,
     ligand_clash_cutoff: float = 2.2,
     max_waters_per_chunk: int = 8000,
 ) -> list[Path]:
@@ -976,8 +996,17 @@ def _write_membrane_water_chunks_from_build(
         build_pdb, ligand_resname
     )
     box_array = np.asarray(box, dtype=float)
+    z_min = _pdb_min_z(build_pdb) if z_max is not None else None
+    z_period = (
+        float(reference_z_period)
+        if reference_z_period is not None
+        and np.isfinite(float(reference_z_period))
+        and float(reference_z_period) > 0.0
+        else None
+    )
     skipped_z = 0
     skipped_overlap = 0
+    tiled_waters = 0
 
     def flush() -> None:
         if not current_blocks:
@@ -999,32 +1028,59 @@ def _write_membrane_water_chunks_from_build(
         current_blocks.clear()
 
     for block in _iter_water_blocks_from_pdb(build_pdb):
-        if z_max is not None:
-            keep_block = True
-            for line in block:
-                if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
-                    continue
-                water_xyz = _pdb_atom_xyz(line)
-                if water_xyz is not None and float(water_xyz[2]) > float(z_max):
-                    keep_block = False
-                    break
-            if not keep_block:
-                skipped_z += 1
+        oxygen_z = None
+        for line in block:
+            if _pdb_line_atom_name(line).upper() not in _WATER_OXYGEN_NAMES:
                 continue
-        if _water_block_overlaps_coords(
-            block,
-            extra_ligand_coords,
-            box=box_array,
-            cutoff=ligand_clash_cutoff,
-        ):
-            skipped_overlap += 1
+            water_xyz = _pdb_atom_xyz(line)
+            if water_xyz is not None:
+                oxygen_z = float(water_xyz[2])
+                break
+        if oxygen_z is None:
             continue
-        current_blocks.append(block)
-        if len(current_blocks) >= max_waters_per_chunk:
-            flush()
+
+        shift_indices = [0]
+        if z_min is not None and z_max is not None and z_period is not None:
+            low_index = int(np.floor((float(z_min) - oxygen_z) / z_period))
+            high_index = int(np.ceil((float(z_max) - oxygen_z) / z_period))
+            shift_indices = list(range(low_index, high_index + 1))
+
+        for shift_index in shift_indices:
+            dz = (z_period or 0.0) * float(shift_index)
+            shifted_oxygen_z = oxygen_z + dz
+            if z_max is not None and shifted_oxygen_z > float(z_max) + 1.0e-6:
+                if shift_index == 0:
+                    skipped_z += 1
+                continue
+            if z_min is not None and shifted_oxygen_z < float(z_min) - 1.0e-6:
+                continue
+
+            shifted_block = _translate_pdb_block(
+                block,
+                np.asarray([0.0, 0.0, dz], dtype=float),
+            )
+            if _water_block_overlaps_coords(
+                shifted_block,
+                extra_ligand_coords,
+                box=box_array,
+                cutoff=ligand_clash_cutoff,
+            ):
+                skipped_overlap += 1
+                continue
+            if shift_index != 0:
+                tiled_waters += 1
+            current_blocks.append(shifted_block)
+            if len(current_blocks) >= max_waters_per_chunk:
+                flush()
     flush()
     if not chunks:
         raise ValueError(f"No membrane waters found in {build_pdb}")
+    if tiled_waters:
+        logger.debug(
+            "Added {} periodically tiled membrane water(s) to cover the SDR z extent in {}.",
+            tiled_waters,
+            window_dir,
+        )
     if skipped_z:
         logger.debug(
             "Removed {} membrane water(s) outside the SDR z extent in {}.",
@@ -2743,6 +2799,11 @@ def create_box(ctx: BuildContext) -> None:
             ligand_resname=mol,
             box=membrane_dimensions,
             z_max=membrane_water_z_max,
+            reference_z_period=(
+                float(reference_dimensions[2])
+                if reference_dimensions is not None
+                else None
+            ),
         )
         if use_membrane_reference_box
         else []

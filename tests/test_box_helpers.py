@@ -270,6 +270,46 @@ def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> No
     )
 
 
+def test_membrane_water_chunks_tile_reference_waters_to_cover_expanded_z(
+    tmp_path: Path,
+) -> None:
+    build_pdb = tmp_path / "build.pdb"
+    build_pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.000, 0.000, 0.000, "C"),
+                "TER\n",
+                _pdb_atom(2, "O", "WAT", "W", 2, 1.000, 1.000, 1.000, "O"),
+                _pdb_atom(3, "H1", "WAT", "W", 2, 1.100, 1.000, 1.000, "H"),
+                _pdb_atom(4, "H2", "WAT", "W", 2, 1.000, 1.100, 1.000, "H"),
+                "TER\n",
+                _pdb_atom(5, "O", "WAT", "W", 3, 2.000, 2.000, 8.000, "O"),
+                _pdb_atom(6, "H1", "WAT", "W", 3, 2.100, 2.000, 8.000, "H"),
+                _pdb_atom(7, "H2", "WAT", "W", 3, 2.000, 2.100, 8.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    chunks = box._write_membrane_water_chunks_from_build(
+        tmp_path,
+        ligand_resname="LIG",
+        box=[10.0, 10.0, 15.0],
+        z_max=15.0,
+        reference_z_period=10.0,
+    )
+
+    assert [path.name for path in chunks] == ["solvate_pre_wat_00.pdb"]
+    oxygen_z = [
+        float(line[46:54])
+        for line in chunks[0].read_text().splitlines()
+        if line.startswith("ATOM") and line[12:16].strip() == "O"
+    ]
+    assert sorted(oxygen_z) == pytest.approx([1.0, 8.0, 11.0])
+    assert max(oxygen_z) <= 15.0
+
+
 def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
     data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
     first = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
