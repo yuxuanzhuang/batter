@@ -166,15 +166,19 @@ Preserved:
 -----------------
 
 No cleanup runs while FE production is active or resumable. Production continuation
-depends on rolling restart files and segment outputs, so these are left intact until
-analysis has consumed the data.
+depends on numbered segment restart files and segment outputs, so these are left
+intact until the window reaches ``FINISHED``.
 
 Preserved during production:
 
-* ``md-current.rst7`` and ``md-previous.rst7``;
+* numbered ``md-*.rst7`` segment restarts such as ``md-01.rst7``;
 * all ``md-*`` files;
 * all ``cmass*`` files;
 * ``job_attempt.txt``, ``production-start.ps``, ``run.log`` and status markers.
+
+After a production window writes ``output.pdb`` and ``FINISHED``, numbered
+``md-*.rst7`` restart files are removed because the window no longer needs a
+resume point.
 
 ``analyze``
 -----------

@@ -102,7 +102,7 @@ Key behaviours:
 * ``run-local-remd.bash`` computes the exchange count from the remaining
   ``total_steps`` and ``remd_nstlim``, runs a single REMD segment, then exits. It
   tracks completion with ``FINISHED``/``FAILED`` sentinels and expects window
-  folders ``<comp>00/`` etc. for restarts
+  folders ``<comp>00/`` etc. for REMD rolling restarts
   (``eq.rst7`` -> ``md-current.rst7``/``md-previous.rst7``).
 * The Slurm body for REMD components is ``SLURMM-BATCH-remd`` sitting in the
   component folder. The generated remote bundled job invokes these component

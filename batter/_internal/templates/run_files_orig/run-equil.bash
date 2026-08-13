@@ -322,14 +322,14 @@ fi
 
 # ---------------- Production MD (progress = elapsed production time) ----------------
 
-# current progress (ps) from rolling restart, minus the initial production restart time
+# current progress (ps) from the latest numbered MD restart, minus the initial production restart time
 production_start_marker="production-start.ps"
 production_initial_rst="eqnpt_appear.rst7"
 start_ps=$(production_start_ps "$production_start_marker" "$production_initial_rst")
 select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry_count"
 rst_in="$SELECTED_MD_RESTART"
 require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
-restart_ps=$(production_restart_ps)
+restart_ps=$(production_restart_ps "$rst_in")
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
@@ -338,10 +338,17 @@ echo "Current completed production time: $current_ps ps / $total_ps ps (restart=
 
 last_rst="$rst_in"
 
-# determine current segment index from OUT files (not from time)
+# determine current segment index from OUT files and the selected restart
+restart_seg_idx=0
+if parsed_restart_seg_idx=$(md_segment_index_from_restart "$rst_in" 2>/dev/null); then
+    restart_seg_idx=$parsed_restart_seg_idx
+fi
 seg_idx=$(latest_md_index "md-*.out")
 if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
+fi
+if (( restart_seg_idx > seg_idx )); then
+    seg_idx=$restart_seg_idx
 fi
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
@@ -364,6 +371,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    rst_out="${out_tag}.rst7"
     cmass_file=$(printf "cmass-%02d.txt" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
@@ -377,27 +385,18 @@ if (( remaining_steps > 0 )); then
     }
     rm -f .write_test.$$
 
-    # archive prior restart if present
-    if [[ -f md-current.rst7 ]]; then
-        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] Found md-current.rst7 but empty; aborting."
-        mv -f md-current.rst7 md-previous.rst7
-        if [[ "$rst_in" == "md-current.rst7" ]]; then
-            rst_in="md-previous.rst7"
-        fi
-    fi
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref $rst_in >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out" "" "$retry_count" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref $rst_in >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry_count" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
-
-    # Update production elapsed time from the rolling restart.
-    restart_ps=$(production_restart_ps)
+    # Update production elapsed time from the explicit segment restart.
+    restart_ps=$(production_restart_ps "$rst_out")
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
     echo "[INFO] Updated completed production time: $current_ps ps / $total_ps ps (restart=$restart_ps ps, start=$start_ps ps)"
 
-    rst_in="md-current.rst7"
-    last_rst="md-current.rst7"
+    rst_in="$rst_out"
+    last_rst="$rst_out"
 fi
 
 if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
@@ -410,6 +409,7 @@ run
 EOF"
 
     if [[ -s output.pdb ]]; then
+        cleanup_finished_md_restarts
         echo "FINISHED" > FINISHED
         echo "[INFO] FINISHED marker written."
         exit 0

@@ -2213,13 +2213,24 @@ def equil_analysis_handler(
             )
         else:
             # copy last frame as representative
-            last_rst = p["equil_dir"] / "md-current.rst7"
-            if os.path.exists(last_rst):
-                shutil.copyfile(last_rst, p["rep_rst"])
-            else:
+            restart_candidates = []
+            for path in list(p["equil_dir"].glob("md-*.rst7")) + list(
+                p["equil_dir"].glob("md[0-9]*.rst7")
+            ):
+                stem = path.stem
+                if stem.startswith("md-") and stem[3:].isdigit():
+                    restart_candidates.append(path)
+                elif stem.startswith("md") and stem[2:].isdigit():
+                    restart_candidates.append(path)
+            restart_candidates = _sort_md_paths(restart_candidates)
+            legacy_rst = p["equil_dir"] / "md-current.rst7"
+            if not restart_candidates and legacy_rst.exists():
+                restart_candidates.append(legacy_rst)
+            if not restart_candidates:
                 raise FileNotFoundError(
-                    f"[equil_check:{lig}] no md-current.rst7 found for fallback representative"
+                    f"[equil_check:{lig}] no md-*.rst7 found for fallback representative"
                 )
+            shutil.copyfile(restart_candidates[-1], p["rep_rst"])
             # convert to pdb
             run_with_log(
                 f"{cpptraj} -p {prmtop} -y representative.rst7 -x representative.pdb",

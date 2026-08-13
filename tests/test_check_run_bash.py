@@ -297,7 +297,7 @@ def test_check_sim_failure_allows_gpu_box_change_when_md_restart_exists(
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
+    _write_ascii_restart(tmp_path / "md-01.rst7", natom=1, payload_fields=6)
     (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
     (tmp_path / "md-01.out").write_text(
         "Here is the input file:\n"
@@ -314,7 +314,7 @@ def test_check_sim_failure_allows_gpu_box_change_when_md_restart_exists(
     cmd = (
         f"source '{check_run}' "
         "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
-        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "check_sim_failure 'MD segment 1' run.log md-01.rst7 '' 1 "
         "md-01.out md-01.nc cmass-01.txt"
     )
     result = subprocess.run(
@@ -327,7 +327,7 @@ def test_check_sim_failure_allows_gpu_box_change_when_md_restart_exists(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "continuing with next segment" in result.stdout
-    assert (tmp_path / "md-current.rst7").exists()
+    assert (tmp_path / "md-01.rst7").exists()
     assert (tmp_path / "md-01.out").exists()
     assert not (tmp_path / "ATTEMPT_FAILED").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
@@ -354,7 +354,7 @@ def test_check_sim_failure_rejects_gpu_box_change_without_md_restart(
     cmd = (
         f"source '{check_run}' "
         "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
-        "check_sim_failure 'MD segment 1' run.log md-current.rst7 '' 1 "
+        "check_sim_failure 'MD segment 1' run.log md-01.rst7 '' 1 "
         "md-01.out md-01.nc cmass-01.txt"
     )
     result = subprocess.run(
@@ -377,8 +377,8 @@ def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
-    _write_ascii_restart(tmp_path / "md-previous.rst7", natom=1, payload_fields=6)
+    _write_ascii_restart(tmp_path / "md-01.rst7", natom=1, payload_fields=6)
+    _write_ascii_restart(tmp_path / "md-02.rst7", natom=1, payload_fields=6)
     (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
@@ -398,7 +398,7 @@ def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
     cmd = (
         f"source '{check_run}' "
         "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=5 "
-        "check_sim_failure 'MD segment 2' run.log md-current.rst7 '' 5 "
+        "check_sim_failure 'MD segment 2' run.log md-02.rst7 '' 5 "
         "md-02.out md-02.nc cmass-02.txt"
     )
     result = subprocess.run(
@@ -411,15 +411,15 @@ def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
 
     assert result.returncode == 1
     assert "Command exited with status 255" in result.stdout
-    assert "Archiving previous MD segment 1 because MD segment 2 failed" in result.stdout
+    assert "Archiving previous MD segment 1 because MD segment 2 failed again" in result.stdout
     assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
     archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_5"))
     assert len(archive_dirs) == 1
     archive_dir = archive_dirs[0]
     for name in (
         "run.log",
-        "md-current.rst7",
-        "md-previous.rst7",
+        "md-01.rst7",
+        "md-02.rst7",
         "md-01.out",
         "md-01.nc",
         "cmass-01.txt",
@@ -432,13 +432,13 @@ def test_check_sim_failure_archives_previous_md_segment_on_later_md_failure(
     assert "dt=0.001000" in (tmp_path / "mdin-template").read_text()
 
 
-def test_check_sim_failure_archives_only_immediate_prior_md_segment(
+def test_check_sim_failure_keeps_prior_md_segment_on_first_later_md_failure(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    _write_ascii_restart(tmp_path / "md-current.rst7", natom=1, payload_fields=6)
-    _write_ascii_restart(tmp_path / "md-previous.rst7", natom=1, payload_fields=6)
+    for idx in (1, 2, 3):
+        _write_ascii_restart(tmp_path / f"md-{idx:02d}.rst7", natom=1, payload_fields=6)
     (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
     for idx in (1, 2):
         (tmp_path / f"md-{idx:02d}.out").write_text(
@@ -459,7 +459,7 @@ def test_check_sim_failure_archives_only_immediate_prior_md_segment(
     cmd = (
         f"source '{check_run}' "
         "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=1 "
-        "check_sim_failure 'MD segment 3' run.log md-current.rst7 '' 1 "
+        "check_sim_failure 'MD segment 3' run.log md-03.rst7 '' 1 "
         "md-03.out md-03.nc cmass-03.txt"
     )
     result = subprocess.run(
@@ -471,12 +471,79 @@ def test_check_sim_failure_archives_only_immediate_prior_md_segment(
     )
 
     assert result.returncode == 1
-    assert "Archiving previous MD segment 2 because MD segment 3 failed" in result.stdout
+    assert "Keeping previous MD segment 2 and md-02.rst7 for retry after MD segment 3 failed" in result.stdout
     archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_1"))
     assert len(archive_dirs) == 1
     archive_dir = archive_dirs[0]
     for name in (
-        "md-previous.rst7",
+        "md-03.out",
+        "md-03.nc",
+        "md-03.rst7",
+        "cmass-03.txt",
+    ):
+        assert not (tmp_path / name).exists(), name
+        assert (archive_dir / name).exists(), name
+    for name in (
+        "md-01.rst7",
+        "md-02.rst7",
+        "md-01.out",
+        "md-01.nc",
+        "cmass-01.txt",
+        "md-02.out",
+        "md-02.nc",
+        "cmass-02.txt",
+    ):
+        assert (tmp_path / name).exists(), name
+        assert not (archive_dir / name).exists(), name
+
+
+def test_check_sim_failure_steps_back_to_earlier_explicit_restart_on_repeated_md_failure(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "md-01.rst7").write_text(_restart_text("40.0000000000"))
+    (tmp_path / "md-02.rst7").write_text(_restart_text("50.0000000000"))
+    (tmp_path / "md-03.rst7").write_text(_restart_text("60.0000000000"))
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    for idx in (1, 2):
+        (tmp_path / f"md-{idx:02d}.out").write_text(
+            "CONTROL DATA FOR THE RUN\n"
+            "|  Final Performance Info:\n"
+            "|  Total wall time: 1 seconds\n"
+        )
+        (tmp_path / f"md-{idx:02d}.nc").write_text(f"trajectory {idx}\n")
+        (tmp_path / f"cmass-{idx:02d}.txt").write_text(f"cmass {idx}\n")
+    (tmp_path / "md-03.out").write_text(
+        " NSTEP =    45000   TIME(PS) =      90.000  TEMP(K) =      NaN\n"
+        " Etot   =            NaN  EKtot   =            NaN\n"
+    )
+    (tmp_path / "md-03.nc").write_text("failed trajectory\n")
+    (tmp_path / "cmass-03.txt").write_text("failed cmass\n")
+    (tmp_path / "run.log").write_text("segmentation fault\n")
+
+    fail_cmd = (
+        f"source '{check_run}' "
+        "&& SIM_COMMAND_STATUS=255 RETRY_COUNT=2 "
+        "check_sim_failure 'MD segment 3' run.log md-03.rst7 '' 2 "
+        "md-03.out md-03.nc cmass-03.txt"
+    )
+    fail_result = subprocess.run(
+        ["bash", "-lc", fail_cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert fail_result.returncode == 1
+    assert "Archiving previous MD segment 2 because MD segment 3 failed again" in fail_result.stdout
+    archive_dirs = list((tmp_path / "WRONG_FAIL").glob("*_job_attempt_2"))
+    assert len(archive_dirs) == 1
+    archive_dir = archive_dirs[0]
+    for name in (
+        "md-02.rst7",
+        "md-03.rst7",
         "md-02.out",
         "md-02.nc",
         "cmass-02.txt",
@@ -486,9 +553,25 @@ def test_check_sim_failure_archives_only_immediate_prior_md_segment(
     ):
         assert not (tmp_path / name).exists(), name
         assert (archive_dir / name).exists(), name
-    for name in ("md-01.out", "md-01.nc", "cmass-01.txt"):
+    for name in ("md-01.rst7", "md-01.out", "md-01.nc", "cmass-01.txt"):
         assert (tmp_path / name).exists(), name
-        assert not (archive_dir / name).exists(), name
+
+    select_cmd = (
+        f"source '{check_run}' "
+        "&& select_valid_md_restart eq.rst7 20 2 "
+        '&& printf "selected=%s\\nprogress=%s\\n" "$SELECTED_MD_RESTART" "$(production_restart_ps)"'
+    )
+    select_result = subprocess.run(
+        ["bash", "-lc", select_cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert select_result.returncode == 0, select_result.stdout + select_result.stderr
+    assert "selected=md-01.rst7" in select_result.stdout
+    assert "progress=40.0000000000" in select_result.stdout
 
 
 def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
@@ -1009,13 +1092,13 @@ def test_completed_time_ps_from_ascii_restart(tmp_path: Path) -> None:
     assert result.stdout.strip() == "8.0000000E+01"
 
 
-def test_cleanup_stale_md_artifacts_strict_archives_suspect_current_restart(
+def test_cleanup_stale_md_artifacts_strict_archives_suspect_explicit_restart(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
+    (tmp_path / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -1031,19 +1114,19 @@ def test_cleanup_stale_md_artifacts_strict_archives_suspect_current_restart(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "suspect restart md-current.rst7" in result.stdout
-    assert not (tmp_path / "md-current.rst7").exists()
+    assert "suspect restart md-01.rst7" in result.stdout
+    assert not (tmp_path / "md-01.rst7").exists()
     assert not (tmp_path / "md-01.out").exists()
-    assert list((tmp_path / "WRONG_FAIL").glob("*/md-current.rst7"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.rst7"))
 
 
-def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
+def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_explicit_restart(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
+    (tmp_path / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -1059,7 +1142,7 @@ def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "md-current.rst7").exists()
+    assert (tmp_path / "md-01.rst7").exists()
     assert (tmp_path / "md-01.out").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
 
@@ -1101,7 +1184,7 @@ EOF
     cmd = (
         f"PATH='{tmp_path}':$PATH "
         f"&& source '{check_run}' "
-        "&& cleanup_zero_frame_md_trajectories 7"
+        "&& cleanup_zero_frame_md_trajectories 1"
     )
     result = subprocess.run(
         ["bash", "-lc", cmd],
@@ -1123,10 +1206,102 @@ EOF
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.nc"))
 
 
-def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
+def test_cleanup_zero_frame_md_trajectory_uses_explicit_restart_fallback(
+    tmp_path: Path,
+) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+target="${@: -1}"
+case "$(basename "$target")" in
+  md-03.nc) frames=0 ;;
+  *) exit 1 ;;
+esac
+cat <<EOF
+netcdf trajectory {
+dimensions:
+    frame = UNLIMITED ; // (${frames} currently)
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-01.nc").write_text("nc\n")
+    (tmp_path / "cmass-01.txt").write_text("cmass 1\n")
+    (tmp_path / "md-02.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-02.nc").write_text("nc\n")
+    (tmp_path / "cmass-02.txt").write_text("cmass 2\n")
+    (tmp_path / "md-03.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-03.nc").write_text("nc\n")
+    (tmp_path / "cmass-03.txt").write_text("cmass 3\n")
+    (tmp_path / "md-01.rst7").write_text(_restart_text("40.0000000000"))
+    (tmp_path / "md-02.rst7").write_text(_restart_text("50.0000000000"))
+    (tmp_path / "md-03.rst7").write_text(_restart_text("60.0000000000"))
+
+    first_cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        "&& cleanup_zero_frame_md_trajectories 2 "
+        "&& select_valid_md_restart eq.rst7 20 2 "
+        '&& printf "selected=%s\\n" "$SELECTED_MD_RESTART"'
+    )
+    first = subprocess.run(
+        ["bash", "-lc", first_cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "Keeping previous MD segment 2 and md-02.rst7" in first.stdout
+    assert "selected=md-02.rst7" in first.stdout
+    assert not (tmp_path / "md-03.rst7").exists()
+    assert not (tmp_path / "md-03.out").exists()
+    assert not (tmp_path / "md-03.nc").exists()
+    assert (tmp_path / "md-02.out").exists()
+    assert (tmp_path / "md-02.nc").exists()
+    assert (tmp_path / "md-02.rst7").exists()
+    assert (tmp_path / "md-01.rst7").exists()
+
+    (tmp_path / "md-03.rst7").write_text(_restart_text("60.0000000000"))
+    (tmp_path / "md-03.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-03.nc").write_text("nc\n")
+    (tmp_path / "cmass-03.txt").write_text("cmass 3\n")
+
+    second_cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        "&& cleanup_zero_frame_md_trajectories 3 "
+        "&& select_valid_md_restart eq.rst7 20 3 "
+        '&& printf "selected=%s\\n" "$SELECTED_MD_RESTART"'
+    )
+    second = subprocess.run(
+        ["bash", "-lc", second_cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "Archiving previous MD segment 2 because zero-frame md-03.nc failed again" in second.stdout
+    assert "selected=md-01.rst7" in second.stdout
+    for name in ("md-03.rst7", "md-02.rst7", "md-02.out", "md-02.nc", "cmass-02.txt"):
+        assert not (tmp_path / name).exists(), name
+        assert list((tmp_path / "WRONG_FAIL").glob(f"*/{name}")), name
+    assert (tmp_path / "md-01.rst7").exists()
+
+
+def test_select_valid_md_restart_keeps_latest_explicit_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -1146,18 +1321,18 @@ def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "selected=md-current.rst7" in result.stdout
-    assert (tmp_path / "md-current.rst7").exists()
+    assert "selected=md-01.rst7" in result.stdout
+    assert (tmp_path / "md-01.rst7").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
 
 
-def test_select_valid_md_restart_archives_invalid_current_and_uses_previous(
+def test_select_valid_md_restart_archives_invalid_latest_and_uses_previous_explicit(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    (tmp_path / "md-current.rst7").write_text("not a restart\n")
-    (tmp_path / "md-previous.rst7").write_text(_restart_text("50.0000000000"))
+    (tmp_path / "md-02.rst7").write_text("not a restart\n")
+    (tmp_path / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-02.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      60.000  TEMP(K) =   298.0\n"
@@ -1178,13 +1353,13 @@ def test_select_valid_md_restart_archives_invalid_current_and_uses_previous(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Archived invalid MD restart md-current.rst7" in result.stdout
-    assert "selected=md-previous.rst7" in result.stdout
-    assert not (tmp_path / "md-current.rst7").exists()
+    assert "Archived invalid MD restart md-02.rst7" in result.stdout
+    assert "selected=md-01.rst7" in result.stdout
+    assert not (tmp_path / "md-02.rst7").exists()
     assert not (tmp_path / "md-02.out").exists()
     assert not (tmp_path / "md-02.nc").exists()
-    assert (tmp_path / "md-previous.rst7").exists()
-    archived = list((tmp_path / "WRONG_FAIL").glob("*/md-current.rst7"))
+    assert (tmp_path / "md-01.rst7").exists()
+    archived = list((tmp_path / "WRONG_FAIL").glob("*/md-02.rst7"))
     assert len(archived) == 1
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.out"))
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.nc"))

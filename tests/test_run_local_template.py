@@ -34,25 +34,25 @@ def test_production_md_uses_restart_input_as_reference() -> None:
     ]:
         text = (template_dir / name).read_text()
         assert (
-            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-c $rst_in -o ${out_tag}.out -r $rst_out "
             "-x ${out_tag}.nc -ref $rst_in"
         ) in text
         assert (
-            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-c $rst_in -o ${out_tag}.out -r $rst_out "
             "-x ${out_tag}.nc -ref ${win_00}/eq.rst7"
         ) not in text
         assert (
-            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-c $rst_in -o ${out_tag}.out -r $rst_out "
             "-x ${out_tag}.nc -ref mini.in.rst7"
         ) not in text
         assert (
-            "-c $rst_in -o ${out_tag}.out -r md-current.rst7 "
+            "-c $rst_in -o ${out_tag}.out -r $rst_out "
             "-x ${out_tag}.nc -ref eqnpt04.rst7"
         ) not in text
 
 
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:
-    """run-local.bash should honor mdin-template total_steps via md-current rolling restarts."""
+    """run-local.bash should honor mdin-template total_steps via explicit segment restarts."""
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -183,18 +183,18 @@ exit 0
     assert len(archived_logs) == 1
     assert archived_logs[0].read_text() == "old log\n"
     assert (work / "run.log").exists()
-    assert (work / "md-current.rst7").exists()
+    assert (work / "md-01.rst7").exists()
     assert not (work / "output.pdb").exists()
 
     subprocess.run(cmd, cwd=work, check=True, env=env)
 
-    # After two segments we should have rolling restarts and output
-    assert (work / "md-current.rst7").exists()
-    assert (work / "md-previous.rst7").exists()
+    # After completion, segment restarts should be cleaned up.
+    assert not (work / "md-01.rst7").exists()
+    assert not (work / "md-02.rst7").exists()
     assert (work / "output.pdb").exists()
     assert (work / "md_ref_calls.txt").read_text().splitlines() == [
         "md-01.out eq.rst7 eq.rst7",
-        "md-02.out md-previous.rst7 md-previous.rst7",
+        "md-02.out md-01.rst7 md-01.rst7",
     ]
 
 
@@ -274,7 +274,7 @@ exit 0
     assert (work / "run_steps.txt").read_text().strip() == "25000"
     assert (work / "ntwx.txt").read_text().strip() == "25000"
     assert (work / "dumpfreq.txt").read_text().strip() == "1000"
-    assert (work / "md-current.rst7").exists()
+    assert not (work / "md-01.rst7").exists()
     assert (work / "output.pdb").exists()
 
 
@@ -299,7 +299,7 @@ def test_run_local_cleans_empty_md_artifacts_before_restart(tmp_path: Path) -> N
         "dt = 0.001,\n"
     )
 
-    for name in ["md-01.out", "md-01.nc", "cmass.txt", "cmass-01.txt", "md-current.rst7"]:
+    for name in ["md-01.out", "md-01.nc", "cmass.txt", "cmass-01.txt", "md-01.rst7"]:
         (work / name).write_text("")
 
     stub = work / "stub.sh"
@@ -374,11 +374,11 @@ exit 0
 
     assert "[INFO] Removed stale empty file md-01.out" in result.stdout
     assert "[INFO] Removed stale empty file cmass-01.txt" in result.stdout
-    assert "[INFO] Removed stale empty file md-current.rst7" in result.stdout
+    assert "[INFO] Removed stale empty file md-01.rst7" in result.stdout
     assert "Running segment 1 -> md-01.out" in result.stdout
     assert not (work / "ATTEMPT_FAILED").exists()
     assert (work / "md-01.out").read_text().strip() == "TIME(PS) = 0.010000"
-    assert _restart_time(work / "md-current.rst7") == "0.0100000000"
+    assert not (work / "md-01.rst7").exists()
     assert (work / "md-01.nc").read_text().strip() == "ok"
     assert not (work / "cmass.txt").exists()
     assert not (work / "cmass-01.txt").exists()
@@ -485,7 +485,7 @@ exit 0
     assert (work / "md-01.nc").read_text().strip() == "ok"
 
 
-def test_run_local_resumes_interrupted_current_restart(tmp_path: Path) -> None:
+def test_run_local_resumes_from_explicit_segment_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -496,7 +496,7 @@ def test_run_local_resumes_interrupted_current_restart(tmp_path: Path) -> None:
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "full_merged.prmtop").write_text("prmtop")
     (work / "eq.rst7").write_text(_restart_text("20.0000000000"))
-    (work / "md-current.rst7").write_text(_restart_text("50.0000000000"))
+    (work / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (work / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    11700   TIME(PS) =      55.100  TEMP(K) =   298.0\n"
@@ -531,8 +531,8 @@ while [[ $# -gt 0 ]]; do
 done
 printf "%s\\n" "$restart" > restart_in.txt
 printf "%s\\n" "$ref" > reference_in.txt
-[[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 20.010000\\n" > "$out"
-[[ -n "$rst" ]] && printf "Stub Amber restart\\n1  20.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
+[[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 50.010000\\n" > "$out"
+[[ -n "$rst" ]] && printf "Stub Amber restart\\n1  50.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && echo "ok" > "$nc"
 exit 0
 """,
@@ -583,16 +583,17 @@ exit 0
 
     assert "Archived incomplete MD segment" not in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
-    assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
-    assert (work / "reference_in.txt").read_text().strip() == "md-previous.rst7"
+    assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "md-01.rst7"
     assert (work / "md-01.out").exists()
     assert (work / "md-01.nc").exists()
-    assert _restart_time(work / "md-previous.rst7") == "50.0000000000"
+    assert _restart_time(work / "md-01.rst7") == "50.0000000000"
+    assert _restart_time(work / "md-02.rst7") == "50.0100000000"
     assert (work / "md-02.out").exists()
     assert not (work / "WRONG_FAIL").exists()
 
 
-def test_run_local_archives_invalid_current_restart_and_uses_previous(
+def test_run_local_archives_invalid_segment_restart_and_uses_previous_segment(
     tmp_path: Path,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -605,8 +606,8 @@ def test_run_local_archives_invalid_current_restart_and_uses_previous(
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "full_merged.prmtop").write_text("prmtop")
     (work / "eq.rst7").write_text(_restart_text("20.0000000000"))
-    (work / "md-previous.rst7").write_text(_restart_text("50.0000000000"))
-    (work / "md-current.rst7").write_text("not a restart\n")
+    (work / "md-01.rst7").write_text(_restart_text("50.0000000000"))
+    (work / "md-02.rst7").write_text("not a restart\n")
     (work / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         "|  Final Performance Info:\n"
@@ -696,13 +697,13 @@ exit 0
         text=True,
     )
 
-    assert "Archived invalid MD restart md-current.rst7" in result.stdout
+    assert "Archived invalid MD restart md-02.rst7" in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
-    assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
-    assert (work / "reference_in.txt").read_text().strip() == "md-previous.rst7"
-    assert _restart_time(work / "md-current.rst7") == "50.0100000000"
+    assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "md-01.rst7"
+    assert _restart_time(work / "md-02.rst7") == "50.0100000000"
     assert (work / "md-02.out").read_text().startswith("CONTROL DATA FOR THE RUN")
-    assert list((work / "WRONG_FAIL").glob("*/md-current.rst7"))
+    assert list((work / "WRONG_FAIL").glob("*/md-02.rst7"))
     assert list((work / "WRONG_FAIL").glob("*/md-02.out"))
     assert list((work / "WRONG_FAIL").glob("*/md-02.nc"))
 
@@ -718,7 +719,7 @@ def test_run_local_remaining_steps_follow_reduced_dt(tmp_path: Path) -> None:
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "full_merged.prmtop").write_text("prmtop")
     (work / "eq.rst7").write_text("eqrst")
-    (work / "md-current.rst7").write_text(_restart_text("0.0200000000"))
+    (work / "md-01.rst7").write_text(_restart_text("0.0200000000"))
     (work / "mdin-template").write_text(
         "! total_steps=10\n"
         "irest = 1,\n"
@@ -910,7 +911,7 @@ def test_run_local_subtracts_initial_restart_time_for_production_progress(tmp_pa
         "64844  8.0000000E+01\n"
         "  1.0  2.0  3.0\n"
     )
-    (work / "md-current.rst7").write_text(_restart_text("2080.0000000000"))
+    (work / "md-01.rst7").write_text(_restart_text("2080.0000000000"))
     (work / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         "|  Final Performance Info:\n"

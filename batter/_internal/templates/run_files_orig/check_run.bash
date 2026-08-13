@@ -352,6 +352,16 @@ cmass_file_for_md_stem() {
     fi
 }
 
+md_segment_index_from_stem() {
+    local stem=$1
+
+    if [[ $stem =~ ^md-?([0-9]+)$ ]]; then
+        printf "%d\n" "$((10#${BASH_REMATCH[1]}))"
+        return 0
+    fi
+    return 1
+}
+
 md_segment_index_from_stage() {
     local stage=$1
 
@@ -360,6 +370,22 @@ md_segment_index_from_stage() {
         return 0
     fi
     return 1
+}
+
+should_archive_previous_md_segment_for_failure() {
+    local stage=$1
+    local retry_count=${2:-0}
+    local seg
+
+    seg=$(md_segment_index_from_stage "$stage") || return 1
+    (( seg > 1 )) || return 1
+    [[ $retry_count =~ ^[0-9]+$ ]] || retry_count=0
+
+    # Initial failure keeps the prior explicit restart (for example md-02.rst7)
+    # so the next attempt can rerun the failed segment. If the same later
+    # segment fails again, archive the prior segment too so the next restart is
+    # one explicit segment farther back.
+    (( retry_count >= 2 ))
 }
 
 previous_md_segment_files_for_stage() {
@@ -376,11 +402,78 @@ previous_md_segment_files_for_stage() {
             "${stem}.nc" \
             "${stem}.log" \
             "${stem}.mden" \
-            "${stem}.mdinfo"
+            "${stem}.mdinfo" \
+            "${stem}.rst7"
         cmass_file=$(cmass_file_for_md_stem "$stem")
         [[ -n $cmass_file ]] && printf "%s\n" "$cmass_file"
     done
-    printf "%s\n" "md-previous.rst7"
+}
+
+md_segment_index_from_restart() {
+    local restart_file=$1
+    local stem
+
+    stem=${restart_file%.rst7}
+    md_segment_index_from_stem "$stem"
+}
+
+md_restart_path_for_index() {
+    local idx=$1
+    printf "md-%02d.rst7\n" "$idx"
+}
+
+latest_md_restart_index() {
+    local pattern f idx max=-1
+    local patterns=("md-*.rst7" "md[0-9]*.rst7")
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for f in $pattern; do
+            idx=$(md_segment_index_from_restart "$f") || continue
+            (( idx > max )) && max=$idx
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+    echo "$max"
+}
+
+latest_md_restart_path() {
+    local idx path compact
+
+    idx=$(latest_md_restart_index)
+    [[ $idx -ge 0 ]] || return 1
+    path=$(printf "md-%02d.rst7" "$idx")
+    if [[ -e "$path" ]]; then
+        printf "%s\n" "$path"
+        return 0
+    fi
+    compact=$(printf "md%02d.rst7" "$idx")
+    if [[ -e "$compact" ]]; then
+        printf "%s\n" "$compact"
+        return 0
+    fi
+    return 1
+}
+
+cleanup_finished_md_restarts() {
+    local pattern f
+    local patterns=("md-*.rst7" "md[0-9]*.rst7")
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for f in $pattern; do
+            rm -f "$f"
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
 }
 
 archive_incomplete_md_out_if_present() {
@@ -462,7 +555,9 @@ md_nc_has_zero_frames() {
 archive_zero_frame_md_trajectory_if_present() {
     local nc_file=$1
     local retry_count=${2:-}
-    local stem out_file
+    local stem out_file stage seg previous_idx f cleanup_retry_count
+    local -a files_to_archive=()
+    local -a previous_md_files=()
 
     [[ -n $nc_file && -s "$nc_file" ]] || return 1
     md_nc_has_zero_frames "$nc_file" || return 1
@@ -474,13 +569,38 @@ archive_zero_frame_md_trajectory_if_present() {
     fi
 
     retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
-    archive_failed_job_files "$retry_count" \
+    files_to_archive=(
         "$out_file" \
         "$nc_file" \
         "${stem}.log" \
         "${stem}.mden" \
         "${stem}.mdinfo" \
-        "$(cmass_file_for_md_stem "$stem")"
+        "$(cmass_file_for_md_stem "$stem")" \
+        "${stem}.rst7"
+    )
+
+    if seg=$(md_segment_index_from_stem "$stem"); then
+        stage="MD segment ${seg}"
+        cleanup_retry_count=$retry_count
+        if [[ $cleanup_retry_count =~ ^[0-9]+$ && $cleanup_retry_count -gt 0 ]]; then
+            cleanup_retry_count=$((cleanup_retry_count - 1))
+        fi
+        if should_archive_previous_md_segment_for_failure "$stage" "$cleanup_retry_count"; then
+            while IFS= read -r f; do
+                [[ -n $f ]] && previous_md_files+=("$f")
+            done < <(previous_md_segment_files_for_stage "$stage")
+            if (( ${#previous_md_files[@]} > 0 )); then
+                previous_idx=$((seg - 1))
+                echo "[INFO] Archiving previous MD segment ${previous_idx} because zero-frame ${nc_file} failed again."
+                files_to_archive+=("${previous_md_files[@]}")
+            fi
+        elif (( seg > 1 )); then
+            previous_idx=$((seg - 1))
+            echo "[INFO] Keeping previous MD segment ${previous_idx} and $(md_restart_path_for_index "$previous_idx") for retry after zero-frame ${nc_file}."
+        fi
+    fi
+
+    archive_failed_job_files "$retry_count" "${files_to_archive[@]}"
     echo "[INFO] Archived zero-frame MD trajectory $nc_file before restart."
     return 0
 }
@@ -524,7 +644,7 @@ cleanup_zero_frame_md_trajectories() {
 cleanup_suspect_md_resume_state() {
     local retry_count=${1:-}
     local resume_mode=${2:-strict}
-    local latest_idx out_file
+    local latest_idx out_file restart_file
 
     [[ $resume_mode == strict ]] || return 0
 
@@ -539,11 +659,11 @@ cleanup_suspect_md_resume_state() {
         out_file=$(printf "md%02d.out" "$latest_idx")
     fi
 
-    if [[ -s md-current.rst7 ]]; then
-        archive_suspect_md_restart_if_present "md-current.rst7" "$out_file" "$retry_count" || true
-    elif [[ $latest_idx -le 1 && -s md-previous.rst7 ]]; then
-        archive_suspect_md_restart_if_present "md-previous.rst7" "$out_file" "$retry_count" || true
+    restart_file=$(printf "md-%02d.rst7" "$latest_idx")
+    if [[ ! -e "$restart_file" ]]; then
+        restart_file=$(printf "md%02d.rst7" "$latest_idx")
     fi
+    archive_suspect_md_restart_if_present "$restart_file" "$out_file" "$retry_count" || true
 }
 
 cleanup_stale_empty_md_artifacts() {
@@ -560,8 +680,8 @@ cleanup_stale_empty_md_artifacts() {
         "md*.mden"
         "md-*.mdinfo"
         "md*.mdinfo"
-        "md-current.rst7"
-        "md-previous.rst7"
+        "md-*.rst7"
+        "md[0-9]*.rst7"
         "cmass.txt"
         "cmass-*.txt"
     )
@@ -573,7 +693,7 @@ cleanup_stale_empty_md_artifacts() {
                 remove_empty_file_if_present "$f" || true
             done
         done
-        if [[ ! -s md-current.rst7 && ! -s md-previous.rst7 ]]; then
+        if ! latest_md_restart_path >/dev/null 2>&1; then
             for f in md-*.out md*.out; do
                 archive_incomplete_md_out_if_present "$f" || true
             done
@@ -590,7 +710,7 @@ cleanup_stale_empty_md_artifacts() {
             remove_empty_file_if_present "$f" || true
         done
     done
-    if [[ ! -s md-current.rst7 && ! -s md-previous.rst7 ]]; then
+    if ! latest_md_restart_path >/dev/null 2>&1; then
         for f in md-*.out md*.out; do
             [[ -e "$f" ]] || continue
             archive_incomplete_md_out_if_present "$f" || true
@@ -661,14 +781,21 @@ check_sim_failure() {
         if (( extra_file_count > 0 )); then
             files_to_archive+=("${extra_files[@]}")
         fi
-        while IFS= read -r f; do
-            [[ -n $f ]] && previous_md_files+=("$f")
-        done < <(previous_md_segment_files_for_stage "$stage")
-        if (( ${#previous_md_files[@]} > 0 )); then
-            previous_idx=$(md_segment_index_from_stage "$stage")
-            previous_idx=$((previous_idx - 1))
-            echo "[INFO] Archiving previous MD segment ${previous_idx} because ${stage} failed."
-            files_to_archive+=("${previous_md_files[@]}")
+        if should_archive_previous_md_segment_for_failure "$stage" "$retry_count"; then
+            while IFS= read -r f; do
+                [[ -n $f ]] && previous_md_files+=("$f")
+            done < <(previous_md_segment_files_for_stage "$stage")
+            if (( ${#previous_md_files[@]} > 0 )); then
+                previous_idx=$(md_segment_index_from_stage "$stage")
+                previous_idx=$((previous_idx - 1))
+                echo "[INFO] Archiving previous MD segment ${previous_idx} because ${stage} failed again."
+                files_to_archive+=("${previous_md_files[@]}")
+            fi
+        elif previous_idx=$(md_segment_index_from_stage "$stage"); then
+            if (( previous_idx > 1 )); then
+                previous_idx=$((previous_idx - 1))
+                echo "[INFO] Keeping previous MD segment ${previous_idx} and $(md_restart_path_for_index "$previous_idx") for retry after ${stage} failed."
+            fi
         fi
 
         archive_failed_job_files "$retry_count" "${files_to_archive[@]}"
@@ -1008,6 +1135,7 @@ cleanup_failed_md_segment() {
         win=$(printf "%s%02d" "$comp" "$i")
         rm -f "${pfolder}/${win}/${out_tag}.out" \
               "${pfolder}/${win}/${out_tag}.nc" \
+              "${pfolder}/${win}/${out_tag}.rst7" \
               "${pfolder}/${win}/${out_tag}.log" \
               "${pfolder}/${win}/${out_tag}.mden" \
               "${pfolder}/${win}/${cmass_tag}" \
@@ -1408,8 +1536,14 @@ reduce_dt_on_failure() {
         sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$new_dt"
     fi
 
-    # remove old sims if there's any.
-    rm -f md-* cmass.txt cmass-*.txt
+    # Remove MD output artifacts after a dt reduction, but keep restart backups
+    # so retries can step back one segment instead of restarting the window.
+    rm -f md-*.out md*.out \
+          md-*.nc md*.nc \
+          md-*.log md*.log \
+          md-*.mden md*.mden \
+          md-*.mdinfo md*.mdinfo \
+          cmass.txt cmass-*.txt
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
@@ -1534,57 +1668,44 @@ select_valid_md_restart() {
     local initial_restart=$1
     local start_ps=${2:-0}
     local retry_count=${3:-}
-    local latest_idx latest_out_file
+    local idx restart_file compact_restart latest_out_file compact_out
 
     SELECTED_MD_RESTART="$initial_restart"
 
-    latest_idx=$(latest_md_index "md-*.out")
-    if [[ $latest_idx -lt 0 ]]; then
-        latest_idx=$(latest_md_index "md*.out")
-    fi
-    latest_out_file=""
-    if [[ $latest_idx -ge 0 ]]; then
-        latest_out_file=$(printf "md-%02d.out" "$latest_idx")
-        if [[ ! -e "$latest_out_file" ]]; then
-            latest_out_file=$(printf "md%02d.out" "$latest_idx")
+    idx=$(latest_md_restart_index)
+    while [[ $idx =~ ^[0-9]+$ && $idx -ge 1 ]]; do
+        restart_file=$(printf "md-%02d.rst7" "$idx")
+        compact_restart=$(printf "md%02d.rst7" "$idx")
+        if [[ ! -e "$restart_file" && -e "$compact_restart" ]]; then
+            restart_file="$compact_restart"
         fi
-    fi
-
-    if [[ -e md-current.rst7 ]]; then
-        if md_restart_is_valid_for_resume "md-current.rst7" "$start_ps"; then
-            SELECTED_MD_RESTART="md-current.rst7"
-            return 0
+        if [[ -e "$restart_file" ]]; then
+            if md_restart_is_valid_for_resume "$restart_file" "$start_ps"; then
+                SELECTED_MD_RESTART="$restart_file"
+                return 0
+            fi
+            latest_out_file=$(printf "md-%02d.out" "$idx")
+            compact_out=$(printf "md%02d.out" "$idx")
+            if [[ ! -e "$latest_out_file" && -e "$compact_out" ]]; then
+                latest_out_file="$compact_out"
+            fi
+            archive_invalid_md_restart_if_present \
+                "$restart_file" "$latest_out_file" "$retry_count" "$start_ps"
         fi
-        archive_invalid_md_restart_if_present \
-            "md-current.rst7" "$latest_out_file" "$retry_count" "$start_ps"
-    fi
-
-    if [[ -e md-previous.rst7 ]]; then
-        if md_restart_is_valid_for_resume "md-previous.rst7" "$start_ps"; then
-            SELECTED_MD_RESTART="md-previous.rst7"
-            return 0
-        fi
-        archive_invalid_md_restart_if_present \
-            "md-previous.rst7" "" "$retry_count" "$start_ps"
-    fi
+        idx=$((idx - 1))
+    done
 
     return 0
 }
 
 completed_steps() {
     local tmpl=${1:-mdin-template}
-    local tps prev_tps
+    local tps
 
-    tps=$(completed_time_ps_from_rst "md-current.rst7")
-
+    tps=$(production_restart_ps)
     if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
-        prev_tps=$(completed_time_ps_from_rst "md-previous.rst7")
-        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
-            tps="$prev_tps"
-        else
-            echo 0
-            return
-        fi
+        echo 0
+        return
     fi
 
     if [[ -f $tmpl ]]; then
@@ -1652,21 +1773,19 @@ completed_steps() {
 }
 
 production_restart_ps() {
-    local current_rst=${1:-md-current.rst7}
-    local previous_rst=${2:-md-previous.rst7}
-    local tps prev_tps
+    local restart_file=${1:-}
+    local tps
 
-    tps=$(completed_time_ps_from_rst "$current_rst")
-
-    if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
-        prev_tps=$(completed_time_ps_from_rst "$previous_rst")
-        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
-            tps="$prev_tps"
-        else
-            tps=0
-        fi
+    if [[ -z $restart_file ]]; then
+        restart_file=$(latest_md_restart_path 2>/dev/null || true)
+    fi
+    if [[ -z $restart_file ]]; then
+        echo 0
+        return
     fi
 
+    tps=$(completed_time_ps_from_rst "$restart_file")
+    [[ -n $tps ]] || tps=0
     echo "$tps"
 }
 

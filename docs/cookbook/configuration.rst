@@ -43,9 +43,11 @@ The run YAML file is divided into three sections grouped inside
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
     ``run-local*.bash`` reads that marker plus the first ``nstlim`` it finds to choose
-    the segment length. Each invocation runs one segment, updates
-    ``md-current.rst7``/``md-previous.rst7`` plus ``md-*.out``, and returns; rerun the
-    script to continue until ``total_steps`` is reached.
+    the segment length. Each invocation runs one segment, writes an explicit
+    numbered restart such as ``md-01.rst7`` or ``md-02.rst7`` plus the matching
+    ``md-*.out``, and returns; rerun the script to continue until
+    ``total_steps`` is reached. Numbered ``md-*.rst7`` restart files are removed
+    after the production window is successfully marked ``FINISHED``.
 
 See Quick Reference below for links to individual config classes.
 

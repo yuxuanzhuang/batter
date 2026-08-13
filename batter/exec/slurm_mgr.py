@@ -940,7 +940,7 @@ class SlurmJobManager:
 
                 # Retry budget covers suspected simulation/job failures. Scheduler
                 # interruptions are unlimited because they are outside the window's
-                # control and can resume from rolling restart files.
+                # control and can resume from production restart files.
                 r = retries.get(wd, 0)
                 if (
                     not scheduler_interrupt_state

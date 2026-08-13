@@ -557,7 +557,7 @@ def test_run_equil_prior_failure_with_complete_md_marks_finished_without_rerun(
         " NSTEP =    2500   TIME(PS) =     674.000  TEMP(K) =   298.0\n",
     )
     _write_file(tmp_path / "md-01.nc", "nc\n")
-    _write_file(tmp_path / "md-current.rst7", _rst_with_time(674.0))
+    _write_file(tmp_path / "md-01.rst7", _rst_with_time(674.0))
 
     result = subprocess.run(
         cmd,
@@ -574,10 +574,11 @@ def test_run_equil_prior_failure_with_complete_md_marks_finished_without_rerun(
     assert (tmp_path / "FINISHED").exists()
     assert (tmp_path / "output.pdb").exists()
     assert (tmp_path / "md-01.nc").exists()
+    assert not (tmp_path / "md-01.rst7").exists()
     assert not (tmp_path / "ATTEMPT_FAILED").exists()
 
 
-def test_run_equil_keeps_current_restart_from_incomplete_segment(
+def test_run_equil_keeps_explicit_restart_from_incomplete_segment(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_equil_production(tmp_path)
@@ -586,7 +587,7 @@ def test_run_equil_keeps_current_restart_from_incomplete_segment(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =     668.000  TEMP(K) =   298.0\n",
     )
-    _write_file(tmp_path / "md-current.rst7", _rst_with_time(668.0))
+    _write_file(tmp_path / "md-01.rst7", _rst_with_time(668.0))
 
     result = subprocess.run(
         cmd,
@@ -599,9 +600,10 @@ def test_run_equil_keeps_current_restart_from_incomplete_segment(
 
     calls = _read_calls(tmp_path)
     assert "Running segment 2 -> md-02.out" in result.stdout
-    assert "restart_in=md-current.rst7" in result.stdout
+    assert "restart_in=md-01.rst7" in result.stdout
     assert "md-02.out" in calls
-    assert (tmp_path / "md-previous.rst7").exists()
+    assert (tmp_path / "md-01.rst7").exists()
+    assert (tmp_path / "md-02.rst7").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
 
 
@@ -634,7 +636,7 @@ EOF
         "--------------------------------------------------------------------------------\n",
     )
     _write_file(tmp_path / "md-01.nc", "nc\n")
-    _write_file(tmp_path / "md-current.rst7", _rst_with_time(668.0))
+    _write_file(tmp_path / "md-01.rst7", _rst_with_time(668.0))
 
     result = subprocess.run(
         cmd,
@@ -647,12 +649,13 @@ EOF
 
     assert "Archived zero-frame MD trajectory md-01.nc" in result.stdout
     assert "Running segment 1 -> md-01.out" in result.stdout
-    assert "restart_in=md-current.rst7" in result.stdout
+    assert "restart_in=eqnpt_appear.rst7" in result.stdout
     assert "md-01.out" in _read_calls(tmp_path)
-    assert (tmp_path / "md-previous.rst7").exists()
     assert (tmp_path / "md-01.nc").exists()
+    assert (tmp_path / "md-01.rst7").exists()
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.out"))
     assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.nc"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-01.rst7"))
 
 
 def test_run_equil_direct_step_failure_leaves_failed_marker(
