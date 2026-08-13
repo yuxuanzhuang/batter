@@ -1421,6 +1421,8 @@ _ACE_CAP_ATOM_ALIASES = {
     "HH32": "H2",
     "HH33": "H3",
 }
+_C_TERMINAL_CARBONYL_O_ALIASES = ("OT1", "OC1")
+_C_TERMINAL_OXT_ALIASES = ("OT2", "OC2", "O2", "O1")
 
 
 def _is_amber_protein_resname(resname: str) -> bool:
@@ -1620,6 +1622,105 @@ def _rewrite_ace_caps_for_leap(pdb_path: Path) -> int:
     if changed_residues:
         pdb_path.write_text("".join(rewritten))
     return len(changed_residues)
+
+
+def _rewrite_cterminal_oxygen_aliases_for_leap(pdb_path: Path) -> int:
+    """
+    Normalize C-terminal protein oxygen aliases before LEaP.
+
+    Some prepared protein PDBs carry terminal oxygens as ``OT1/OT2``,
+    ``OC1/OC2``, or an extra ``O1`` atom. Amber's C-terminal residue templates
+    expect the backbone carbonyl ``O`` and terminal ``OXT``; leaving aliases on
+    the terminal amino-acid residue creates untyped atoms such as ``CASP@O1``.
+    """
+    lines = pdb_path.read_text().splitlines(True)
+    rewritten: list[str] = []
+    block: list[str] = []
+    changed_count = 0
+
+    def flush_block() -> None:
+        nonlocal changed_count
+        if not block:
+            return
+
+        residue_keys = _residue_keys_in_order(block)
+        if not residue_keys:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        terminal_key = residue_keys[-1]
+        if not _is_amber_protein_resname(terminal_key[2]):
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        atom_names = _atom_names_for_residue(block, terminal_key)
+        rename: dict[str, str] = {}
+        drop: set[str] = set()
+        has_o = "O" in atom_names
+        has_oxt = "OXT" in atom_names
+
+        if not has_o:
+            for alias in _C_TERMINAL_CARBONYL_O_ALIASES:
+                if alias in atom_names:
+                    rename[alias] = "O"
+                    has_o = True
+                    break
+            if (
+                not has_o
+                and "O1" in atom_names
+                and any(alias in atom_names for alias in ("O2", "OT2", "OC2"))
+            ):
+                rename["O1"] = "O"
+                has_o = True
+
+        if has_oxt:
+            for alias in _C_TERMINAL_OXT_ALIASES:
+                if alias in atom_names:
+                    drop.add(alias)
+        else:
+            for alias in _C_TERMINAL_OXT_ALIASES:
+                if alias in atom_names and rename.get(alias) != "O":
+                    rename[alias] = "OXT"
+                    has_oxt = True
+                    break
+            if has_oxt:
+                for alias in _C_TERMINAL_OXT_ALIASES:
+                    if alias in atom_names and alias not in rename:
+                        drop.add(alias)
+
+        if not rename and not drop:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        changed = False
+        for line in block:
+            key = _pdb_residue_key(line)
+            atom_name = _pdb_atom_name(line)
+            if key == terminal_key and atom_name in drop:
+                changed = True
+                continue
+            if key == terminal_key and atom_name in rename:
+                line = _replace_pdb_atom_name(line, rename[atom_name])
+                changed = True
+            rewritten.append(line)
+        if changed:
+            changed_count += 1
+        block.clear()
+
+    for line in lines:
+        if line.startswith("TER"):
+            flush_block()
+            rewritten.append(line)
+        else:
+            block.append(line)
+    flush_block()
+
+    if changed_count:
+        pdb_path.write_text("".join(rewritten))
+    return changed_count
 
 
 def _rewrite_terminal_amide_caps_for_leap(
@@ -2544,6 +2645,14 @@ def create_box(ctx: BuildContext) -> None:
             "Rewrote {} ACE terminal cap(s) into Amber atom names before pre-solvation LEaP.",
             build_ace_cap_count,
         )
+    build_cterm_o_count = _rewrite_cterminal_oxygen_aliases_for_leap(
+        window_dir / "build.pdb"
+    )
+    if build_cterm_o_count:
+        logger.debug(
+            "Rewrote {} C-terminal oxygen alias residue(s) before pre-solvation LEaP.",
+            build_cterm_o_count,
+        )
 
     build_cap_count = _rewrite_terminal_amide_caps_for_leap(
         window_dir / "build.pdb",
@@ -2833,6 +2942,12 @@ def create_box(ctx: BuildContext) -> None:
             logger.debug(
                 "Rewrote {} ACE terminal cap(s) into Amber atom names before LEaP.",
                 ace_cap_count,
+            )
+        cterm_o_count = _rewrite_cterminal_oxygen_aliases_for_leap(solvate_pre_prot)
+        if cterm_o_count:
+            logger.debug(
+                "Rewrote {} C-terminal oxygen alias residue(s) before LEaP.",
+                cterm_o_count,
             )
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:

@@ -852,6 +852,57 @@ def test_rewrite_ace_cap_drops_duplicate_alias_atoms(tmp_path: Path) -> None:
     assert " OY  ACE" not in text
 
 
+def test_rewrite_cterminal_oxygen_alias_drops_duplicate_o1(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   ASP A 298       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  ASP A 298       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   ASP A 298       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   ASP A 298       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OXT ASP A 298       2.500   1.000   0.000  1.00  0.00           O",
+                "ATOM      6  O1  ASP A 298       2.510   1.010   0.010  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_cterminal_oxygen_aliases_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " OXT ASP A 298" in text
+    assert " O1  ASP A 298" not in text
+
+
+def test_rewrite_cterminal_oxygen_alias_renames_ot_pair(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   SER B   7       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  SER B   7       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   SER B   7       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  OT1 SER B   7       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OT2 SER B   7       2.500   1.000   0.000  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_cterminal_oxygen_aliases_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " O   SER B   7" in text
+    assert " OXT SER B   7" in text
+    assert " OT1 SER" not in text
+    assert " OT2 SER" not in text
+
+
 def test_rewrite_terminal_amide_cap_after_high_residues_uses_chain_local_id(
     tmp_path: Path,
 ) -> None:

@@ -1360,7 +1360,7 @@ def _run_from_yaml_impl(
     batch_mode = bool(getattr(rc.run, "batch_mode", False))
     if batch_mode:
         raise NotImplementedError('batch mode not implemented')
-    batch_poll = 10.0 if batch_mode else 60 * 15
+    batch_poll = 10.0 if batch_mode else 60.0
     registry_file = None if batch_mode else _slurm_registry_path(run_dir)
     job_mgr = SlurmJobManager(
         poll_s=batch_poll,

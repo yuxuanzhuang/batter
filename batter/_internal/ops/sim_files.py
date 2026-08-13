@@ -27,6 +27,16 @@ from parmed.amber.mask import AmberMask
 
 # ----------------------------- helpers ----------------------------- #
 
+DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000
+
+
+def _fe_production_chunk_steps(total_steps: int) -> int:
+    """Return per-submission FE production steps while preserving total sampling."""
+    total_steps = int(total_steps)
+    if total_steps <= 0:
+        return 0
+    return min(total_steps, DEFAULT_FE_PRODUCTION_CHUNK_STEPS)
+
 
 def _non_loop_mask_from_dssp_assignments(
     assignments: Sequence[str], *, min_len: int = 4, shift: int = 0
@@ -1004,6 +1014,7 @@ def _sim_files_d_sdr_charge_transfer(
     )
 
     mdin_template = windows_dir / "mdin-template"
+    chunk_steps = _fe_production_chunk_steps(int(steps2))
     with template_mdin.open("rt") as fin, mdin_template.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
         for line in fin:
@@ -1014,7 +1025,7 @@ def _sim_files_d_sdr_charge_transfer(
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
-                .replace("_num-steps_", str(steps2))
+                .replace("_num-steps_", str(chunk_steps))
             )
             line = _replace_d_sdr_tokens(
                 line,
@@ -1296,7 +1307,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # end eq.in
 
         # write mdin-template
-        n_steps_run = str(steps2)
+        n_steps_run = str(_fe_production_chunk_steps(int(steps2)))
         out_path = windows_dir / f"mdin-template"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
@@ -1427,7 +1438,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         )
 
         # production template
-        n_steps_run = str(steps2)
+        n_steps_run = str(_fe_production_chunk_steps(int(steps2)))
         out_path = windows_dir / "mdin-template"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
@@ -1565,10 +1576,12 @@ def _write_l_mdin_from_equil_template(
     total_steps: int,
     ntwx: int,
     eq_seed: bool,
+    chunk_steps: int | None = None,
     rest_ramp: tuple[float, float] | None = None,
     cmass_dumpfreq: int | None = None,
 ) -> None:
     inserted_rest_weight = False
+    nstlim_steps = int(chunk_steps if chunk_steps is not None else total_steps)
     with src.open("rt") as fin, dst.open("wt") as fout:
         if not eq_seed:
             fout.write(f"! total_steps={total_steps}\n")
@@ -1587,7 +1600,7 @@ def _write_l_mdin_from_equil_template(
             if re.search(r"\bmcwat\s*=", line):
                 line = "  mcwat = 0,\n"
             elif re.search(r"\bnstlim\s*=", line):
-                line = f"  nstlim = {int(total_steps)},\n"
+                line = f"  nstlim = {nstlim_steps},\n"
             elif re.search(r"\binfe\s*=", line):
                 line = "  infe = 0,\n"
             if rest_ramp is not None and "type='DUMPFREQ'" in line and not inserted_rest_weight:
@@ -1604,7 +1617,7 @@ def _write_l_mdin_from_equil_template(
                     line,
                 )
             line = (
-                line.replace("_num-steps_", str(int(total_steps)))
+                line.replace("_num-steps_", str(nstlim_steps))
                 .replace("_lig_name_", mol)
                 .replace("disang_file", "disang")
             )
@@ -1725,6 +1738,7 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         total_steps=n_steps,
         ntwx=ntwx,
         eq_seed=False,
+        chunk_steps=_fe_production_chunk_steps(n_steps),
         cmass_dumpfreq=ntwx,
     )
     _apply_restraintmask_length_limit(
@@ -1980,6 +1994,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     )
 
     # --- mdin-template (production) ---
+    chunk_steps = _fe_production_chunk_steps(int(steps2))
     out_path = windows_dir / "mdin-template"
     with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
@@ -1993,7 +2008,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(ntwprt_atoms))
-                .replace("_num-steps_", str(steps2))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("timk1", str(mk1))
                 .replace("timk2", str(mk2))
@@ -2206,7 +2221,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         cache_master=cache_master,
     )
 
-    # production template (single long segment)
+    # production template
+    chunk_steps = _fe_production_chunk_steps(int(n_steps))
     out_path = windows_dir / "mdin-template"
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
@@ -2226,7 +2242,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", str(n_steps))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2340,14 +2356,15 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         cache_master=cache_master,
     )
 
-    # production template (single long segment)
+    # production template
+    chunk_steps = _fe_production_chunk_steps(int(n_steps))
     out_path = windows_dir / "mdin-template"
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
         for line in fin:
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", str(n_steps))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")

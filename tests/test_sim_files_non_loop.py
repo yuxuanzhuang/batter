@@ -349,6 +349,32 @@ def test_write_l_mdin_uses_dense_cmass_dumpfreq_without_changing_ntwx(tmp_path: 
     assert "type='DUMPFREQ', istep1=1000" in text
 
 
+def test_write_l_mdin_can_chunk_production_nstlim(tmp_path: Path) -> None:
+    src = tmp_path / "mdin-equil"
+    dst = tmp_path / "mdin-template"
+    src.write_text(
+        "&cntrl\n"
+        "  nstlim = _num-steps_,\n"
+        "  infe = _enable_infe_,\n"
+        "/\n"
+    )
+
+    sim_files._write_l_mdin_from_equil_template(
+        src=src,
+        dst=dst,
+        mol="LIG",
+        replacements={"_enable_infe_": "0"},
+        total_steps=1_000_000,
+        chunk_steps=250_000,
+        ntwx=25_000,
+        eq_seed=False,
+    )
+
+    text = dst.read_text()
+    assert "! total_steps=1000000" in text
+    assert "nstlim = 250000" in text
+
+
 def test_modern_fe_templates_do_not_enable_infe() -> None:
     template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
 

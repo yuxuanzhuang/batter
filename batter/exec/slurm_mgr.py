@@ -35,6 +35,8 @@ SLURM_FINAL_BAD = {
     "OUT_OF_MEMORY",
 }
 JOBID_RE = re.compile(r"Submitted batch job\s+(\d+)", re.I)
+DEPRECATED_DEFAULT_GPU_CONSTRAINT = '#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"'
+DEFAULT_GPU_CONSTRAINT = '#SBATCH -C "GPU_GEN:AMP"'
 SLURM_SUBMIT_RATE_LIMIT_PATTERNS = (
     "reached jobs per hour limit",
     "job violates accounting/qos policy",
@@ -95,6 +97,14 @@ def _write_text(p: Path, txt: str) -> None:
     """Write ``txt`` to ``p`` creating parent directories as required."""
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(txt)
+
+
+def _normalize_default_gpu_constraint(header_text: str) -> str:
+    """Replace the stale default PSC constraint, which can allocate TITAN Xp nodes."""
+    return header_text.replace(
+        DEPRECATED_DEFAULT_GPU_CONSTRAINT,
+        DEFAULT_GPU_CONSTRAINT,
+    )
 
 
 def _format_workdir_label(path: Path) -> str:
@@ -1087,6 +1097,8 @@ class SlurmJobManager:
                     header_text = spec.header_template.read_text()
                 except Exception:
                     header_text = ""
+
+        header_text = _normalize_default_gpu_constraint(header_text)
 
         # Read body, drop baked-in SBATCH lines so header owns SBATCH. If we are
         # rebuilding from the already-rendered submit script, also remove the exact

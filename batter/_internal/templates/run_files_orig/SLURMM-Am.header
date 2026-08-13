@@ -15,7 +15,7 @@
 #SBATCH --mem-bind=local
 #SBATCH -t 16:00:00
 #SBATCH -d singleton
-#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+#SBATCH -C "GPU_GEN:AMP"
 
 # Change to the way you load Amber as needed for your system
 source /home/groups/rondror/software/amber26/setup_amber.sh > /dev/null 2>&1

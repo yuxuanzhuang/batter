@@ -14,7 +14,7 @@
 #SBATCH -d singleton
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:8
-#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+#SBATCH -C "GPU_GEN:AMP"
 #SBATCH --gpu_cmode="shared"
 #SBATCH --mem=200G
 
