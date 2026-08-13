@@ -52,6 +52,7 @@ from batter.orchestrate.markers import (
     is_done,
 )
 from batter.orchestrate.pipeline_utils import select_pipeline
+from batter.orchestrate.state_registry import get_phase_state
 from batter.orchestrate.results_io import (
     extract_ligand_metadata,
     save_fe_records,
@@ -1986,8 +1987,29 @@ def _run_from_yaml_impl(
             else "FE production not included for this protocol"
         )
         logger.info(f"{no_fe_reason}; ending run without FE record export.")
+        no_fe_phase_names = [
+            name
+            for name, phase_obj in (
+                ("prepare_equil", phase_prepare_equil),
+                ("equil", phase_equil),
+                ("equil_analysis", phase_equil_analysis),
+                ("pre_prepare_fe", phase_pre_prepare_fe),
+                ("pre_fe_equil", phase_pre_fe_equil),
+                ("prepare_fe", phase_prepare_fe),
+                ("fe_equil", phase_fe_equil),
+            )
+            if phase_obj.ordered_steps()
+        ]
         _notify_no_fe_record_completion(
-            rc, run_id, run_dir, unbound_children, no_fe_reason
+            rc,
+            run_id,
+            run_dir,
+            unbound_children,
+            no_fe_reason,
+            children_all=fe_children_all,
+            children_survived=children,
+            final_components=final_components,
+            phase_names=no_fe_phase_names,
         )
         return
 
@@ -2099,8 +2121,19 @@ def _notify_no_fe_record_completion(
     run_dir: Path,
     unbound_children: Sequence[SimSystem],
     reason: str,
+    *,
+    children_all: Sequence[SimSystem] | None = None,
+    children_survived: Sequence[SimSystem] | None = None,
+    final_components: Sequence[str] | None = None,
+    phase_names: Sequence[str] | None = None,
 ) -> None:
-    failures = _unbound_completion_failures(unbound_children)
+    failures = _no_fe_record_completion_failures(
+        unbound_children,
+        children_all=children_all,
+        children_survived=children_survived,
+        final_components=final_components,
+        phase_names=phase_names,
+    )
     if failures:
         failed = ", ".join(
             [
@@ -2119,17 +2152,167 @@ def _notify_no_fe_record_completion(
     )
 
 
-def _unbound_completion_failures(
+_NO_FE_DEFAULT_PHASES = (
+    "prepare_equil",
+    "equil",
+    "equil_analysis",
+    "pre_prepare_fe",
+    "pre_fe_equil",
+    "prepare_fe",
+    "fe_equil",
+)
+_NO_FE_PHASE_LABELS = {
+    "prepare_equil": "equilibration preparation",
+    "equil": "equilibration",
+    "equil_analysis": "equilibration analysis",
+    "pre_prepare_fe": "pre-FE preparation",
+    "pre_fe_equil": "pre-FE equilibration",
+    "prepare_fe": "FE preparation",
+    "fe_equil": "FE equilibration",
+}
+
+
+def _no_fe_record_completion_failures(
     unbound_children: Sequence[SimSystem],
+    *,
+    children_all: Sequence[SimSystem] | None = None,
+    children_survived: Sequence[SimSystem] | None = None,
+    final_components: Sequence[str] | None = None,
+    phase_names: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    return [
-        (
-            str(child.meta.get("ligand", child.name)),
-            "unbound",
-            "UNBOUND detected during equilibration",
+    failures: dict[str, tuple[str, str, str]] = {}
+
+    def add(child: SimSystem, status: str, reason: str) -> None:
+        ligand = str(child.meta.get("ligand", child.name))
+        failures.setdefault(ligand, (ligand, status, reason))
+
+    for child in unbound_children:
+        add(child, "unbound", "UNBOUND detected during equilibration")
+
+    if children_all is None:
+        return list(failures.values())
+
+    survived_roots = {
+        str(Path(child.root).resolve())
+        for child in (children_survived or [])
+    }
+    phases = tuple(phase_names or _NO_FE_DEFAULT_PHASES)
+    for child in children_all:
+        ligand = str(child.meta.get("ligand", child.name))
+        if ligand in failures:
+            continue
+        if str(Path(child.root).resolve()) in survived_roots:
+            continue
+        classified = _classify_no_fe_child_failure(
+            child,
+            phase_names=phases,
+            final_components=final_components,
         )
-        for child in unbound_children
-    ]
+        if classified is not None:
+            status, reason = classified
+        else:
+            status, reason = (
+                "failed",
+                "Ligand did not complete the requested equilibration workflow",
+            )
+        add(child, status, reason)
+    return list(failures.values())
+
+
+def _classify_no_fe_child_failure(
+    child: SimSystem,
+    *,
+    phase_names: Sequence[str],
+    final_components: Sequence[str] | None = None,
+) -> tuple[str, str] | None:
+    if (child.root / "equil" / "UNBOUND").exists():
+        return "unbound", "UNBOUND detected during equilibration"
+
+    for phase_name in phase_names:
+        components = _no_fe_components_for_phase(
+            child.root,
+            phase_name,
+            final_components=final_components,
+        )
+        spec = get_phase_state(child.root, phase_name)
+        if _no_fe_marker_spec_satisfied(
+            child.root,
+            spec.failure,
+            components=components,
+        ):
+            return (
+                "failed",
+                f"{_NO_FE_PHASE_LABELS.get(phase_name, phase_name)} failed",
+            )
+        success_spec = spec.success or spec.required
+        if not _no_fe_marker_spec_satisfied(
+            child.root,
+            success_spec,
+            components=components,
+        ):
+            return (
+                "failed",
+                f"{_NO_FE_PHASE_LABELS.get(phase_name, phase_name)} did not complete",
+            )
+    return None
+
+
+def _no_fe_components_for_phase(
+    root: Path,
+    phase_name: str,
+    *,
+    final_components: Sequence[str] | None = None,
+) -> list[str] | None:
+    if phase_name in {"pre_prepare_fe", "pre_fe_equil"}:
+        return ["z"]
+    if phase_name in {"prepare_fe", "fe_equil"} and final_components:
+        return [str(comp) for comp in final_components if str(comp)]
+    if phase_name in {"prepare_fe", "fe_equil"}:
+        fe_root = root / "fe"
+        if fe_root.exists():
+            comps = sorted(path.name for path in fe_root.iterdir() if path.is_dir())
+            if comps:
+                return comps
+    return None
+
+
+def _no_fe_marker_spec_satisfied(
+    root: Path,
+    spec: Sequence[Sequence[str]],
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
+    if not spec:
+        return False
+    for group in spec:
+        paths: list[Path] = []
+        for pattern in group:
+            expanded = _expand_no_fe_marker_pattern(
+                root,
+                str(pattern),
+                components=components,
+            )
+            if not expanded:
+                paths = []
+                break
+            paths.extend(expanded)
+        if paths and all(path.exists() for path in paths):
+            return True
+    return False
+
+
+def _expand_no_fe_marker_pattern(
+    root: Path,
+    pattern: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> list[Path]:
+    if "{comp" not in pattern:
+        return [root / pattern]
+    comp_values = [str(comp) for comp in (components or []) if str(comp)]
+    if not comp_values:
+        return []
+    return [root / pattern.replace("{comp}", comp) for comp in comp_values]
 
 
 def _notify_run_failure(

@@ -1582,6 +1582,76 @@ def test_notify_no_fe_record_completion_sends_only_equil_email(
     assert "- LIG (unbound): UNBOUND detected during equilibration" in sent["message"]
 
 
+def test_notify_no_fe_record_completion_reports_failed_equil_ligand(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    child = SimSystem(
+        name="sys:LIG:run1",
+        root=tmp_path / "simulations" / "LIG",
+        meta=SystemMeta(ligand="LIG"),
+    )
+    (child.root / "equil").mkdir(parents=True)
+    (child.root / "equil" / "prepare_equil.ok").write_text("ok\n")
+    (child.root / "equil" / "full.prmtop").write_text("parm\n")
+    (child.root / "equil" / "FAILED").write_text("FAILED\n")
+
+    run_mod._notify_no_fe_record_completion(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        [],
+        "FE production skipped (--only-equil)",
+        children_all=[child],
+        children_survived=[],
+        phase_names=["prepare_equil", "equil"],
+    )
+
+    assert "- LIG (failed): equilibration failed" in sent["message"]
+    assert "No ligand failures were detected." not in sent["message"]
+
+
+def test_notify_no_fe_record_completion_reports_pruned_missing_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    failed = SimSystem(
+        name="sys:FAILED:run1",
+        root=tmp_path / "simulations" / "FAILED",
+        meta=SystemMeta(ligand="FAILED"),
+    )
+    survived = SimSystem(
+        name="sys:OK:run1",
+        root=tmp_path / "simulations" / "OK",
+        meta=SystemMeta(ligand="OK"),
+    )
+    for child in (failed, survived):
+        (child.root / "equil").mkdir(parents=True)
+        (child.root / "equil" / "prepare_equil.ok").write_text("ok\n")
+        (child.root / "equil" / "full.prmtop").write_text("parm\n")
+    (survived.root / "equil" / "FINISHED").write_text("FINISHED\n")
+
+    run_mod._notify_no_fe_record_completion(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        [],
+        "FE production skipped (--only-equil)",
+        children_all=[failed, survived],
+        children_survived=[survived],
+        phase_names=["prepare_equil", "equil"],
+    )
+
+    assert "- FAILED (failed): equilibration did not complete" in sent["message"]
+    assert "- OK" not in sent["message"]
+
+
 def test_notify_run_completion_skips_when_sender_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
