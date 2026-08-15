@@ -284,6 +284,7 @@ class SimulationConfig(BaseModel):
                 _fe_attr("rocklin_correction", lambda: "no")
             ),
             "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
+            "mcwat_fe": coerce_yes_no(_fe_attr("mcwat_fe", lambda: "no")),
             "lambdas": base_lambdas,
             "component_windows": component_lambda_map,
             "blocks": int(_fe_attr("blocks", lambda: 0)),
@@ -551,6 +552,10 @@ class SimulationConfig(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration templates.",
     )
+    mcwat_fe: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable MC water exchange moves during FE production inputs.",
+    )
     temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
         1_000_000, description="Total equilibration steps (entire run)."
@@ -646,6 +651,7 @@ class SimulationConfig(BaseModel):
         "hmr",
         "rocklin_correction",
         "enable_mcwat",
+        "mcwat_fe",
         "remd",
         "ion_guard",
         "abfe_diff_pose_internal_restraints",

@@ -566,6 +566,11 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
+def test_simulation_config_mcwat_fe_defaults_to_no() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.mcwat_fe == "no"
+
+
 def test_simulation_config_ion_guard_defaults_to_yes() -> None:
     cfg = SimulationConfig(**base_sim_kwargs())
     assert cfg.ion_guard == "yes"
@@ -861,7 +866,7 @@ def test_n_bootstraps_default(tmp_path: Path) -> None:
         n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.n_bootstraps == 10
+    assert cfg.n_bootstraps == 50
 
 
 def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
@@ -926,6 +931,22 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"
+
+
+def test_mcwat_fe_propagates_from_fesim_args(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0, 1],
+        eq_steps=100,
+        mcwat_fe="on",
+        n_steps={"z": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert fe_args.mcwat_fe == "yes"
+    assert cfg.mcwat_fe == "yes"
+    assert FESimArgs(mcwat_fe="off").mcwat_fe == "no"
 
 
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:

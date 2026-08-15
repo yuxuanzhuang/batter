@@ -216,6 +216,74 @@ def test_mbar_bootstrap_guard_caps_large_request_by_sample_count(
     assert "Reduced MBAR bootstraps" in ana.results["bootstrap_warning"]
 
 
+def test_mbar_analysis_reports_endpoint_uncertainty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir(exist_ok=True)
+
+    class FakeMBAR:
+        def __init__(self, n_bootstraps=0):
+            pass
+
+        def fit(self, _u_df):
+            self.delta_f_ = pd.DataFrame(
+                [
+                    [0.0, 1.0, 2.0],
+                    [-1.0, 0.0, 1.0],
+                    [-2.0, -1.0, 0.0],
+                ]
+            )
+            self.d_delta_f_ = pd.DataFrame(
+                [
+                    [0.0, 0.1, 0.5],
+                    [0.1, 0.0, 0.1],
+                    [0.5, 0.1, 0.0],
+                ]
+            )
+            self.overlap_matrix = np.eye(3)
+            return self
+
+    monkeypatch.setattr(analysis_mod, "MBAR", FakeMBAR)
+    monkeypatch.setattr(analysis_mod.pickle, "dump", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        analysis_mod,
+        "forward_backward_convergence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("skip diagnostics")),
+    )
+
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1, 2],
+        temperature=300.0,
+        detect_equil=False,
+        n_bootstraps=0,
+        dt=0.004,
+    )
+    data_list = []
+    for state in (0.0, 1.0, 2.0):
+        index = pd.MultiIndex.from_arrays(
+            [np.arange(12, dtype=float), np.full(12, state)],
+            names=["time", "lambdas"],
+        )
+        data_list.append(
+            pd.DataFrame(
+                {0.0: np.zeros(12), 1.0: np.ones(12), 2.0: np.full(12, 2.0)},
+                index=index,
+            )
+        )
+    ana._data_list = data_list
+    ana._u_df = pd.concat(data_list)
+    ana._data_initialized = True
+
+    ana.run_analysis()
+
+    kT = 0.0019872041 * 300.0
+    adjacent_quadrature = np.sqrt(0.1**2 + 0.1**2) * kT
+    assert ana.results["fe_error"] == 0.5 * kT
+    assert ana.results["fe_error"] != adjacent_quadrature
+
+
 def test_boresch_analysis_selects_ligand_specific_tag(
     tmp_path: Path, monkeypatch
 ) -> None:

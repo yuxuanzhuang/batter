@@ -483,14 +483,9 @@ class MBARAnalysis(FEAnalysisBase):
         mbar.fit(self.u_df)
         self._mbar = mbar
 
-        # accumulate error in kT space then convert
-        err_kT = np.sqrt(
-            sum(
-                mbar.d_delta_f_.iloc[i, i + 1] ** 2
-                for i in range(len(mbar.d_delta_f_) - 1)
-            )
-        )
         delta_kT = mbar.delta_f_.iloc[0, -1]
+        # Use MBAR's end-to-end uncertainty; adjacent window errors are correlated.
+        err_kT = mbar.d_delta_f_.iloc[0, -1]
 
         if self.energy_unit == "kcal/mol":
             self.results["fe"] = float(delta_kT * self.kT)

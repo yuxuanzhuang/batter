@@ -27,7 +27,7 @@ from parmed.amber.mask import AmberMask
 
 # ----------------------------- helpers ----------------------------- #
 
-DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000
+DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000_000
 
 
 def _fe_production_chunk_steps(total_steps: int) -> int:
@@ -749,6 +749,29 @@ def _write_cmass_dump_block(handle, *, istep1: int | str, disang: str = "disang.
     handle.write("LISTOUT=POUT\n")
 
 
+def _mcwat_fe_enabled(sim) -> bool:
+    value = getattr(sim, "mcwat_fe", "no")
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text in {"yes", "true", "1", "on"}
+
+
+def _write_mcwat_block(handle, mask: str) -> None:
+    handle.write("  mcwat = 1,\n")
+    handle.write("  nmd = 1000,\n")
+    handle.write("  nmc = 1000,\n")
+    handle.write(f"  mcwatmask = \"{mask}\",\n")
+    handle.write("  mcligshift = 10,\n")
+    handle.write("  mcwatretry = 3000,\n")
+    handle.write("  mcresstr = \"WAT\",\n")
+
+
+def _write_mcwat_fe_block(handle, sim, mask: str) -> None:
+    if _mcwat_fe_enabled(sim):
+        _write_mcwat_block(handle, mask)
+
+
 def _component_l_cmass_dumpfreq(ntwx: int) -> int:
     """Use denser restraint-energy traces for component l than trajectory output."""
     return max(1, min(int(ntwx), 1000))
@@ -1037,6 +1060,7 @@ def _sim_files_d_sdr_charge_transfer(
             fout.write(line)
 
     with mdin_template.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, f":{mk1}")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
@@ -1329,6 +1353,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            _write_mcwat_fe_block(mdin, sim, ref_lig_in_site_mask)
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
@@ -1464,6 +1489,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            _write_mcwat_fe_block(mdin, sim, ref_lig_in_site_mask)
             mdin.write(f" \n mbar_states = {len(lambdas)}\n")
             mdin.write("  mbar_lambda =")
             for lbd in lambdas:
@@ -1579,8 +1605,13 @@ def _write_l_mdin_from_equil_template(
     chunk_steps: int | None = None,
     rest_ramp: tuple[float, float] | None = None,
     cmass_dumpfreq: int | None = None,
+    mcwat_fe_mask: str | None = None,
 ) -> None:
     inserted_rest_weight = False
+    mcwat_fe = bool(mcwat_fe_mask)
+    mcwat_mask = mcwat_fe_mask or ""
+    saw_mcwat = False
+    inserted_mcwat_block = False
     nstlim_steps = int(chunk_steps if chunk_steps is not None else total_steps)
     with src.open("rt") as fin, dst.open("wt") as fout:
         if not eq_seed:
@@ -1598,11 +1629,22 @@ def _write_l_mdin_from_equil_template(
                 elif re.search(r"\bdt\s*=", line):
                     line = "  dt = 0.002,\n"
             if re.search(r"\bmcwat\s*=", line):
-                line = "  mcwat = 0,\n"
+                line = "  mcwat = 1,\n" if mcwat_fe else "  mcwat = 0,\n"
+                saw_mcwat = True
+            elif mcwat_fe and re.search(r"\bmcwatmask\s*=", line):
+                line = f"  mcwatmask = \"{mcwat_mask}\",\n"
             elif re.search(r"\bnstlim\s*=", line):
                 line = f"  nstlim = {nstlim_steps},\n"
             elif re.search(r"\binfe\s*=", line):
                 line = "  infe = 0,\n"
+            elif (
+                mcwat_fe
+                and not saw_mcwat
+                and not inserted_mcwat_block
+                and re.match(r"\s*/\s*$", line)
+            ):
+                _write_mcwat_block(fout, mcwat_mask)
+                inserted_mcwat_block = True
             if rest_ramp is not None and "type='DUMPFREQ'" in line and not inserted_rest_weight:
                 fout.write(
                     " &wt type='REST', istep1=0, "
@@ -1624,6 +1666,8 @@ def _write_l_mdin_from_equil_template(
             for key, value in replacements.items():
                 line = line.replace(key, value)
             fout.write(line)
+        if mcwat_fe and not saw_mcwat and not inserted_mcwat_block:
+            _write_mcwat_block(fout, mcwat_mask)
 
 
 @register_sim_files("l")
@@ -1740,6 +1784,7 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         eq_seed=False,
         chunk_steps=_fe_production_chunk_steps(n_steps),
         cmass_dumpfreq=ntwx,
+        mcwat_fe_mask=f":{mol}" if _mcwat_fe_enabled(sim) else None,
     )
     _apply_restraintmask_length_limit(
         windows_dir / "mdin-template",
@@ -2020,6 +2065,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             if septop and re.search(r"\bgti_vdw_exp\b", line):
                 fout.write("  gti_bat_sc      = 1\n")
     with out_path.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, lig_in_site_mask)
         mdin.write(f" \n  mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
@@ -2251,6 +2297,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with out_path.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, f":{mol}")
         mdin.write(f" \n mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:

@@ -375,6 +375,45 @@ def test_write_l_mdin_can_chunk_production_nstlim(tmp_path: Path) -> None:
     assert "nstlim = 250000" in text
 
 
+def test_write_l_mdin_can_enable_mcwat_fe(tmp_path: Path) -> None:
+    src = tmp_path / "mdin-equil"
+    dst = tmp_path / "mdin-template"
+    src.write_text(
+        "&cntrl\n"
+        "  nstlim = _num-steps_,\n"
+        "  mcwat = _enable_mcwat_,\n"
+        "  nmd = 1000,\n"
+        "  nmc = 1000,\n"
+        "  mcwatmask = ':_lig_name_',\n"
+        "  mcligshift = 10,\n"
+        "  mcwatretry = 3000,\n"
+        "  mcresstr = \"WAT\",\n"
+        "  infe = _enable_infe_,\n"
+        "/\n"
+    )
+
+    sim_files._write_l_mdin_from_equil_template(
+        src=src,
+        dst=dst,
+        mol="LIG",
+        replacements={"_enable_infe_": "0"},
+        total_steps=1_000_000,
+        chunk_steps=250_000,
+        ntwx=25_000,
+        eq_seed=False,
+        mcwat_fe_mask=":291",
+    )
+
+    text = dst.read_text()
+    assert "  mcwat = 1,\n" in text
+    assert "  nmd = 1000,\n" in text
+    assert "  nmc = 1000,\n" in text
+    assert "  mcwatmask = \":291\",\n" in text
+    assert "  mcligshift = 10,\n" in text
+    assert "  mcwatretry = 3000,\n" in text
+    assert "  mcresstr = \"WAT\",\n" in text
+
+
 def test_modern_fe_templates_do_not_enable_infe() -> None:
     template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
 
@@ -628,6 +667,7 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
             ntwx=250,
             all_atoms="no",
             dec_method="sdr",
+            mcwat_fe="yes",
         ),
     )
 
@@ -647,6 +687,13 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
 
     assert "restraintmask = '(:1-2 | @3) & !@H='" in template_text
     assert "ntwprt = 6" in template_text
+    assert "  mcwat = 1,\n" in template_text
+    assert "  nmd = 1000,\n" in template_text
+    assert "  nmc = 1000,\n" in template_text
+    assert "  mcwatmask = \":1\",\n" in template_text
+    assert "  mcligshift = 10,\n" in template_text
+    assert "  mcwatretry = 3000,\n" in template_text
+    assert "  mcresstr = \"WAT\",\n" in template_text
 
     assert ":LIG" in mini_text
     assert "@3" not in mini_text
@@ -775,6 +822,7 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
     assert "@CA" not in template_text
     assert "nmropt = 1" in template_text
     assert ":LIG" not in template_text
+    assert "mcwat" not in template_text
 
     assert "timask1 = ':10,20'" in mini_text
     assert "timask2 = ':30'" in mini_text

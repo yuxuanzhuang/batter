@@ -79,7 +79,8 @@ Key :class:`~batter.config.simulation.SimulationConfig` fields and where they la
 * ``<comp>_n_steps`` → component writers in ``sim_files.py`` (per-window mdin-template markers).
 * ``analysis_start_step`` → stored in FE records and passed to analysis writers to skip early frames.
 * ``ntpr``/``ntwr``/``ntwx`` → substituted into mdin templates in ``sim_files.py`` (restart/trajectory cadence).
-* ``hmr``/``enable_mcwat`` → toggles template selection and template flags in ``write_amber_templates``.
+* ``hmr``/``enable_mcwat`` → toggles template selection and equilibration template flags in ``write_amber_templates``.
+* ``mcwat_fe`` → enables MC-water blocks in FE production templates written by ``sim_files.py``.
 
 Builder Lifecycle
 -----------------

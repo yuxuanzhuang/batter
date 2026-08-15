@@ -214,6 +214,9 @@ resolved :class:`~batter.config.simulation.SimulationConfig`:
 * ``enable_mcwat`` – ``"yes"`` (default) enables Monte Carlo water moves during
   equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
   :func:`batter._internal.ops.amber.write_amber_templates`.
+* ``mcwat_fe`` – ``"no"`` (default) enables the same MC-water move block in FE
+  production input templates when set to ``"yes"``. Runtime ``mdin-current``,
+  REMD, and batch inputs inherit it from the generated production template.
 
 REMD runs
 ---------

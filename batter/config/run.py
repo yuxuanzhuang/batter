@@ -569,6 +569,10 @@ class FESimArgs(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
+    mcwat_fe: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable MC water exchange moves during FE production inputs.",
+    )
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
     unbound_threshold: float = Field(
@@ -605,6 +609,7 @@ class FESimArgs(BaseModel):
         "rocklin_correction",
         "hmr",
         "enable_mcwat",
+        "mcwat_fe",
         "ion_guard",
         "abfe_diff_pose_internal_restraints",
         mode="before",

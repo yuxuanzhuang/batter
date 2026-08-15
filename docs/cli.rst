@@ -137,7 +137,7 @@ To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
 
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window. By default existing analysis outputs are preserved;
-pass ``--overwrite`` to regenerate them. Analysis uses 10 MBAR bootstrap resamples by
+pass ``--overwrite`` to regenerate them. Analysis uses 50 MBAR bootstrap resamples by
 default; pass ``--n-bootstrap`` to override this. Very sparse analyses may reduce or
 disable bootstrapping for that component and log the effective count in the component
 results JSON. Analysis failures are logged and skipped by default; pass
