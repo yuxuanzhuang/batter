@@ -626,6 +626,16 @@ def _run_phase_with_failure_policy(
         return current_children, False
 
 
+def _analysis_inner_workers(
+    *, requested_workers: int | None, n_ligands: int
+) -> int:
+    """Avoid nested joblib fan-out during multi-ligand analysis."""
+    configured = 1 if requested_workers is None else max(1, int(requested_workers))
+    if int(n_ligands) > 1:
+        return 1
+    return configured
+
+
 def _build_rbfe_network_plan(
     ligands: List[str],
     lig_map: Dict[str, str],
@@ -1954,11 +1964,24 @@ def _run_from_yaml_impl(
     # PHASE 6: analyze (parallel)
     # --------------------
     def _inject_analysis_workers(p: Pipeline) -> Pipeline:
+        default_analysis_workers = _analysis_inner_workers(
+            requested_workers=rc.run.max_workers,
+            n_ligands=len(children),
+        )
+        logger.debug(
+            "Analysis worker layout: outer max_workers={}, ligands={}, "
+            "inner analysis_n_workers={}",
+            rc.run.max_workers,
+            len(children),
+            default_analysis_workers,
+        )
         patched = []
         for s in p.ordered_steps():
-            payload = (s.payload or StepPayload()).copy_with(
-                analysis_n_workers=rc.run.max_workers
+            base_payload = s.payload or StepPayload()
+            analysis_workers = base_payload.get(
+                "analysis_n_workers", default_analysis_workers
             )
+            payload = base_payload.copy_with(analysis_n_workers=analysis_workers)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 

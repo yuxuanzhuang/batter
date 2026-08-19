@@ -368,6 +368,64 @@ def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
     assert preferred_names[0] == "C4"
 
 
+def test_guard_abfe_boresch_anchor_frame_reselects_p2_p3_to_keep_preferred_l1(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    fe_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 1, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 2, 0.0, 8.0, 0.0),
+                _pdb_line("ATOM", 3, "CA", "SER", "A", 3, 0.0, 16.0, 0.0),
+                _pdb_line("ATOM", 4, "CA", "THR", "A", 4, 0.0, 8.0, 8.0),
+                _pdb_line("HETATM", 5, "N1", "LIG", "L", 10, 4.0, 0.0, 0.0),
+                _pdb_line("HETATM", 6, "C2", "LIG", "L", 10, 4.0, 1.0, 1.0),
+                _pdb_line("HETATM", 7, "C3", "LIG", "L", 10, 4.0, 2.0, -1.0),
+                _pdb_line("HETATM", 8, "C4", "LIG", "L", 10, 5.0, 0.0, 2.0),
+                "END\n",
+            ]
+        )
+    )
+
+    p1, p2, p3, names = build_complex_mod._guard_abfe_boresch_anchor_frame(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="test",
+        P1=":1@CA",
+        P2=":2@CA",
+        P3=":3@CA",
+        lig_resid="10",
+        selected_names=["C2", "C3", "C4"],
+        preferred_first_names=["N1"],
+        allow_receptor_reselection=True,
+    )
+
+    assert (p1, p2, p3) == (":1@CA", ":2@CA", ":4@CA")
+    assert names[0] == "N1"
+
+    diagnostic = tmp_path / "boresch_anchor_guard.json"
+    build_complex_mod._write_abfe_anchor_guard_diagnostic(
+        path=diagnostic,
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="test",
+        lig_resid="10",
+        old_receptor_masks=(":1@CA", ":2@CA", ":3@CA"),
+        new_receptor_masks=(p1, p2, p3),
+        old_ligand_names=["C2", "C3", "C4"],
+        new_ligand_names=names,
+        preferred_first_names=["N1"],
+        allow_receptor_reselection=True,
+        user_anchor_triplet=False,
+    )
+    data = json.loads(diagnostic.read_text())
+    assert data["receptor"]["reselected"]
+    assert data["receptor"]["final"]["P3"]["amber_iat"] == 4
+    assert data["ligand"]["final"]["L1"]["name"] == "N1"
+    assert data["boresch"]["final"]["torsion_margin_deg"] >= 15.0
+
+
 def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
     tmp_path: Path,
 ) -> None:

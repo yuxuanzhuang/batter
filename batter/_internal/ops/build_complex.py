@@ -32,6 +32,7 @@ from batter._internal.ops.helpers import (
     get_buffer_z,
     get_sdr_dist,
     get_ligand_candidates,
+    num_to_mask,
     select_ions_away_from_complex,
     Anchors,
     revised_resids_for_lipid_fragments,
@@ -59,6 +60,28 @@ _PROTEIN_NEGATIVE_SALT_ATOMS = frozenset(
         ("GLU", "OE2"),
     }
 )
+_BORESCH_GUARD_HELPERS = None
+
+
+def _boresch_guard_helpers():
+    global _BORESCH_GUARD_HELPERS
+    if _BORESCH_GUARD_HELPERS is None:
+        from batter._internal.ops.restraints import (
+            BORESCH_MIN_ANGLE_MARGIN_DEG,
+            BORESCH_MIN_TORSION_MARGIN_DEG,
+            _boresch_frame_margins,
+            _boresch_frame_values,
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+
+        _BORESCH_GUARD_HELPERS = (
+            BORESCH_MIN_ANGLE_MARGIN_DEG,
+            BORESCH_MIN_TORSION_MARGIN_DEG,
+            _boresch_frame_margins,
+            _boresch_frame_values,
+            _frame_safe_boresch_atom_names_from_residue,
+        )
+    return _BORESCH_GUARD_HELPERS
 
 
 def _atom_is_hydrogen(atom) -> bool:
@@ -436,7 +459,603 @@ def _ligand_residue_for_boresch_guard(
     return atoms.residues[0]
 
 
-def _guard_abfe_boresch_ligand_anchor_names(
+def _anchor_mask_from_atom(atom) -> str:
+    return f":{int(atom.resid)}@{str(atom.name).strip()}"
+
+
+def _dedupe_atoms_by_index(atoms: Sequence[object]) -> list[object]:
+    selected: list[object] = []
+    seen: set[int] = set()
+    for atom in atoms:
+        if atom is None:
+            continue
+        idx = int(atom.index)
+        if idx in seen:
+            continue
+        seen.add(idx)
+        selected.append(atom)
+    return selected
+
+
+def _receptor_ca_anchor_candidates(u: mda.Universe, mol: str):
+    for selection in (
+        f"protein and name CA and not resname {mol}",
+        f"(not resname {mol}) and name CA",
+        "protein and name CA",
+        "name CA",
+    ):
+        try:
+            atoms = u.select_atoms(selection)
+        except Exception:
+            continue
+        if atoms.n_atoms >= 3:
+            return atoms
+    return u.atoms[:0]
+
+
+def _mask_index_from_atm_num(atm_num: Sequence[str], mask: str) -> int:
+    try:
+        return list(atm_num).index(mask)
+    except ValueError:
+        target = str(mask).lower()
+        matches = [
+            idx for idx, candidate in enumerate(atm_num)
+            if str(candidate).lower() == target
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        raise
+
+
+def _atom_record_for_diagnostic(
+    u: mda.Universe,
+    atm_num: Sequence[str],
+    mask: str | None,
+    *,
+    mol: str,
+    ligand: bool,
+) -> dict | None:
+    if not mask:
+        return None
+    atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=ligand)
+    if atom is None:
+        return {"input_mask": mask, "resolved": False}
+    amber_iat = int(atom.index) + 1
+    canonical_mask = atm_num[amber_iat] if amber_iat < len(atm_num) else _anchor_mask_from_atom(atom)
+    try:
+        input_amber_iat = _mask_index_from_atm_num(atm_num, str(mask))
+    except ValueError:
+        input_amber_iat = None
+    return {
+        "input_mask": mask,
+        "resolved": True,
+        "canonical_pdb_mask": canonical_mask,
+        "pdb_mask": _anchor_mask_from_atom(atom),
+        "input_amber_iat": input_amber_iat,
+        "amber_iat": amber_iat,
+        "pdb_serial": int(getattr(atom, "id", amber_iat)),
+        "atom_index0": int(atom.index),
+        "resid": int(atom.resid),
+        "resname": str(atom.resname).strip(),
+        "name": str(atom.name).strip(),
+        "segid": str(getattr(atom, "segid", "")).strip(),
+        "chainID": str(getattr(atom, "chainID", "")).strip(),
+    }
+
+
+def _boresch_values_for_masks(
+    u: mda.Universe,
+    receptor_masks: Sequence[str],
+    ligand_masks: Sequence[str],
+    *,
+    mol: str,
+) -> dict | None:
+    (
+        _min_angle_margin,
+        _min_torsion_margin,
+        _boresch_frame_margins,
+        _boresch_frame_values,
+        _,
+    ) = _boresch_guard_helpers()
+    receptor_atoms = [
+        _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
+        for mask in receptor_masks[:3]
+    ]
+    ligand_atoms = [
+        _atom_from_anchor_mask(u, mask, mol=mol, ligand=True)
+        for mask in ligand_masks[:3]
+    ]
+    if any(atom is None for atom in receptor_atoms + ligand_atoms):
+        return None
+    values = _boresch_frame_values(receptor_atoms, ligand_atoms)
+    if values is None:
+        return None
+    angle_margin, torsion_margin = _boresch_frame_margins(values)
+    return {
+        "values": [float(value) for value in values],
+        "angle_margin_deg": float(angle_margin),
+        "torsion_margin_deg": float(torsion_margin),
+    }
+
+
+def _write_abfe_anchor_guard_diagnostic(
+    *,
+    path: Path,
+    fe_pdb: Path,
+    mol: str,
+    ligand_label: str,
+    lig_resid: str,
+    old_receptor_masks: Sequence[str],
+    new_receptor_masks: Sequence[str],
+    old_ligand_names: Sequence[str],
+    new_ligand_names: Sequence[str],
+    preferred_first_names: Sequence[str],
+    allow_receptor_reselection: bool,
+    user_anchor_triplet: bool,
+) -> None:
+    try:
+        u = mda.Universe(str(fe_pdb))
+        atm_num = num_to_mask(fe_pdb)
+        old_ligand_masks = [f":{lig_resid}@{name}" for name in old_ligand_names[:3]]
+        new_ligand_masks = [f":{lig_resid}@{name}" for name in new_ligand_names[:3]]
+        data = {
+            "schema_version": 1,
+            "stage": "build_complex_z",
+            "source_pdb": str(fe_pdb),
+            "ligand_label": ligand_label,
+            "residue_name": mol,
+            "ligand_resid": str(lig_resid),
+            "preferred_first_names": _dedupe_names(preferred_first_names),
+            "allow_receptor_reselection": bool(allow_receptor_reselection),
+            "user_anchor_triplet": bool(user_anchor_triplet),
+            "receptor": {
+                "reselected": list(old_receptor_masks[:3]) != list(new_receptor_masks[:3]),
+                "old": {
+                    key: _atom_record_for_diagnostic(
+                        u,
+                        atm_num,
+                        mask,
+                        mol=mol,
+                        ligand=False,
+                    )
+                    for key, mask in zip(("P1", "P2", "P3"), old_receptor_masks[:3])
+                },
+                "final": {
+                    key: _atom_record_for_diagnostic(
+                        u,
+                        atm_num,
+                        mask,
+                        mol=mol,
+                        ligand=False,
+                    )
+                    for key, mask in zip(("P1", "P2", "P3"), new_receptor_masks[:3])
+                },
+            },
+            "ligand": {
+                "reselected": list(old_ligand_names[:3]) != list(new_ligand_names[:3]),
+                "old_names": list(old_ligand_names[:3]),
+                "final_names": list(new_ligand_names[:3]),
+                "old": {
+                    key: _atom_record_for_diagnostic(
+                        u,
+                        atm_num,
+                        mask,
+                        mol=mol,
+                        ligand=True,
+                    )
+                    for key, mask in zip(("L1", "L2", "L3"), old_ligand_masks)
+                },
+                "final": {
+                    key: _atom_record_for_diagnostic(
+                        u,
+                        atm_num,
+                        mask,
+                        mol=mol,
+                        ligand=True,
+                    )
+                    for key, mask in zip(("L1", "L2", "L3"), new_ligand_masks)
+                },
+            },
+            "boresch": {
+                "old": _boresch_values_for_masks(
+                    u,
+                    old_receptor_masks,
+                    old_ligand_masks,
+                    mol=mol,
+                ),
+                "final": _boresch_values_for_masks(
+                    u,
+                    new_receptor_masks,
+                    new_ligand_masks,
+                    mol=mol,
+                ),
+            },
+        }
+        path.write_text(json.dumps(data, indent=2) + "\n")
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not write Boresch anchor guard diagnostic {}: {}",
+            path,
+            exc,
+        )
+
+
+def _dihedral_degrees_from_positions(
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    p4: np.ndarray,
+) -> float | None:
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    p3 = np.asarray(p3, dtype=float)
+    p4 = np.asarray(p4, dtype=float)
+
+    b0 = -(p2 - p1)
+    b1 = p3 - p2
+    b2 = p4 - p3
+    norm = float(np.linalg.norm(b1))
+    if norm < 1.0e-12:
+        return None
+    b1 /= norm
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    if float(np.linalg.norm(v)) < 1.0e-12:
+        return None
+    if float(np.linalg.norm(w)) < 1.0e-12:
+        return None
+    x = float(np.dot(v, w))
+    y = float(np.dot(np.cross(b1, v), w))
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _boresch_values_from_positions(
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    l1: np.ndarray,
+    l2: np.ndarray,
+    l3: np.ndarray,
+) -> tuple[float, ...] | None:
+    values = (
+        _angle_degrees(p2, p1, l1),
+        _dihedral_degrees_from_positions(p3, p2, p1, l1),
+        _angle_degrees(p1, l1, l2),
+        _dihedral_degrees_from_positions(p2, p1, l1, l2),
+        _dihedral_degrees_from_positions(p1, l1, l2, l3),
+    )
+    if any(value is None or not np.isfinite(value) for value in values):
+        return None
+    return tuple(float(value) for value in values)
+
+
+def _preferred_l1_ligand_triplet_candidates(
+    residue,
+    preferred_first_names: Sequence[str],
+) -> list[dict]:
+    preferred_names = _dedupe_names(preferred_first_names)
+    if not preferred_names:
+        return []
+
+    atoms = [atom for atom in residue.atoms if not _atom_is_hydrogen(atom)]
+    if len(atoms) < 3:
+        return []
+
+    coords = {
+        int(atom.index): np.array(atom.position, dtype=float, copy=True)
+        for atom in atoms
+    }
+    all_positions = np.asarray([coords[int(atom.index)] for atom in atoms], dtype=float)
+    centroid = all_positions.mean(axis=0)
+    span = max(float(np.max(np.linalg.norm(all_positions - centroid, axis=1))), 1.0)
+
+    candidates: list[dict] = []
+    for preferred_rank, preferred_name in enumerate(preferred_names):
+        l1_atoms = [
+            atom for atom in atoms if str(atom.name).strip() == preferred_name
+        ]
+        for l1 in l1_atoms:
+            l1_pos = coords[int(l1.index)]
+            l1_centrality = float(np.linalg.norm(l1_pos - centroid) / span)
+            for l2 in atoms:
+                if int(l2.index) == int(l1.index):
+                    continue
+                l2_pos = coords[int(l2.index)]
+                d12 = float(np.linalg.norm(l2_pos - l1_pos))
+                if d12 < 0.5:
+                    continue
+                for l3 in atoms:
+                    if int(l3.index) in {int(l1.index), int(l2.index)}:
+                        continue
+                    l3_pos = coords[int(l3.index)]
+                    d13 = float(np.linalg.norm(l3_pos - l1_pos))
+                    d23 = float(np.linalg.norm(l3_pos - l2_pos))
+                    if min(d13, d23) < 0.5:
+                        continue
+                    area2 = float(
+                        np.linalg.norm(np.cross(l2_pos - l1_pos, l3_pos - l1_pos))
+                    )
+                    sine = area2 / max(d12 * d13, 1.0e-12)
+                    if sine < 0.25:
+                        continue
+
+                    spread = (min(d12, d13) + 0.5 * d23) / span
+                    local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                    candidates.append(
+                        {
+                            "preferred_rank": preferred_rank,
+                            "names": [
+                                str(l1.name).strip(),
+                                str(l2.name).strip(),
+                                str(l3.name).strip(),
+                            ],
+                            "positions": (l1_pos, l2_pos, l3_pos),
+                            "score": local_score,
+                        }
+                    )
+
+    candidates.sort(
+        key=lambda item: (
+            int(item["preferred_rank"]),
+            -float(item["score"]),
+            item["names"],
+        )
+    )
+    return candidates
+
+
+def _best_preferred_l1_triplet_for_receptor_frame(
+    *,
+    residue,
+    receptor_atoms: Sequence[object],
+    preferred_first_names: Sequence[str],
+    triplet_candidates: Sequence[dict] | None = None,
+) -> dict | None:
+    (
+        BORESCH_MIN_ANGLE_MARGIN_DEG,
+        BORESCH_MIN_TORSION_MARGIN_DEG,
+        _boresch_frame_margins,
+        _,
+        _,
+    ) = _boresch_guard_helpers()
+
+    candidates = list(triplet_candidates or [])
+    if not candidates:
+        candidates = _preferred_l1_ligand_triplet_candidates(
+            residue,
+            preferred_first_names,
+        )
+    if not candidates:
+        return None
+
+    if len(receptor_atoms) != 3:
+        return None
+    p1, p2, p3 = [
+        np.asarray(atom.position, dtype=float) for atom in receptor_atoms
+    ]
+
+    best: dict | None = None
+    for candidate in candidates:
+        l1, l2, l3 = candidate["positions"]
+        values = _boresch_values_from_positions(p1, p2, p3, l1, l2, l3)
+        if values is None:
+            continue
+        angle_margin, torsion_margin = _boresch_frame_margins(values)
+        if (
+            angle_margin < BORESCH_MIN_ANGLE_MARGIN_DEG
+            or torsion_margin < BORESCH_MIN_TORSION_MARGIN_DEG
+        ):
+            continue
+
+        endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
+        score = float(candidate["score"]) + endpoint_score
+        names = list(candidate["names"])
+        scored_candidate = {
+            "preferred_rank": int(candidate["preferred_rank"]),
+            "names": names,
+            "values": values,
+            "margins": (angle_margin, torsion_margin),
+            "score": score,
+        }
+        if best is None or (
+            int(scored_candidate["preferred_rank"]),
+            -float(scored_candidate["score"]),
+            names,
+        ) < (
+            int(best["preferred_rank"]),
+            -float(best["score"]),
+            best["names"],
+        ):
+            best = scored_candidate
+
+    return best
+
+
+def _select_receptor_p2_p3_for_preferred_l1(
+    *,
+    u: mda.Universe,
+    mol: str,
+    ligand_label: str,
+    residue,
+    p1_atom,
+    current_p2_atom,
+    current_p3_atom,
+    preferred_first_names: Sequence[str],
+    triplet_candidates: Sequence[dict] | None = None,
+    min_anchor_distance: float = 8.0,
+    max_candidates: int = 64,
+) -> dict | None:
+    ca_atoms = _receptor_ca_anchor_candidates(u, mol)
+    if ca_atoms.n_atoms < 3:
+        return None
+
+    triplet_candidates = list(triplet_candidates or [])
+    if not triplet_candidates:
+        triplet_candidates = _preferred_l1_ligand_triplet_candidates(
+            residue,
+            preferred_first_names,
+        )
+    if not triplet_candidates:
+        return None
+
+    p1_pos = np.asarray(p1_atom.position, dtype=float)
+    scored_atoms: list[tuple[float, float, int, object]] = []
+    for atom in ca_atoms:
+        if int(atom.index) == int(p1_atom.index):
+            continue
+        if int(atom.residue.ix) == int(p1_atom.residue.ix):
+            continue
+        distance_to_p1 = float(np.linalg.norm(np.asarray(atom.position, dtype=float) - p1_pos))
+        scored_atoms.append(
+            (
+                abs(distance_to_p1 - 10.0),
+                distance_to_p1,
+                int(atom.index),
+                atom,
+            )
+        )
+    scored_atoms.sort(key=lambda item: item[:3])
+    candidate_atoms = _dedupe_atoms_by_index(
+        [
+            current_p2_atom,
+            current_p3_atom,
+            *[item[3] for item in scored_atoms[: max(3, int(max_candidates))]],
+        ]
+    )
+
+    def _candidate_pairs(*, one_change_only: bool):
+        seen: set[tuple[int, int]] = set()
+        if one_change_only:
+            pairs = [
+                (current_p2_atom, p3_atom)
+                for p3_atom in candidate_atoms
+                if int(p3_atom.index) != int(current_p3_atom.index)
+            ]
+            pairs.extend(
+                (p2_atom, current_p3_atom)
+                for p2_atom in candidate_atoms
+                if int(p2_atom.index) != int(current_p2_atom.index)
+            )
+        else:
+            pairs = [
+                (p2_atom, p3_atom)
+                for p2_atom in candidate_atoms
+                for p3_atom in candidate_atoms
+                if (
+                    int(p2_atom.index) != int(current_p2_atom.index)
+                    or int(p3_atom.index) != int(current_p3_atom.index)
+                )
+            ]
+        for p2_atom, p3_atom in pairs:
+            key = (int(p2_atom.index), int(p3_atom.index))
+            if key in seen:
+                continue
+            seen.add(key)
+            yield p2_atom, p3_atom
+
+    def _score_receptor_pair(p2_atom, p3_atom) -> tuple[tuple, dict] | None:
+        if int(p2_atom.index) == int(p1_atom.index):
+            return None
+        if int(p2_atom.residue.ix) == int(p1_atom.residue.ix):
+            return None
+        d12 = float(np.linalg.norm(np.asarray(p2_atom.position, dtype=float) - p1_pos))
+        if d12 < float(min_anchor_distance):
+            return None
+        if int(p3_atom.index) in {int(p1_atom.index), int(p2_atom.index)}:
+            return None
+        if int(p3_atom.residue.ix) in {
+            int(p1_atom.residue.ix),
+            int(p2_atom.residue.ix),
+        }:
+            return None
+        d23 = float(
+            np.linalg.norm(
+                np.asarray(p3_atom.position, dtype=float)
+                - np.asarray(p2_atom.position, dtype=float)
+            )
+        )
+        if d23 < float(min_anchor_distance):
+            return None
+        receptor_angle = _angle_degrees(
+            p1_atom.position,
+            p2_atom.position,
+            p3_atom.position,
+        )
+        if not np.isfinite(receptor_angle):
+            return None
+        receptor_angle_margin = min(float(receptor_angle), 180.0 - float(receptor_angle))
+        if receptor_angle_margin < 15.0:
+            return None
+
+        receptor_atoms = (p1_atom, p2_atom, p3_atom)
+        triplet = _best_preferred_l1_triplet_for_receptor_frame(
+            residue=residue,
+            receptor_atoms=receptor_atoms,
+            preferred_first_names=preferred_first_names,
+            triplet_candidates=triplet_candidates,
+        )
+        if triplet is None:
+            return None
+
+        angle_margin, torsion_margin = triplet["margins"]
+        change_count = int(int(p2_atom.index) != int(current_p2_atom.index)) + int(
+            int(p3_atom.index) != int(current_p3_atom.index)
+        )
+        key = (
+            change_count,
+            int(triplet["preferred_rank"]),
+            -float(torsion_margin),
+            -float(angle_margin),
+            abs(float(receptor_angle) - 90.0),
+            abs(d12 - 10.0) + abs(d23 - 10.0),
+            int(p2_atom.index),
+            int(p3_atom.index),
+        )
+        result = {
+            "P2": _anchor_mask_from_atom(p2_atom),
+            "P3": _anchor_mask_from_atom(p3_atom),
+            "p2_atom": p2_atom,
+            "p3_atom": p3_atom,
+            "names": triplet["names"],
+            "values": triplet["values"],
+            "margins": triplet["margins"],
+            "receptor_angle": receptor_angle,
+            "d12": d12,
+            "d23": d23,
+        }
+        return key, result
+
+    best_key: tuple | None = None
+    best: dict | None = None
+    for one_change_only in (True, False):
+        for p2_atom, p3_atom in _candidate_pairs(one_change_only=one_change_only):
+            scored = _score_receptor_pair(p2_atom, p3_atom)
+            if scored is None:
+                continue
+            key, result = scored
+            if best_key is None or key < best_key:
+                best_key = key
+                best = result
+        if best is not None:
+            break
+
+    if best is not None:
+        logger.debug(
+            "[build_complex_z] Found alternate receptor P2/P3 for {} that keeps "
+            "preferred ligand L1 {}: P2={}, P3={}, ligand anchors={}, "
+            "Boresch margins=({:.1f}, {:.1f}) deg.",
+            ligand_label,
+            best["names"][0],
+            best["P2"],
+            best["P3"],
+            best["names"],
+            best["margins"][0],
+            best["margins"][1],
+        )
+    return best
+
+
+def _guard_abfe_boresch_anchor_frame(
     *,
     fe_pdb: Path,
     mol: str,
@@ -447,14 +1066,17 @@ def _guard_abfe_boresch_ligand_anchor_names(
     lig_resid: str,
     selected_names: Sequence[str],
     preferred_first_names: Sequence[str] = (),
-) -> list[str]:
-    """Avoid endpoint angle/torsion Boresch ligand-anchor triplets for ABFE."""
+    allow_receptor_reselection: bool = False,
+) -> tuple[str, str, str, list[str]]:
+    """Avoid endpoint Boresch frames, optionally changing P2/P3 to keep L1."""
     try:
-        from batter._internal.ops.restraints import (
+        (
+            _min_angle_margin,
+            _min_torsion_margin,
             _boresch_frame_margins,
             _boresch_frame_values,
             _frame_safe_boresch_atom_names_from_residue,
-        )
+        ) = _boresch_guard_helpers()
     except Exception as exc:
         logger.warning(
             "[build_complex_z] Could not import Boresch frame guard for {}; "
@@ -463,7 +1085,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
             list(selected_names[:3]),
             exc,
         )
-        return list(selected_names[:3])
+        return P1, P2, P3, list(selected_names[:3])
 
     try:
         u = mda.Universe(str(fe_pdb))
@@ -475,7 +1097,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
             list(selected_names[:3]),
             exc,
         )
-        return list(selected_names[:3])
+        return P1, P2, P3, list(selected_names[:3])
 
     receptor_atoms = []
     for mask in (P1, P2, P3):
@@ -488,7 +1110,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
                 fe_pdb.name,
                 list(selected_names[:3]),
             )
-            return list(selected_names[:3])
+            return P1, P2, P3, list(selected_names[:3])
         receptor_atoms.append(atom)
 
     residue = _ligand_residue_for_boresch_guard(u, mol=mol, lig_resid=lig_resid)
@@ -501,7 +1123,59 @@ def _guard_abfe_boresch_ligand_anchor_names(
             fe_pdb.name,
             list(selected_names[:3]),
         )
-        return list(selected_names[:3])
+        return P1, P2, P3, list(selected_names[:3])
+
+    preferred_names = _dedupe_names(preferred_first_names)
+    if preferred_names:
+        preferred_exc: Exception | None = None
+        triplet_candidates: list[dict] = []
+        try:
+            triplet_candidates = _preferred_l1_ligand_triplet_candidates(
+                residue,
+                preferred_names,
+            )
+            preferred_triplet = _best_preferred_l1_triplet_for_receptor_frame(
+                residue=residue,
+                receptor_atoms=receptor_atoms,
+                preferred_first_names=preferred_names,
+                triplet_candidates=triplet_candidates,
+            )
+        except Exception as exc:
+            preferred_triplet = None
+            preferred_exc = exc
+        if preferred_triplet is not None:
+            return P1, P2, P3, preferred_triplet["names"]
+        if allow_receptor_reselection:
+            alternate = _select_receptor_p2_p3_for_preferred_l1(
+                u=u,
+                mol=mol,
+                ligand_label=ligand_label,
+                residue=residue,
+                p1_atom=receptor_atoms[0],
+                current_p2_atom=receptor_atoms[1],
+                current_p3_atom=receptor_atoms[2],
+                preferred_first_names=preferred_names,
+                triplet_candidates=triplet_candidates,
+            )
+            if alternate is not None:
+                logger.debug(
+                    "[build_complex_z] Replacing receptor P2/P3 for {} to "
+                    "keep preferred ligand L1 {}: ({}, {}) -> ({}, {}).",
+                    ligand_label,
+                    alternate["names"][0],
+                    P2,
+                    P3,
+                    alternate["P2"],
+                    alternate["P3"],
+                )
+                return P1, alternate["P2"], alternate["P3"], alternate["names"]
+        logger.debug(
+            "[build_complex_z] Preferred ligand L1 {} for {} did not pass "
+            "the current/alternate receptor-frame guard: {}",
+            preferred_names,
+            ligand_label,
+            preferred_exc or "no safe preferred-L1 Boresch triplet",
+        )
 
     try:
         guarded_names = _frame_safe_boresch_atom_names_from_residue(
@@ -518,7 +1192,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
             list(selected_names[:3]),
             exc,
         )
-        return list(selected_names[:3])
+        return P1, P2, P3, list(selected_names[:3])
 
     residue_atoms_by_name = {
         str(atom.name).strip(): atom for atom in residue.atoms
@@ -534,7 +1208,7 @@ def _guard_abfe_boresch_ligand_anchor_names(
             fe_pdb.name,
             list(selected_names[:3]),
         )
-        return list(selected_names[:3])
+        return P1, P2, P3, list(selected_names[:3])
 
     values = _boresch_frame_values(receptor_atoms, ligand_atoms)
     margins = _boresch_frame_margins(values or ())
@@ -548,7 +1222,35 @@ def _guard_abfe_boresch_ligand_anchor_names(
             margins[0],
             margins[1],
         )
-    return guarded_names
+    return P1, P2, P3, guarded_names
+
+
+def _guard_abfe_boresch_ligand_anchor_names(
+    *,
+    fe_pdb: Path,
+    mol: str,
+    ligand_label: str,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_resid: str,
+    selected_names: Sequence[str],
+    preferred_first_names: Sequence[str] = (),
+) -> list[str]:
+    """Compatibility wrapper returning only guarded ligand anchor names."""
+    _p1, _p2, _p3, names = _guard_abfe_boresch_anchor_frame(
+        fe_pdb=fe_pdb,
+        mol=mol,
+        ligand_label=ligand_label,
+        P1=P1,
+        P2=P2,
+        P3=P3,
+        lig_resid=lig_resid,
+        selected_names=selected_names,
+        preferred_first_names=preferred_first_names,
+        allow_receptor_reselection=False,
+    )
+    return names
 
 
 def _pick_ligand_anchor_names(
@@ -1116,6 +1818,13 @@ def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
     return any(str(anchor).strip() for anchor in anchors)
 
 
+def _user_anchor_triplet_was_provided(extra: dict | None) -> bool:
+    if not extra:
+        return False
+    anchors = extra.get("user_anchor_atoms") or ()
+    return sum(1 for anchor in anchors if str(anchor).strip()) >= 3
+
+
 def _load_stable_boresch_distance(equil_dir: Path) -> dict | None:
     path = equil_dir / _STABLE_BORESCH_DISTANCE_JSON
     if not path.exists():
@@ -1327,19 +2036,6 @@ def _stable_preference_has_safe_boresch_frame(
     P2: str,
     P3: str,
 ) -> bool:
-    try:
-        from batter._internal.ops.restraints import (
-            _frame_safe_boresch_atom_names_from_residue,
-        )
-    except Exception as exc:
-        logger.warning(
-            "[build_complex_z] Could not import Boresch frame guard while checking "
-            "stable pair {}: {}",
-            preference.get("stable_ligand_name"),
-            exc,
-        )
-        return True
-
     receptor_atoms = []
     for mask in (preference["P1"], P2, P3):
         atom = _atom_from_anchor_mask(u, mask, mol=mol, ligand=False)
@@ -1361,21 +2057,53 @@ def _stable_preference_has_safe_boresch_frame(
         )
         return False
 
+    stable_ligand_name = str(preference["stable_ligand_name"]).strip()
+    triplet_candidates: list[dict] = []
     try:
-        _frame_safe_boresch_atom_names_from_residue(
+        triplet_candidates = _preferred_l1_ligand_triplet_candidates(
             residue,
+            [stable_ligand_name],
+        )
+        preferred_triplet = _best_preferred_l1_triplet_for_receptor_frame(
+            residue=residue,
             receptor_atoms=receptor_atoms,
-            label="ABFE stable-pair precheck",
-            preferred_first_names=[preference["stable_ligand_name"]],
-            require_preferred_first=True,
+            preferred_first_names=[stable_ligand_name],
+            triplet_candidates=triplet_candidates,
         )
     except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Could not run Boresch frame guard while checking "
+            "stable pair {}: {}",
+            stable_ligand_name,
+            exc,
+        )
+        return True
+    if preferred_triplet is None:
+        alternate = _select_receptor_p2_p3_for_preferred_l1(
+            u=u,
+            mol=mol,
+            ligand_label="ABFE stable-pair precheck",
+            residue=residue,
+            p1_atom=receptor_atoms[0],
+            current_p2_atom=receptor_atoms[1],
+            current_p3_atom=receptor_atoms[2],
+            preferred_first_names=[stable_ligand_name],
+            triplet_candidates=triplet_candidates,
+        )
+        if alternate is not None:
+            logger.debug(
+                "[build_complex_z] Stable pair P1={} L1={} requires alternate "
+                "P2/P3 for a full-frame Boresch guard; accepting for later "
+                "P2/P3 reselection.",
+                preference.get("P1"),
+                stable_ligand_name,
+            )
+            return True
         logger.debug(
             "[build_complex_z] Stable pair P1={} L1={} did not pass the "
-            "full-frame Boresch guard: {}",
+            "current/alternate full-frame Boresch guard.",
             preference.get("P1"),
-            preference.get("stable_ligand_name"),
-            exc,
+            stable_ligand_name,
         )
         return False
     return True
@@ -2515,7 +3243,20 @@ def build_complex_z(ctx) -> bool:
         raise FileNotFoundError(f"Missing {fe_pdb}")
     a = anchor_names
     if len(a) >= 3:
-        a = _guard_abfe_boresch_ligand_anchor_names(
+        old_receptor_masks = (P1, P2, P3)
+        old_ligand_names = list(a[:3])
+        preferred_first_names = _dedupe_names(
+            [
+                *salt_bridge_lig_names,
+                *(
+                    [stable_preference["stable_ligand_name"]]
+                    if stable_preference_applied and stable_preference is not None
+                    else []
+                ),
+            ]
+        )
+        user_anchor_triplet = _user_anchor_triplet_was_provided(extra)
+        P1, P2, P3, a = _guard_abfe_boresch_anchor_frame(
             fe_pdb=fe_pdb,
             mol=mol,
             ligand_label=ligand,
@@ -2524,16 +3265,22 @@ def build_complex_z(ctx) -> bool:
             P3=P3,
             lig_resid=lig_resid,
             selected_names=a,
-            preferred_first_names=_dedupe_names(
-                [
-                    *salt_bridge_lig_names,
-                    *(
-                        [stable_preference["stable_ligand_name"]]
-                        if stable_preference_applied and stable_preference is not None
-                        else []
-                    ),
-                ]
-            ),
+            preferred_first_names=preferred_first_names,
+            allow_receptor_reselection=not user_anchor_triplet,
+        )
+        _write_abfe_anchor_guard_diagnostic(
+            path=_p("boresch_anchor_guard.json"),
+            fe_pdb=fe_pdb,
+            mol=mol,
+            ligand_label=ligand,
+            lig_resid=lig_resid,
+            old_receptor_masks=old_receptor_masks,
+            new_receptor_masks=(P1, P2, P3),
+            old_ligand_names=old_ligand_names,
+            new_ligand_names=a,
+            preferred_first_names=preferred_first_names,
+            allow_receptor_reselection=not user_anchor_triplet,
+            user_anchor_triplet=user_anchor_triplet,
         )
     tagged.write_text(" ".join(a[:3]) + "\n")
     L1 = f":{lig_resid}@{a[0]}"

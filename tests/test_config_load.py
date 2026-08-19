@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS, DEFAULT_NTPR
 from batter.config.run import (
     CreateArgs,
     FESimArgs,
@@ -866,7 +867,8 @@ def test_n_bootstraps_default(tmp_path: Path) -> None:
         n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.n_bootstraps == 50
+    assert fe_args.n_bootstraps == DEFAULT_N_BOOTSTRAPS
+    assert cfg.n_bootstraps == DEFAULT_N_BOOTSTRAPS
 
 
 def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
@@ -879,6 +881,30 @@ def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.n_bootstraps == 64
+
+
+def test_ntpr_default(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert fe_args.ntpr == DEFAULT_NTPR
+    assert cfg.ntpr == DEFAULT_NTPR
+
+
+def test_ntpr_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        ntpr=500,
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.ntpr == 500
 
 
 def test_cinnabar_x_convergence_filter_default(tmp_path: Path) -> None:

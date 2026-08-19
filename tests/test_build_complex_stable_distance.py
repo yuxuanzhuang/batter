@@ -12,6 +12,7 @@ from batter._internal.ops.build_complex import (
     _apply_stable_boresch_distance_preference,
     _load_stable_boresch_distance,
     _user_anchor_atoms_were_provided,
+    _user_anchor_triplet_was_provided,
 )
 
 
@@ -139,6 +140,12 @@ def test_user_anchor_atoms_detects_explicit_config() -> None:
         {"user_anchor_atoms": ["resid 10 and name CA"]}
     )
     assert not _user_anchor_atoms_were_provided({"user_anchor_atoms": []})
+    assert not _user_anchor_triplet_was_provided(
+        {"user_anchor_atoms": ["resid 10 and name CA"]}
+    )
+    assert _user_anchor_triplet_was_provided(
+        {"user_anchor_atoms": ["a", "b", "c"]}
+    )
 
 
 def test_stable_boresch_loader_ignores_stale_and_unusable_records(

@@ -823,6 +823,92 @@ def test_append_x_septop_boresch_uses_reduced_small_endpoint(
     assert "Skipping SEPTOP Boresch restraints" not in disang_text
 
 
+def test_append_x_septop_boresch_reselects_receptor_frame_to_keep_stable_l1(
+    tmp_path: Path,
+) -> None:
+    windows_dir = tmp_path / "x00"
+    windows_dir.mkdir()
+    build_dir = tmp_path / "x_build_files"
+    build_dir.mkdir()
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  GLY A   2       0.000   8.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  SER A   3       0.000  16.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  CA  THR A   4       0.000   8.000   8.000  1.00  0.00           C\n",
+                "HETATM    5  N1  REF L  10       4.000   0.000   0.000  1.00  0.00           N\n",
+                "HETATM    6  C1  REF L  10       4.000   1.000   1.000  1.00  0.00           C\n",
+                "HETATM    7  C2  REF L  10       4.000   2.000  -1.000  1.00  0.00           C\n",
+                "HETATM    8  O1  REF L  10       5.000   0.000   2.000  1.00  0.00           O\n",
+                "HETATM    9  N1  ALT M  11       4.200   0.000   0.300  1.00  0.00           N\n",
+                "HETATM   10  C1  ALT M  11       4.200   1.000   1.300  1.00  0.00           C\n",
+                "HETATM   11  C2  ALT M  11       4.200   2.000  -0.700  1.00  0.00           C\n",
+                "HETATM   12  O1  ALT M  11       5.200   0.000   2.300  1.00  0.00           O\n",
+                "END\n",
+            ]
+        )
+    )
+    for path in [windows_dir / "full.prmtop", windows_dir / "full.inpcrd"]:
+        path.write_text("stub\n")
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":10@C1",
+                "L2": ":10@C2",
+                "L3": ":10@O1",
+                "lig_res": "10",
+            }
+        )
+    )
+    for ligand in ("ref", "alt"):
+        stable_dir = tmp_path / "simulations" / ligand / "equil"
+        stable_dir.mkdir(parents=True)
+        (stable_dir / "stable_boresch_distance.json").write_text(
+            json.dumps({"usable": True, "ligand": {"name": "N1"}})
+        )
+
+    ctx = types.SimpleNamespace(
+        build_dir=build_dir,
+        window_dir=windows_dir,
+        system_root=tmp_path,
+        ligand="ref",
+        residue_name="REF",
+        comp="x",
+        extra={
+            "ligand_ref": "ref",
+            "ligand_alt": "alt",
+            "residue_ref": "REF",
+            "residue_alt": "ALT",
+            "user_anchor_atoms": [],
+        },
+        sim=types.SimpleNamespace(hmr="no", dec_method="dd", rest=[0, 0, 5, 250, 0, 10, 20]),
+    )
+
+    original_assign = restraints._write_assign_and_read_vals
+    try:
+        restraints._write_assign_and_read_vals = (
+            lambda _workdir, exprs, *_args, **_kwargs: [1.0] * len(exprs)
+        )
+        exprs = restraints._append_x_septop_boresch_restraints(ctx, disang)
+    finally:
+        restraints._write_assign_and_read_vals = original_assign
+
+    diagnostic = json.loads((windows_dir / "boresch_anchor_guard.json").read_text())
+    assert diagnostic["receptor"]["reselected"]
+    assert diagnostic["receptor"]["final"]["P3"]["input_mask"] == ":4@CA"
+    assert diagnostic["endpoints"]["ref"]["final_ligand_names"][0] == "N1"
+    assert diagnostic["endpoints"]["alt"]["final_ligand_names"][0] == "N1"
+    assert diagnostic["endpoints"]["ref"]["final"]["L1"]["amber_iat"] == 5
+    assert any(":4@CA" in expr for expr in exprs)
+
+
 def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
     windows_dir = tmp_path / "y00"
     windows_dir.mkdir()

@@ -76,6 +76,12 @@ def test_preflight_required_python_packages_passes_when_available(
     run_mod._preflight_required_python_packages()
 
 
+def test_analysis_inner_workers_avoids_nested_parallelism() -> None:
+    assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=6) == 1
+    assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=1) == 8
+    assert run_mod._analysis_inner_workers(requested_workers=None, n_ligands=1) == 1
+
+
 def test_existing_ligand_input_guard_allows_same_ligand_set(tmp_path: Path) -> None:
     staged = tmp_path / "run1" / "simulations" / "LIG1" / "inputs" / "ligand.sdf"
     run_mod._raise_if_existing_ligand_input_changed(

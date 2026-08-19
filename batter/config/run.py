@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
-from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS, DEFAULT_NTPR
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.remd import RemdArgs
 from batter.config.utils import (
@@ -555,7 +555,7 @@ class FESimArgs(BaseModel):
         default_factory=lambda: {"x": 300_000, "y": 300_000},
         description="Total production steps per component (key = letter).",
     )
-    ntpr: int = Field(100, description="Energy print frequency.")
+    ntpr: int = Field(DEFAULT_NTPR, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -823,7 +823,7 @@ class MDSimArgs(BaseModel):
         ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
-    ntpr: int = Field(100, description="Energy print frequency.")
+    ntpr: int = Field(DEFAULT_NTPR, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
