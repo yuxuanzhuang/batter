@@ -1144,7 +1144,6 @@ def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
         handle.write("# Bulk ligand z flat-bottom restraint\n")
         handle.write("&rst\n")
         handle.write("  iat=-1,-1,\n")
-        handle.write("  fxyz=0,0,1,\n")
         handle.write(
             "  r1=-999.0, "
             f"r2={-BULK_LIGAND_RESTRAINT_HALF_WIDTH:.1f}, "
