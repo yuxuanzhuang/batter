@@ -270,6 +270,18 @@ def _equil_anchor_masks_to_original_resids(
     return out
 
 
+def _equil_anchor_masks_for_analysis_topology(
+    equil_dir: Path,
+    protein_renum_path: Path,
+    *,
+    uses_amber_topology: bool,
+) -> list[str]:
+    masks = _load_equil_anchor_masks(equil_dir)
+    if uses_amber_topology:
+        return masks
+    return _equil_anchor_masks_to_original_resids(masks, protein_renum_path)
+
+
 def _trailing_analysis_start_frame(n_frames: int, tail_fraction: float) -> int:
     if not 0 < tail_fraction <= 1:
         raise ValueError("tail_fraction must be in the interval (0, 1].")
@@ -2102,11 +2114,13 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
             )
         topology = p["equil_dir"] / prmtop
-        analysis_topology = topology if topology.exists() else p["full_pdb"]
+        uses_amber_topology = topology.exists()
+        analysis_topology = topology if uses_amber_topology else p["full_pdb"]
         u = _mda().Universe(str(analysis_topology), [str(t) for t in trajs])
-        anchor_masks = _equil_anchor_masks_to_original_resids(
-            _load_equil_anchor_masks(p["equil_dir"]),
+        anchor_masks = _equil_anchor_masks_for_analysis_topology(
+            p["equil_dir"],
             p["prot_renum"],
+            uses_amber_topology=uses_amber_topology,
         )
         sim_val = _sim_validator_cls()(
             u,

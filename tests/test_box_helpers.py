@@ -49,6 +49,25 @@ def _format_prmtop_names(values: list[str], per_line: int = 20) -> str:
     )
 
 
+def test_first_atom_position_uses_first_atom_not_center_of_mass(tmp_path: Path) -> None:
+    pdb = tmp_path / "lig.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 1.0, 2.0, 3.0, "C"),
+                _pdb_atom(2, "C2", "LIG", "A", 1, 7.0, 8.0, 9.0, "C"),
+                "END\n",
+            ]
+        )
+    )
+    universe = mda.Universe(str(pdb))
+
+    np.testing.assert_allclose(
+        box._first_atom_position(universe.select_atoms("resname LIG")),
+        [1.0, 2.0, 3.0],
+    )
+
+
 def _write_minimal_prmtop(
     path: Path,
     *,

@@ -671,11 +671,13 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
     text = disang.read_text()
     assert written == 1
     assert "#Bulk_Lig_Z" in text
-    assert "iat=2,4," in text
+    assert "iat=-1,-1," in text
     assert "fxyz=0,0,1," in text
     assert "outxyz=1," in text
     assert "r1=-999.0, r2=-3.0, r3=3.0, r4=999.0," in text
-    assert "rk2=10, rk3=10," in text
+    assert "rk2=10.0, rk3=10.0," in text
+    assert "igr1=2,0," in text
+    assert "igr2=4,0," in text
 
 
 def test_ion_guard_can_be_disabled(tmp_path: Path) -> None:

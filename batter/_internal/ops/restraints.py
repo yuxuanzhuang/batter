@@ -25,9 +25,9 @@ ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs t
 ION_GUARD_DISTANCE = 15.0
 ION_GUARD_FORCE = 10.0
 ION_GUARD_TAG = "Ion_Guard"
-BULK_LIGAND_Z_RESTRAINT_HALF_WIDTH = 3.0
-BULK_LIGAND_Z_RESTRAINT_FORCE = 10.0
-BULK_LIGAND_Z_RESTRAINT_TAG = "Bulk_Lig_Z"
+BULK_LIGAND_RESTRAINT_HALF_WIDTH = 3.0
+BULK_LIGAND_RESTRAINT_FORCE = 10.0
+BULK_LIGAND_RESTRAINT_TAG = "Bulk_Lig"
 COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
 ABFE_DIFF_POSE_RADIUS = 8.0
 ABFE_DIFF_POSE_MAX_ANCHORS = 8
@@ -1104,7 +1104,7 @@ def _first_ligand_atom_indices(
     return refs
 
 
-def _append_bulk_ligand_z_restraint(ctx: BuildContext, disang: Path) -> int:
+def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
     """Append the z-only flat-bottom restraint between site and bulk ligand atoms."""
     comp = str(getattr(ctx, "comp", "")).lower()
     if comp != "z":
@@ -1143,24 +1143,25 @@ def _append_bulk_ligand_z_restraint(ctx: BuildContext, disang: Path) -> int:
             handle.write("\n")
         handle.write("# Bulk ligand z flat-bottom restraint\n")
         handle.write("&rst\n")
-        handle.write(f"  iat=2,{bulk_idx},\n")
+        handle.write("  iat=-1,-1,\n")
         handle.write("  fxyz=0,0,1,\n")
-        handle.write("  outxyz=1,\n")
         handle.write(
             "  r1=-999.0, "
-            f"r2={-BULK_LIGAND_Z_RESTRAINT_HALF_WIDTH:.1f}, "
-            f"r3={BULK_LIGAND_Z_RESTRAINT_HALF_WIDTH:.1f}, "
+            f"r2={-BULK_LIGAND_RESTRAINT_HALF_WIDTH:.1f}, "
+            f"r3={BULK_LIGAND_RESTRAINT_HALF_WIDTH:.1f}, "
             "r4=999.0,\n"
         )
         handle.write(
-            f"  rk2={BULK_LIGAND_Z_RESTRAINT_FORCE:g}, "
-            f"rk3={BULK_LIGAND_Z_RESTRAINT_FORCE:g},\n"
+            f"  rk2={BULK_LIGAND_RESTRAINT_FORCE:.1f}, "
+            f"rk3={BULK_LIGAND_RESTRAINT_FORCE:.1f},\n"
         )
-        handle.write(f"&end #{BULK_LIGAND_Z_RESTRAINT_TAG}\n")
+        handle.write(f"  igr1=2,0,\n")
+        handle.write(f"  igr2={bulk_idx},0,\n")
+        handle.write(f"&end #{BULK_LIGAND_RESTRAINT_TAG}\n")
 
     logger.debug(
         f"[restraints:{comp}] bulk ligand z restraint wrote site atom "
-        f"{site_idx} to bulk atom {bulk_idx}"
+        f"2 to bulk atom {bulk_idx}"
     )
     return 1
 
@@ -1676,7 +1677,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                 except Exception:
                     logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
-    _append_bulk_ligand_z_restraint(ctx, disang)
+    _append_BULK_LIGAND_restraint(ctx, disang)
     _append_ion_guard_restraints(ctx, disang, ligand_resnames=[mol])
     _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver

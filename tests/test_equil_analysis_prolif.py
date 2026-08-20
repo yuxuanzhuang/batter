@@ -11,6 +11,7 @@ mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 from batter.exec.handlers.equil_analysis import (
     PROLIF_ARTIFACT_FILENAMES,
     _copy_equil_analysis_artifacts,
+    _equil_anchor_masks_for_analysis_topology,
     _equil_anchor_masks_to_original_resids,
     _load_equil_anchor_masks,
     _load_no_equil_representative_universe,
@@ -50,6 +51,46 @@ def test_equil_anchor_masks_convert_to_original_resids_with_dum_offset(
         [":79@CA", ":84@CA", ":117@CA"],
         renum,
     ) == [":387@CA", ":392@CA", ":425@CA"]
+
+
+def test_analysis_topology_keeps_prepared_anchor_masks_for_amber_topology(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "anchors.json").write_text(
+        '{"P1": ":85@CA", "P2": ":51@CA", "P3": ":262@CA"}\n'
+    )
+    renum = tmp_path / "protein_renum.txt"
+    renum.write_text(
+        "ASP A 113 ASP 84\n"
+        "ASP A 79 ASP 50\n"
+        "ASN C 318 ASN 261\n"
+    )
+
+    assert _equil_anchor_masks_for_analysis_topology(
+        tmp_path,
+        renum,
+        uses_amber_topology=True,
+    ) == [":85@CA", ":51@CA", ":262@CA"]
+
+
+def test_analysis_topology_converts_anchor_masks_for_pdb_fallback(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "anchors.json").write_text(
+        '{"P1": ":85@CA", "P2": ":51@CA", "P3": ":262@CA"}\n'
+    )
+    renum = tmp_path / "protein_renum.txt"
+    renum.write_text(
+        "ASP A 113 ASP 84\n"
+        "ASP A 79 ASP 50\n"
+        "ASN C 318 ASN 261\n"
+    )
+
+    assert _equil_anchor_masks_for_analysis_topology(
+        tmp_path,
+        renum,
+        uses_amber_topology=False,
+    ) == [":113@CA", ":79@CA", ":318@CA"]
 
 
 def test_prolif_dataframe_records_persistent_protein_residues() -> None:

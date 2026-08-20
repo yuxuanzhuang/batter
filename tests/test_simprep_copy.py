@@ -1,6 +1,8 @@
 import math
 from types import SimpleNamespace
 
+import numpy as np
+
 from batter._internal.ops import simprep
 
 
@@ -38,6 +40,47 @@ def test_read_ligand_anchor_names_allows_single_apo_anchor(tmp_path):
     anchors.write_text("DU1\n")
 
     assert simprep._read_ligand_anchor_names(anchors) == ("DU1", None, None)
+
+
+def test_create_simulation_dir_lig_places_dum_at_first_ligand_atom(tmp_path):
+    system_root = tmp_path / "system"
+    build_dir = tmp_path / "build"
+    amber_dir = tmp_path / "amber"
+    equil_dir = tmp_path / "equil"
+    params_dir = system_root / "simulations" / "lig" / "params"
+    build_dir.mkdir()
+    amber_dir.mkdir()
+    params_dir.mkdir(parents=True)
+    (build_dir / "LIG.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       1.000   2.000   3.000  0.00  0.00\n"
+        "ATOM      2  C2  LIG A   1       7.000   8.000   9.000  0.00  0.00\n"
+        "END\n"
+    )
+    (build_dir / "dum.prmtop").write_text("dum prmtop\n")
+    (build_dir / "dum.inpcrd").write_text("dum rst\n")
+    ctx = SimpleNamespace(
+        residue_name="LIG",
+        ligand="lig",
+        system_root=system_root,
+        build_dir=build_dir,
+        amber_dir=amber_dir,
+        equil_dir=equil_dir,
+    )
+
+    simprep.create_simulation_dir_lig(ctx)
+
+    dum_line = next(
+        line for line in (equil_dir / "build.pdb").read_text().splitlines()
+        if simprep._is_atom_line(line) and simprep._field(line, 17, 20) == "DUM"
+    )
+    np.testing.assert_allclose(
+        [
+            float(simprep._field(dum_line, 30, 38)),
+            float(simprep._field(dum_line, 38, 46)),
+            float(simprep._field(dum_line, 46, 54)),
+        ],
+        [1.0, 2.0, 3.0],
+    )
 
 
 def test_write_build_from_aligned_uses_first_atom_in_dum_pdb(tmp_path):

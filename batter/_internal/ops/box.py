@@ -38,6 +38,12 @@ from batter._internal.ops.ring_repair import (
 pmd = import_parmed()
 
 
+def _first_atom_position(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    if atoms.n_atoms == 0:
+        raise ValueError("Cannot place DUM atom from an empty atom group.")
+    return np.asarray(atoms[0].position, dtype=float).copy()
+
+
 def _pdb_residue_records(path: Path) -> list[tuple[str, str, int]]:
     records: list[tuple[str, str, int]] = []
     seen: set[tuple[str, str, int]] = set()
@@ -2956,7 +2962,7 @@ def create_box(ctx: BuildContext) -> None:
         final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
         ligand_residues = final_system.select_atoms(f"resname {mol}").residues
         if comp in {"z", "d"} and len(final_system_dum) > 1 and len(ligand_residues) > 1:
-            final_system_dum[1].position = ligand_residues[1].atoms.center_of_mass()
+            final_system_dum[1].position = _first_atom_position(ligand_residues[1].atoms)
         final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
         final_system_ligs = final_system.select_atoms(f"resname {mol}")

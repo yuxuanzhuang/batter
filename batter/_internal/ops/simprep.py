@@ -73,6 +73,12 @@ def _heavy_or_all_center_of_mass(atoms: mda.core.groups.AtomGroup) -> np.ndarray
     return atoms.center_of_mass()
 
 
+def _first_atom_position(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    if atoms.n_atoms == 0:
+        raise ValueError("Cannot place DUM atom from an empty atom group.")
+    return np.asarray(atoms[0].position, dtype=float).copy()
+
+
 def _safe_resid(resid: int) -> int:
     """Clamp resid into PDB 1..9999 domain."""
     r = resid % 10000
@@ -1691,11 +1697,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
-    if septop:
-        dum_l.position = _heavy_or_all_center_of_mass(ref_res_atoms)
-    else:
-        mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
-        dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
+    dum_l.position = _first_atom_position(ref_res_atoms)
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
@@ -1802,15 +1804,15 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
         _copy_if_exists(p, dest_dir / p.name)
 
     # write build.pdb with dum atom + ligand
-    # the position of the DUM atom is the center of mass of the ligand
+    # the position of the DUM atom is the first ligand atom
     u_lig = mda.Universe(dest_dir / f"{mol}.pdb")
-    com = u_lig.atoms.center_of_mass()
+    dum_position = _first_atom_position(u_lig.atoms)
     u_dum = mda.Universe.empty(
         1, n_residues=1, atom_resindex=[0], residue_segindex=[0], trajectory=True
     )
     u_dum.add_TopologyAttr("name", ["Pb"])
     u_dum.add_TopologyAttr("resname", ["DUM"])
-    u_dum.atoms.positions = np.array([com])
+    u_dum.atoms.positions = np.array([dum_position])
     with mda.Writer(dest_dir / "build.pdb", n_atoms=u_lig.atoms.n_atoms + 1) as W:
         W.write(u_dum)
         W.write(u_lig)
