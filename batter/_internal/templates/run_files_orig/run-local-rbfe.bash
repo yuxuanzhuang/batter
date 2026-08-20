@@ -304,7 +304,7 @@ if (( remaining_steps > 0 )); then
     }
     rm -f .write_test.$$
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref $rst_in >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the explicit segment restart.

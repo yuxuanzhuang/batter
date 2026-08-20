@@ -3449,7 +3449,7 @@ def create_box(ctx: BuildContext) -> None:
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
     # merge DUM + DUM + PROT plus all ligand copies before applying AMBER masks.
-    merge_molecule_count = 6 if comp == "d" and dec_method == "sdr" else 5
+    merge_molecule_count = 7 if comp == "d" and dec_method == "sdr" else 6
     merge_first_n_and_lipid_fragments_in_prmtop(
         full_prmtop,
         merge_molecule_count,

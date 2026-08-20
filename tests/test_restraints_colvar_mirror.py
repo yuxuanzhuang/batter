@@ -643,6 +643,41 @@ def test_ion_guard_adds_one_lower_wall_per_bulk_ion_for_z(tmp_path: Path) -> Non
     assert "rk3=  0.0000000" in text
 
 
+def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "z00"
+    windows_dir.mkdir()
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "HETATM    2  C1  LIG A   2       1.000   0.000  10.000  1.00  0.00           C\n",
+                "HETATM    3  C2  LIG A   2       2.000   0.000  10.000  1.00  0.00           C\n",
+                "HETATM    4  C1  LIG A   3       1.000   0.000  30.000  1.00  0.00           C\n",
+                "HETATM    5  C2  LIG A   3       2.000   0.000  30.000  1.00  0.00           C\n",
+                "END\n",
+            ]
+        )
+    )
+    disang = windows_dir / "disang.rest"
+    disang.write_text("# base restraints\n")
+    ctx = types.SimpleNamespace(
+        comp="z",
+        window_dir=windows_dir,
+        residue_name="LIG",
+    )
+
+    written = restraints._append_bulk_ligand_z_restraint(ctx, disang)
+
+    text = disang.read_text()
+    assert written == 1
+    assert "#Bulk_Lig_Z" in text
+    assert "iat=2,4," in text
+    assert "fxyz=0,0,1," in text
+    assert "outxyz=1," in text
+    assert "r1=-999.0, r2=-3.0, r3=3.0, r4=999.0," in text
+    assert "rk2=10, rk3=10," in text
+
+
 def test_ion_guard_can_be_disabled(tmp_path: Path) -> None:
     windows_dir = tmp_path / "z00"
     windows_dir.mkdir()

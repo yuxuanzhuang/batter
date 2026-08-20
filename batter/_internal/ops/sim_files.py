@@ -1209,13 +1209,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if not ligand_resids:
         raise ValueError(f"No residues with resname {mol!r} found in {vac_pdb}")
     ref_resid = ligand_resids[0]
-    bulk_resid = ligand_resids[1] if len(ligand_resids) > 1 else ref_resid
     ref_lig_in_site_mask = f':{int(ref_resid)}'
-    solvent_ligand_restraint_mask = _solvent_ligand_restraint_mask(
-        vac_pdb,
-        resid=int(bulk_resid),
-        comp=comp,
-    )
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
@@ -1336,12 +1330,6 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
-                if "restraintmask" in line:
-                    rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
-                    line = (
-                        "restraintmask = "
-                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
-                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(ntwprt_atoms))
@@ -1468,17 +1456,6 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
-                if "restraintmask" in line:
-                    rm = (
-                        line.split("=", 1)[1]
-                        .strip()
-                        .rstrip(",")
-                        .replace("'", "")
-                    )
-                    line = (
-                        "restraintmask = "
-                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
-                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(ntwprt_atoms))

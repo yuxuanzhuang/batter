@@ -22,33 +22,23 @@ def _restart_time(path: Path) -> str:
     return path.read_text().splitlines()[1].split()[1]
 
 
-def test_production_md_uses_restart_input_as_reference() -> None:
+def test_production_md_uses_expected_reference_restart() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     template_dir = repo_root / "batter" / "_internal" / "templates" / "run_files_orig"
 
-    for name in [
-        "run-local.bash",
-        "run-local-rbfe.bash",
-        "run-local-vacuum.bash",
-        "run-equil.bash",
-    ]:
+    expected_refs = {
+        "run-local.bash": "${win_00}/eq.rst7",
+        "run-local-rbfe.bash": "${win_00}/eq.rst7",
+        "run-local-vacuum.bash": "$rst_in",
+        "run-equil.bash": "$rst_in",
+    }
+
+    for name, expected_ref in expected_refs.items():
         text = (template_dir / name).read_text()
         assert (
             "-c $rst_in -o ${out_tag}.out -r $rst_out "
-            "-x ${out_tag}.nc -ref $rst_in"
+            f"-x ${{out_tag}}.nc -ref {expected_ref}"
         ) in text
-        assert (
-            "-c $rst_in -o ${out_tag}.out -r $rst_out "
-            "-x ${out_tag}.nc -ref ${win_00}/eq.rst7"
-        ) not in text
-        assert (
-            "-c $rst_in -o ${out_tag}.out -r $rst_out "
-            "-x ${out_tag}.nc -ref mini.in.rst7"
-        ) not in text
-        assert (
-            "-c $rst_in -o ${out_tag}.out -r $rst_out "
-            "-x ${out_tag}.nc -ref eqnpt04.rst7"
-        ) not in text
 
 
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:
@@ -193,8 +183,8 @@ exit 0
     assert not (work / "md-02.rst7").exists()
     assert (work / "output.pdb").exists()
     assert (work / "md_ref_calls.txt").read_text().splitlines() == [
-        "md-01.out eq.rst7 eq.rst7",
-        "md-02.out md-01.rst7 md-01.rst7",
+        "md-01.out eq.rst7 ../COMPONENT00/eq.rst7",
+        "md-02.out md-01.rst7 ../COMPONENT00/eq.rst7",
     ]
 
 
@@ -584,7 +574,7 @@ exit 0
     assert "Archived incomplete MD segment" not in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
     assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
-    assert (work / "reference_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "../COMPONENT00/eq.rst7"
     assert (work / "md-01.out").exists()
     assert (work / "md-01.nc").exists()
     assert _restart_time(work / "md-01.rst7") == "50.0000000000"
@@ -700,7 +690,7 @@ exit 0
     assert "Archived invalid MD restart md-02.rst7" in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
     assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
-    assert (work / "reference_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "../COMPONENT00/eq.rst7"
     assert _restart_time(work / "md-02.rst7") == "50.0100000000"
     assert (work / "md-02.out").read_text().startswith("CONTROL DATA FOR THE RUN")
     assert list((work / "WRONG_FAIL").glob("*/md-02.rst7"))

@@ -604,7 +604,7 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert "nmropt = 0" in template_text
 
 
-def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template(
+def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     tmp_path: Path,
 ) -> None:
     windows_dir = tmp_path / "z00"
@@ -685,7 +685,8 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
     assert "restraintmask = '((@CA & :1) | :LIG | :1-2 ) & !@H='" in eq_text
     assert "@3" not in eq_text
 
-    assert "restraintmask = '(:1-2 | @3) & !@H='" in template_text
+    assert "restraintmask = ':1-2'," in template_text
+    assert "@3" not in template_text
     assert "ntwprt = 6" in template_text
     assert "  mcwat = 1,\n" in template_text
     assert "  nmd = 1000,\n" in template_text
