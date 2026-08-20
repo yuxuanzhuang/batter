@@ -10,7 +10,7 @@ MPI_EXEC=${MPI_EXEC:-mpirun}
 MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 N_WINDOWS=NWINDOWS
 PFOLDER="."
 PFOLDER_ABS=$(cd "${PFOLDER}" 2>/dev/null && pwd -P)

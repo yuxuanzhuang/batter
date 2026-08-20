@@ -112,6 +112,22 @@ def _remove_production_is_complete(check_run: Path) -> None:
     check_run.write_text(text[:start] + text[end:])
 
 
+@pytest.mark.parametrize("script_name", ["run-local-remd.bash", "run-local-batch.bash"])
+def test_remd_run_templates_use_merged_prmtop(script_name: str) -> None:
+    template = (
+        _repo_root()
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "remd_run_files"
+        / script_name
+    )
+    text = template.read_text()
+
+    assert 'PRMTOP="full_merged.prmtop"' in text
+    assert "full.hmr.prmtop" not in text
+
+
 @pytest.mark.parametrize(
     ("script_name", "template_name"),
     [

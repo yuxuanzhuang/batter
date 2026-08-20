@@ -11,7 +11,7 @@ MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 PRMTOP_MERGED="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"

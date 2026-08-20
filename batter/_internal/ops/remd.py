@@ -203,7 +203,7 @@ def patch_component_inputs(
         nstlim_val = int(nstlim) if nstlim else None
         base_template = window_dir / "mdin-template"
         tmpl = window_dir / "mdin-remd-template"
-        if not tmpl.exists() and base_template.exists():
+        if base_template.exists():
             tmpl.write_text(base_template.read_text())
             total_steps = comp_total_steps or _extract_total_steps(
                 base_template.read_text()
@@ -225,7 +225,7 @@ def patch_component_inputs(
                 changed = True
             if changed:
                 patched.append(tmpl)
-        elif not tmpl.exists():
+        else:
             logger.warning(
                 f"[remd] Missing mdin-template under {window_dir}; cannot write remd template."
             )
@@ -283,8 +283,7 @@ def write_remd_groupfiles(
         return []
 
     group_dir = comp_dir / "remd"
-    prmtop = "full.hmr.prmtop" if str(sim.hmr).lower() == "yes" else "full.prmtop"
-    prmtop_path = f"{comp}-1/{prmtop}"
+    prmtop_path = f"{comp}-1/full_merged.prmtop"
     eq_restart = f"{comp}-1/eqnpt04.rst7"
     allow_small_box = " -AllowSmallBox" if comp == "m" else ""
 
