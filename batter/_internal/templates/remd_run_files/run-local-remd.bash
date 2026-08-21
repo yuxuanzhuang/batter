@@ -48,6 +48,34 @@ fi
 # - keep nstlim fixed to the REMD interval
 # - update numexchg based on remaining steps
 # - set irest/ntx according to first_run
+cap_dumpfreq_for_remd_chunk() {
+    local nstlim_value=$1
+    local dumpfreq_value
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+    dumpfreq_value=$((nstlim_value / 2))
+    (( dumpfreq_value > 0 )) || dumpfreq_value=1
+
+    # HIP/CUDA REMD suppresses exchange-force DUMPAVE records. Keep at least
+    # two dump opportunities inside each exchange block so cmass output survives.
+    awk -v freq="$dumpfreq_value" '
+        BEGIN { IGNORECASE = 1 }
+        {
+            line = $0
+            if (line ~ /DUMPFREQ/ && match(line, /istep1[[:space:]]*=[[:space:]]*[0-9]+/)) {
+                token = substr(line, RSTART, RLENGTH)
+                value = token
+                sub(/.*=/, "", value)
+                gsub(/[[:space:]]/, "", value)
+                if (value + 0 > freq + 0) {
+                    line = substr(line, 1, RSTART - 1) "istep1=" int(freq) substr(line, RSTART + RLENGTH)
+                }
+            }
+            print line
+        }
+    '
+}
+
 write_mdin_remd_current() {
     local tmpl=$1
     local nstlim_value=$2
@@ -66,6 +94,7 @@ write_mdin_remd_current() {
         text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
     fi
     text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    text=$(printf "%s\n" "$text" | cap_dumpfreq_for_remd_chunk "$nstlim_value")
     if echo "$text" | grep -Eq "^[[:space:]]*numexchg[[:space:]]*="; then
         text=$(echo "$text" | sed -E "s/^[[:space:]]*numexchg[[:space:]]*=.*/  numexchg = ${numexchg_value},/")
     else

@@ -12,6 +12,7 @@ from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
 BAR_INTERVAL_DEFAULT = 100
+REMD_DUMPFREQ_MAX = 100
 
 
 def _prefix_path(value: str, prefix: str) -> str:
@@ -84,6 +85,32 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
     return out, inserted
 
 
+def _rewrite_dumpfreq_line(line: str, dumpfreq: int) -> tuple[str, bool]:
+    """
+    Rewrite a DUMPFREQ wt line to use ``dumpfreq`` as istep1.
+    """
+    if "dumpfreq" not in line.lower():
+        return line, False
+    if not re.search(r"istep1\s*=", line, flags=re.IGNORECASE):
+        return line, False
+    new_line = re.sub(
+        r"istep1\s*=\s*[^,/\s]+",
+        f"istep1={dumpfreq}",
+        line,
+        flags=re.IGNORECASE,
+    )
+    return new_line, new_line != line
+
+
+def _remd_dumpfreq(remd_nstlim: int | None) -> int:
+    """
+    DUMPAVE should fire inside short REMD exchange blocks, not every ntwx steps.
+    """
+    if remd_nstlim is None or remd_nstlim <= 0:
+        return REMD_DUMPFREQ_MAX
+    return max(1, min(REMD_DUMPFREQ_MAX, remd_nstlim))
+
+
 def patch_mdin_file(
     mdin_path: Path,
     prefix: str,
@@ -91,6 +118,7 @@ def patch_mdin_file(
     add_numexchg: bool,
     remd_nstlim: int | None = None,
     remd_numexchg: int | None = None,
+    remd_dumpfreq: int | None = None,
 ) -> bool:
     """
     Update mdin-like files so embedded file paths are relative to ``prefix``.
@@ -127,6 +155,9 @@ def patch_mdin_file(
         elif remd_nstlim is not None and "nstlim" in lower:
             line = f"  nstlim = {remd_nstlim},\n"
             changed = True
+        elif remd_dumpfreq is not None and "dumpfreq" in lower:
+            line, did_change = _rewrite_dumpfreq_line(line, remd_dumpfreq)
+            changed = changed or did_change
         new_lines.append(line)
 
     if add_numexchg:
@@ -217,6 +248,7 @@ def patch_component_inputs(
                 add_numexchg=add_numexchg,
                 remd_nstlim=nstlim_val,
                 remd_numexchg=remd_exchg,
+                remd_dumpfreq=_remd_dumpfreq(nstlim_val),
             )
             if not total_steps:
                 total_steps = nstlim_val or 0

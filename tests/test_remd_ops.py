@@ -19,6 +19,7 @@ def test_patch_component_inputs_rewrites_existing_remd_template(
         "  bar_intervall = 6250,\n"
         "  DISANG = disang.rest,\n"
         "/\n"
+        " &wt type='DUMPFREQ', istep1=25000, /\n"
     )
     (win_dir / "mdin-remd-template").write_text("stale\n")
 
@@ -39,6 +40,7 @@ def test_patch_component_inputs_rewrites_existing_remd_template(
     assert "numexchg = 10," in text
     assert "bar_intervall = 100," in text
     assert "DISANG = z00/disang.rest," in text
+    assert "type='DUMPFREQ', istep1=100" in text
 
 
 def test_remd_groupfiles_always_use_merged_prmtop(tmp_path: Path) -> None:

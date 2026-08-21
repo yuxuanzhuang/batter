@@ -282,3 +282,35 @@ def test_remd_run_templates_write_segmented_cmass_dumpave(
     text = (win0 / current_name).read_text()
     assert "DUMPAVE=z00/cmass-01.txt" in text
     assert "DUMPAVE=cmass.txt" not in text
+
+
+def test_run_local_remd_caps_dumpfreq_inside_exchange_block(tmp_path: Path) -> None:
+    comp_dir, win0, tmpl = _prepare_component(
+        tmp_path,
+        script_name="run-local-remd.bash",
+        template_name="mdin-remd-template",
+        total_steps=200,
+        nstlim=200,
+    )
+    tmpl.write_text(tmpl.read_text().replace("istep1=10", "istep1=25000"))
+
+    pmemd_stub = tmp_path / "pmemd-success.sh"
+    _write_success_pmemd_stub(pmemd_stub)
+
+    env = os.environ.copy()
+    env["PMEMD_MPI_EXEC"] = str(pmemd_stub)
+    env["MPI_EXEC"] = "/bin/bash"
+    env["MPI_FLAGS"] = " "
+
+    result = subprocess.run(
+        ["bash", "./run-local-remd.bash"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = (win0 / "mdin-remd-current").read_text()
+    assert "type='DUMPFREQ', istep1=100" in text
