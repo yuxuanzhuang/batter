@@ -4,7 +4,9 @@ import os
 import re
 import glob
 import json
+import shlex
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Sequence
@@ -110,23 +112,119 @@ def _atom_is_hydrogen(atom) -> bool:
     return name.startswith("H") or (len(name) > 1 and name[0].isdigit() and name[1] == "H")
 
 
+_COVALENT_RADII_ANGSTROM = {
+    "B": 0.84,
+    "BR": 1.20,
+    "C": 0.76,
+    "CL": 1.02,
+    "F": 0.57,
+    "I": 1.39,
+    "N": 0.71,
+    "O": 0.66,
+    "P": 1.07,
+    "S": 1.05,
+    "SE": 1.20,
+    "SI": 1.11,
+}
+
+
+def _atom_element_symbol(atom) -> str:
+    for attr in ("element", "type", "name"):
+        try:
+            value = str(getattr(atom, attr, "")).strip()
+        except Exception:
+            continue
+        if not value:
+            continue
+        letters = re.sub(r"[^A-Za-z]", "", value).upper()
+        if not letters:
+            continue
+        if len(letters) >= 2 and letters[:2] in _COVALENT_RADII_ANGSTROM:
+            return letters[:2]
+        return letters[0]
+    return "C"
+
+
+def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
+    """Estimate heavy-atom degrees from topology bonds, then covalent distances."""
+    counts = {idx: 0 for idx in range(len(atoms))}
+    index_to_pos: dict[int, int] = {}
+    for idx, atom in enumerate(atoms):
+        try:
+            index_to_pos[int(atom.index)] = idx
+        except Exception:
+            pass
+
+    if index_to_pos:
+        for idx, atom in enumerate(atoms):
+            try:
+                bonded_atoms = list(atom.bonded_atoms)
+            except Exception:
+                bonded_atoms = []
+            for bonded in bonded_atoms:
+                try:
+                    bonded_idx = int(bonded.index)
+                except Exception:
+                    continue
+                bonded_pos = index_to_pos.get(bonded_idx)
+                if bonded_pos is not None and bonded_pos != idx:
+                    counts[idx] += 1
+        if any(counts.values()):
+            return counts
+
+    positions: list[np.ndarray] = []
+    elements: list[str] = []
+    for atom in atoms:
+        try:
+            positions.append(np.asarray(atom.position, dtype=float))
+        except Exception:
+            positions.append(np.full(3, np.nan))
+        elements.append(_atom_element_symbol(atom))
+
+    for i in range(len(atoms)):
+        if positions[i].shape != (3,) or not np.all(np.isfinite(positions[i])):
+            continue
+        for j in range(i + 1, len(atoms)):
+            if positions[j].shape != (3,) or not np.all(np.isfinite(positions[j])):
+                continue
+            distance = float(np.linalg.norm(positions[i] - positions[j]))
+            if distance < 0.40:
+                continue
+            radius_i = _COVALENT_RADII_ANGSTROM.get(elements[i], 0.76)
+            radius_j = _COVALENT_RADII_ANGSTROM.get(elements[j], 0.76)
+            if distance <= radius_i + radius_j + 0.45:
+                counts[i] += 1
+                counts[j] += 1
+    return counts
+
+
+def _executable_path(command: str) -> str | None:
+    path = shutil.which(command)
+    if path:
+        return path
+
+    env_path = Path(sys.executable).resolve().parent / command
+    if env_path.exists() and os.access(env_path, os.X_OK):
+        return str(env_path)
+    return None
+
+
 def _executable_available(command: str) -> bool:
-    return shutil.which(command) is not None
+    return _executable_path(command) is not None
 
 
-def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path, *, working_dir: Path) -> None:
-    if _executable_available("pdb4amber"):
-        run_with_log(
-            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
-            working_dir=working_dir,
+def _run_pdb4amber(input_pdb: Path, output_pdb: Path, *, working_dir: Path) -> None:
+    executable = _executable_path("pdb4amber")
+    if executable is None:
+        raise FileNotFoundError(
+            "pdb4amber is required but was not found in PATH. "
+            "Activate the batter_dev/AmberTools environment before building complexes."
         )
-        return
-    logger.warning(
-        "pdb4amber was not found; copying {} to {} without additional cleanup.",
-        input_pdb,
-        output_pdb,
+    run_with_log(
+        f"{shlex.quote(executable)} -i {shlex.quote(input_pdb.name)} "
+        f"-o {shlex.quote(output_pdb.name)} -y",
+        working_dir=working_dir,
     )
-    shutil.copy2(input_pdb, output_pdb)
 
 
 def _empty_atomgroup(u: mda.Universe):
@@ -298,7 +396,17 @@ def _python_split_rec_file(
         _write_atomgroup_pdb(combined, workdir / "others.pdb")
     _write_atomgroup_pdb(lipid, workdir / "lipids.pdb")
     _write_atomgroup_pdb(wat, workdir / "crystalwat.pdb")
-    _write_atomgroup_pdb(lig, workdir / f"{mol}.pdb")
+    ligand_pdb = workdir / f"{mol}.pdb"
+    if lig.n_atoms:
+        _write_atomgroup_pdb(lig, ligand_pdb)
+    elif not ligand_pdb.exists() or ligand_pdb.stat().st_size == 0:
+        _write_atomgroup_pdb(lig, ligand_pdb)
+    else:
+        logger.debug(
+            "Python split found no atoms with residue name {}; keeping existing {}.",
+            mol,
+            ligand_pdb,
+        )
 
 
 def _python_measure_fit(
@@ -332,6 +440,25 @@ def _python_measure_fit(
     rotation, translation = _kabsch_transform(np.asarray(mob_pos), np.asarray(ref_pos))
     mob.atoms.positions = np.asarray(mob.atoms.positions) @ rotation + translation
     mob.atoms.write(str(workdir / output_pdb))
+
+
+def _python_nochain_for_alignment(workdir: Path) -> None:
+    """Python equivalent of nochain.tcl for USalign input preparation."""
+    for input_name, output_name in (
+        ("reference_amber.pdb", "reference_amber-nc.pdb"),
+        ("complex.pdb", "complex-nc.pdb"),
+    ):
+        u = mda.Universe(str(workdir / input_name))
+        protein = u.select_atoms("protein")
+        if protein.n_atoms == 0:
+            raise RuntimeError(
+                f"Cannot prepare {output_name}: no protein atoms in {input_name}."
+            )
+        try:
+            protein.chainIDs = "X"
+        except Exception:
+            pass
+        _write_atomgroup_pdb(protein, workdir / output_name)
 
 
 def _translate_pdb_to_reference_frame(
@@ -399,7 +526,7 @@ def _translate_pdb_by_vector(target_pdb: Path, translation: Sequence[float]) -> 
 
 def _write_python_prep_script_marker(workdir: Path) -> None:
     (workdir / "prep.tcl").write_text(
-        "# VMD unavailable; BATTER used Python fallback for prep-ini.tcl.\n"
+        "# BATTER used Python ligand-anchor preparation; prep-ini.tcl was not run.\n"
     )
 
 
@@ -748,6 +875,13 @@ def _preferred_l1_ligand_triplet_candidates(
     all_positions = np.asarray([coords[int(atom.index)] for atom in atoms], dtype=float)
     centroid = all_positions.mean(axis=0)
     span = max(float(np.max(np.linalg.norm(all_positions - centroid, axis=1))), 1.0)
+    heavy_neighbor_counts = _ligand_heavy_neighbor_counts(atoms)
+    atom_positions: dict[int, int] = {}
+    for idx, atom in enumerate(atoms):
+        try:
+            atom_positions[int(atom.index)] = idx
+        except Exception:
+            atom_positions[idx] = idx
 
     candidates: list[dict] = []
     for preferred_rank, preferred_name in enumerate(preferred_names):
@@ -781,6 +915,17 @@ def _preferred_l1_ligand_triplet_candidates(
 
                     spread = (min(d12, d13) + 0.5 * d23) / span
                     local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                    try:
+                        l2_index = atom_positions.get(int(l2.index), -1)
+                    except Exception:
+                        l2_index = -1
+                    try:
+                        l3_index = atom_positions.get(int(l3.index), -1)
+                    except Exception:
+                        l3_index = -1
+                    terminal_l2_l3_count = int(
+                        heavy_neighbor_counts.get(l2_index, 0) < 2
+                    ) + int(heavy_neighbor_counts.get(l3_index, 0) < 2)
                     candidates.append(
                         {
                             "preferred_rank": preferred_rank,
@@ -791,12 +936,14 @@ def _preferred_l1_ligand_triplet_candidates(
                             ],
                             "positions": (l1_pos, l2_pos, l3_pos),
                             "score": local_score,
+                            "terminal_l2_l3_count": terminal_l2_l3_count,
                         }
                     )
 
     candidates.sort(
         key=lambda item: (
             int(item["preferred_rank"]),
+            int(item.get("terminal_l2_l3_count", 0)),
             -float(item["score"]),
             item["names"],
         )
@@ -856,13 +1003,18 @@ def _best_preferred_l1_triplet_for_receptor_frame(
             "values": values,
             "margins": (angle_margin, torsion_margin),
             "score": score,
+            "terminal_l2_l3_count": int(
+                candidate.get("terminal_l2_l3_count", 0)
+            ),
         }
         if best is None or (
             int(scored_candidate["preferred_rank"]),
+            int(scored_candidate["terminal_l2_l3_count"]),
             -float(scored_candidate["score"]),
             names,
         ) < (
             int(best["preferred_rank"]),
+            int(best.get("terminal_l2_l3_count", 0)),
             -float(best["score"]),
             best["names"],
         ):
@@ -1003,6 +1155,7 @@ def _select_receptor_p2_p3_for_preferred_l1(
         )
         key = (
             change_count,
+            int(int(p2_atom.index) != int(current_p2_atom.index)),
             int(triplet["preferred_rank"]),
             -float(torsion_margin),
             -float(angle_margin),
@@ -1278,10 +1431,29 @@ def _pick_ligand_anchor_names(
     p2_center = _center_of_atoms(p2)
     target = p1_center + np.asarray([l1_x, l1_y, l1_z], dtype=float)
 
+    ligand_heavy_atoms = [
+        atom for atom in u.select_atoms(f"resname {mol}") if not _atom_is_hydrogen(atom)
+    ]
+    heavy_neighbor_counts = _ligand_heavy_neighbor_counts(ligand_heavy_atoms)
+    heavy_neighbors_by_name: dict[str, int] = {}
+    for idx, atom in enumerate(ligand_heavy_atoms):
+        name = str(atom.name).strip()
+        if not name:
+            continue
+        heavy_neighbors_by_name[name] = max(
+            heavy_neighbors_by_name.get(name, 0),
+            int(heavy_neighbor_counts.get(idx, 0)),
+        )
+    ligand_name_rank = {
+        name: rank for rank, name in enumerate(_dedupe_names([str(x) for x in ligand_names]))
+    }
+
     candidates: dict[str, np.ndarray] = {}
     for name in ligand_names:
         atoms = _ligand_atom_by_name(u, mol, str(name))
         if atoms.n_atoms == 0:
+            continue
+        if all(_atom_is_hydrogen(atom) for atom in atoms):
             continue
         center = _center_of_atoms(atoms)
         dist = float(np.linalg.norm(center - target))
@@ -1291,74 +1463,85 @@ def _pick_ligand_anchor_names(
         if np.isfinite(angle):
             candidates[str(name)] = center
 
-    def _choose_first_anchor(names_to_search: Sequence[str]) -> str | None:
-        selected: str | None = None
-        for tolerance in (15.0, 70.0):
-            best_diff = float("inf")
-            for name in names_to_search:
-                center = candidates.get(str(name))
-                if center is None:
-                    continue
-                angle = _angle_degrees(p2_center, p1_center, center)
-                if not np.isfinite(angle) or abs(angle - 90.0) > tolerance:
-                    continue
-                diff = float(np.linalg.norm(center - target))
-                if diff < best_diff:
-                    best_diff = diff
-                    selected = str(name)
-            if selected is not None:
-                break
-        return selected
-
-    preferred_l1 = [
+    preferred_l1 = _dedupe_names(
         str(name).strip()
         for name in preferred_l1_names
         if str(name).strip() in candidates
-    ]
-    aa1 = _choose_first_anchor(_dedupe_names(preferred_l1)) if preferred_l1 else None
-    if aa1 is None:
-        aa1 = _choose_first_anchor(list(candidates))
-    if aa1 is None:
-        raise RuntimeError("anchor not found")
+    )
+    preferred_l1_rank = {name: rank for rank, name in enumerate(preferred_l1)}
 
-    aa1_center = candidates[aa1]
-    aa2: str | None = None
-    best_angle_diff = float("inf")
-    for name, center in candidates.items():
-        if name == aa1:
-            continue
-        distance = float(np.linalg.norm(center - aa1_center))
-        if not (float(min_adis) < distance < float(max_adis)):
-            continue
-        angle = _angle_degrees(p1_center, aa1_center, center)
+    def _l1_score(name: str, center: np.ndarray) -> tuple[int, int, float, int, int] | None:
+        angle = _angle_degrees(p2_center, p1_center, center)
         if not np.isfinite(angle):
-            continue
+            return None
         angle_diff = abs(angle - 90.0)
-        if angle_diff < best_angle_diff:
-            best_angle_diff = angle_diff
-            aa2 = name
-    if aa2 is None:
-        raise RuntimeError("anchor not found")
+        if angle_diff <= 15.0:
+            tolerance_rank = 0
+        elif angle_diff <= 70.0:
+            tolerance_rank = 1
+        else:
+            return None
+        preferred_penalty = 0
+        preferred_rank = ligand_name_rank.get(name, len(ligand_name_rank))
+        if preferred_l1:
+            preferred_penalty = 0 if name in preferred_l1_rank else 1
+            preferred_rank = preferred_l1_rank.get(name, len(preferred_l1_rank))
+        return (
+            preferred_penalty,
+            tolerance_rank,
+            float(np.linalg.norm(center - target)),
+            preferred_rank,
+            ligand_name_rank.get(name, len(ligand_name_rank)),
+        )
 
-    aa2_center = candidates[aa2]
-    aa3: str | None = None
-    best_angle_diff = float("inf")
-    for name, center in candidates.items():
-        if name in {aa1, aa2}:
+    best_triplet: tuple[str, str, str] | None = None
+    best_score: tuple[float, ...] | None = None
+    for aa1, aa1_center in candidates.items():
+        aa1_score = _l1_score(aa1, aa1_center)
+        if aa1_score is None:
             continue
-        distance = float(np.linalg.norm(center - aa2_center))
-        if not (float(min_adis) < distance < float(max_adis)):
-            continue
-        angle = _angle_degrees(aa1_center, aa2_center, center)
-        if not np.isfinite(angle):
-            continue
-        angle_diff = abs(angle - 90.0)
-        if angle_diff < best_angle_diff:
-            best_angle_diff = angle_diff
-            aa3 = name
-    if aa3 is None:
+        for aa2, aa2_center in candidates.items():
+            if aa2 == aa1:
+                continue
+            d12 = float(np.linalg.norm(aa2_center - aa1_center))
+            if not (float(min_adis) < d12 < float(max_adis)):
+                continue
+            angle2 = _angle_degrees(p1_center, aa1_center, aa2_center)
+            if not np.isfinite(angle2):
+                continue
+            angle2_diff = abs(angle2 - 90.0)
+            aa2_terminal = int(heavy_neighbors_by_name.get(aa2, 0) < 2)
+            for aa3, aa3_center in candidates.items():
+                if aa3 in {aa1, aa2}:
+                    continue
+                d23 = float(np.linalg.norm(aa3_center - aa2_center))
+                if not (float(min_adis) < d23 < float(max_adis)):
+                    continue
+                angle3 = _angle_degrees(aa1_center, aa2_center, aa3_center)
+                if not np.isfinite(angle3):
+                    continue
+                angle3_diff = abs(angle3 - 90.0)
+                aa3_terminal = int(heavy_neighbors_by_name.get(aa3, 0) < 2)
+                score = (
+                    float(aa1_score[0]),
+                    float(aa2_terminal + aa3_terminal),
+                    float(aa2_terminal),
+                    float(aa3_terminal),
+                    float(aa1_score[1]),
+                    float(aa1_score[2]),
+                    float(angle2_diff + angle3_diff),
+                    float(max(angle2_diff, angle3_diff)),
+                    float(aa1_score[3]),
+                    float(aa1_score[4]),
+                    float(ligand_name_rank.get(aa2, len(ligand_name_rank))),
+                    float(ligand_name_rank.get(aa3, len(ligand_name_rank))),
+                )
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_triplet = (aa1, aa2, aa3)
+    if best_triplet is None:
         raise RuntimeError("anchor not found")
-    return [aa1, aa2, aa3]
+    return list(best_triplet)
 
 
 def _dedupe_names(names: Sequence[str]) -> list[str]:
@@ -1409,7 +1592,7 @@ def _python_prep_complex(
     lipid_mol: Sequence[str],
     preferred_l1_names: Sequence[str] = (),
 ) -> None:
-    """Python fallback for prep-ini.tcl when VMD is unavailable."""
+    """Prepare staged complex files and ligand anchor names without VMD."""
     _write_python_prep_script_marker(workdir)
     u = mda.Universe(str(workdir / "aligned_amber.pdb"))
     receptor_backbone = u.select_atoms(
@@ -1445,22 +1628,37 @@ def _python_prep_complex(
     _write_atomgroup_pdb(lig_noh, workdir / f"{mol}-noh.pdb")
     prep_u.atoms.write(str(filpdb))
 
-    anchors = _pick_ligand_anchor_names(
-        u=prep_u,
-        mol=mol,
-        ligand_names=ligand_names,
-        preferred_l1_names=preferred_l1_names,
-        p1_resid=p1_vmd,
-        p1_atom=p1_atom,
-        p2_resid=p2_vmd,
-        p2_atom=p2_atom,
-        l1_x=float(l1_x),
-        l1_y=float(l1_y),
-        l1_z=float(l1_z),
-        l1_range=float(l1_range),
-        min_adis=float(min_adis),
-        max_adis=float(max_adis),
+    lig_heavy_names = _dedupe_names(
+        str(atom.name) for atom in lig if not _atom_is_hydrogen(atom)
     )
+    lig_heavy_name_set = set(lig_heavy_names)
+    available_ligand_names = [
+        name
+        for name in _dedupe_names([str(name) for name in ligand_names])
+        if name in lig_heavy_name_set
+        and _ligand_atom_by_name(prep_u, mol, name).n_atoms > 0
+    ]
+    if not available_ligand_names:
+        available_ligand_names = lig_heavy_names
+    if lig_noh.n_atoms < 3 or len(available_ligand_names) < 3:
+        anchors = available_ligand_names[: max(1, min(3, len(available_ligand_names)))]
+    else:
+        anchors = _pick_ligand_anchor_names(
+            u=prep_u,
+            mol=mol,
+            ligand_names=available_ligand_names,
+            preferred_l1_names=preferred_l1_names,
+            p1_resid=p1_vmd,
+            p1_atom=p1_atom,
+            p2_resid=p2_vmd,
+            p2_atom=p2_atom,
+            l1_x=float(l1_x),
+            l1_y=float(l1_y),
+            l1_z=float(l1_z),
+            l1_range=float(l1_range),
+            min_adis=float(min_adis),
+            max_adis=float(max_adis),
+        )
     (workdir / "anchors.txt").write_text(" ".join(anchors) + "\n")
 
     dum = mda.Universe(str(workdir / "dum.pdb"))
@@ -1535,25 +1733,25 @@ def _map_sdf_atom_indices_to_ligand_names(
 ) -> tuple[list[str], list[int], int | None]:
     lig_names = [str(name) for name in ligand_atoms.names]
     sdf_atom_count, heavy_ordinals = _sdf_heavy_atom_ordinals(sdf_file)
+    heavy_names = [
+        str(atom.name)
+        for atom in ligand_atoms
+        if not _atom_is_hydrogen(atom)
+    ]
 
     names: list[str] = []
     dropped: list[int] = []
-    if sdf_atom_count == len(lig_names):
-        for idx in atom_indices:
-            if 0 <= idx < len(lig_names):
-                names.append(lig_names[idx])
-            else:
-                dropped.append(idx)
-    elif heavy_ordinals:
-        heavy_names = [
-            str(atom.name)
-            for atom in ligand_atoms
-            if not _atom_is_hydrogen(atom)
-        ]
+    if heavy_ordinals and heavy_names:
         for idx in atom_indices:
             heavy_ordinal = heavy_ordinals.get(idx)
             if heavy_ordinal is not None and 0 <= heavy_ordinal < len(heavy_names):
                 names.append(heavy_names[heavy_ordinal])
+            else:
+                dropped.append(idx)
+    elif sdf_atom_count == len(lig_names):
+        for idx in atom_indices:
+            if 0 <= idx < len(lig_names):
+                names.append(lig_names[idx])
             else:
                 dropped.append(idx)
     else:
@@ -1708,7 +1906,7 @@ def _candidate_ligand_atom_name_string(
     Returns
     -------
     str
-        Space-separated ligand atom names for VMD anchor selection.
+        Space-separated ligand atom names for Python anchor selection.
 
     Notes
     -----
@@ -1729,6 +1927,24 @@ def _candidate_ligand_atom_name_string(
         ligand_atoms,
         candidate_indices,
     )
+    heavy_names = [
+        str(atom.name)
+        for atom in ligand_atoms
+        if not _atom_is_hydrogen(atom)
+    ]
+    heavy_name_set = set(heavy_names)
+    if heavy_name_set:
+        hydrogen_names = [name for name in names if name not in heavy_name_set]
+        if hydrogen_names:
+            logger.warning(
+                "[build_complex] Ignored {} hydrogen ligand candidate atom name(s) "
+                "for {} ({}): {}.",
+                len(hydrogen_names),
+                ligand_label,
+                stage,
+                ", ".join(hydrogen_names[:10]),
+            )
+            names = [name for name in names if name in heavy_name_set]
 
     if dropped:
         logger.warning(
@@ -1744,11 +1960,11 @@ def _candidate_ligand_atom_name_string(
     if not names:
         logger.warning(
             "[build_complex] No mapped ligand candidate atom names for {} ({}); "
-            "using all final ligand atoms for anchor search.",
+            "using all final heavy ligand atoms for anchor search.",
             ligand_label,
             stage,
         )
-        names = lig_names
+        names = heavy_names if heavy_names else lig_names
 
     return " ".join(names)
 
@@ -1809,13 +2025,6 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
 _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 8
-
-
-def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
-    if not extra:
-        return False
-    anchors = extra.get("user_anchor_atoms") or ()
-    return any(str(anchor).strip() for anchor in anchors)
 
 
 def _user_anchor_triplet_was_provided(extra: dict | None) -> bool:
@@ -2316,6 +2525,13 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(amber_dir, exist_ok=True)
+    vmd_available = _executable_available(vmd)
+    if not vmd_available:
+        logger.warning(
+            "VMD executable {!r} was not found; using Python fallbacks for "
+            "build-complex split/fit/prep steps.",
+            vmd,
+        )
 
     # Copy baseline build templates
     shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
@@ -2358,16 +2574,27 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                     .replace("MMM", f"'{mol}'")
                 )
 
-    run_with_log(
-        f"{vmd} -dispdev text -e {str(split_tcl)}",
-        error_match="syntax error",
-        shell=False,
-        working_dir=build_dir,
-    )
+    if vmd_available:
+        run_with_log(
+            f"{vmd} -dispdev text -e {str(split_tcl)}",
+            error_match="syntax error",
+            shell=False,
+            working_dir=build_dir,
+        )
+    else:
+        _python_split_rec_file(
+            workdir=build_dir,
+            mol=mol,
+            solv_shell=float(solv_shell),
+            other_mol=other_mol,
+            lipid_mol=lipid_mol,
+        )
     # Protein PDB cleanup with pdb4amber
     shutil.copy2(build_dir / "protein.pdb", build_dir / "protein_vmd.pdb")
-    run_with_log(
-        "pdb4amber -i protein_vmd.pdb -o protein.pdb -y", working_dir=build_dir
+    _run_pdb4amber(
+        build_dir / "protein_vmd.pdb",
+        build_dir / "protein.pdb",
+        working_dir=build_dir,
     )
 
     renum_txt = build_dir / "protein_renum.txt"
@@ -2479,19 +2706,27 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             f_out.write(line)
 
     # Avoid chain swapping when aligning
-    run_with_log(
-        "pdb4amber -i reference.pdb -o reference_amber.pdb -y", working_dir=build_dir
+    _run_pdb4amber(
+        build_dir / "reference.pdb",
+        build_dir / "reference_amber.pdb",
+        working_dir=build_dir,
     )
-    run_with_log(
-        f"{vmd} -dispdev text -e nochain.tcl", shell=False, working_dir=build_dir
-    )
+    if vmd_available:
+        run_with_log(
+            f"{vmd} -dispdev text -e nochain.tcl", shell=False, working_dir=build_dir
+        )
+    else:
+        _python_nochain_for_alignment(build_dir)
     run_with_log(
         "./USalign complex-nc.pdb reference_amber-nc.pdb -mm 0 -ter 2 -o aligned-nc",
         working_dir=build_dir,
     )
-    run_with_log(
-        f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=build_dir
-    )
+    if vmd_available:
+        run_with_log(
+            f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=build_dir
+        )
+    else:
+        _python_measure_fit(workdir=build_dir)
 
     # Clean aligned and put in AMBER format
     with (
@@ -2501,8 +2736,10 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         for line in oldfile:
             if len(line.split()) > 4:
                 newfile.write(line)
-    run_with_log(
-        "pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y", working_dir=build_dir
+    _run_pdb4amber(
+        build_dir / "aligned-clean.pdb",
+        build_dir / "aligned_amber.pdb",
+        working_dir=build_dir,
     )
 
     # For membrane: restore box info and re-merge lipid partial residues into single resids
@@ -2556,6 +2793,9 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     u = mda.Universe(str(pdb_file))
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
+    lig_heavy_names = _dedupe_names(
+        str(atom.name) for atom in lig_atoms if not _atom_is_hydrogen(atom)
+    )
     lig_heavy_count = sum(1 for atom in lig_atoms if not _atom_is_hydrogen(atom))
     salt_bridge_lig_names: list[str] = []
     if apo_anchor_names is None:
@@ -2585,7 +2825,6 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             )
     else:
         lig_name_str = " ".join(apo_anchor_names)
-    salt_bridge_lig_name_str = " ".join(salt_bridge_lig_names)
     anchor_file = build_dir / "anchors.txt"
 
     def _anchor_names_from_file(path: Path) -> list[str]:
@@ -2611,54 +2850,32 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         )
         return True
 
-    # Build VMD prep.tcl from template, try with candidate names first
-    prep_ini = build_dir / "prep-ini.tcl"
-    prep_tcl = build_dir / "prep.tcl"
+    def _run_python_prep(ligand_name_str: str) -> None:
+        _python_prep_complex(
+            workdir=build_dir,
+            mol=mol,
+            p1_atom=h1_atom,
+            p1_vmd=p1_vmd,
+            p2_atom=h2_atom,
+            p2_vmd=p2_vmd,
+            first_resid="1",
+            last_resid=str(recep_resid_num),
+            stage="equil",
+            l1_x=float(l1_x),
+            l1_y=float(l1_y),
+            l1_z=float(l1_z),
+            l1_range=float(l1_range),
+            min_adis=float(min_adis),
+            max_adis=float(max_adis),
+            sdr_dist=0.0,
+            ligand_names=str(ligand_name_str).split(),
+            other_mol=other_mol,
+            lipid_mol=lipid_mol,
+            preferred_l1_names=salt_bridge_lig_names,
+        )
 
-    def _write_prep(ligand_name_str: str) -> None:
-        with open(prep_ini, "rt") as fin, open(prep_tcl, "wt") as fout:
-            other_mol_vmd = " ".join(other_mol)
-            lipid_mol_vmd = " ".join(lipid_mol)
-            for line in fin:
-                fout.write(
-                    line.replace("MMM", mol)
-                    .replace("mmm", mol)
-                    .replace("NN", h1_atom)
-                    .replace("N2A", h2_atom)
-                    .replace("P1A", f"{p1_vmd}")
-                    .replace("P2A", f"{p2_vmd}")
-                    .replace("FIRST", "1")
-                    .replace("LAST", f"{recep_resid_num}")
-                    .replace("STAGE", "equil")
-                    .replace("XDIS", f"{l1_x:4.2f}")
-                    .replace("YDIS", f"{l1_y:4.2f}")
-                    .replace("ZDIS", f"{l1_z:4.2f}")
-                    .replace("RANG", f"{l1_range:4.2f}")
-                    .replace("DMAX", f"{max_adis:4.2f}")
-                    .replace("DMIN", f"{min_adis:4.2f}")
-                    .replace("SDRD", f"{0.0:4.2f}")
-                    .replace("OTHRS", str(other_mol_vmd))
-                    .replace("LIPIDS", str(lipid_mol_vmd))
-                    .replace("SALTBRIDGELIGANDNAME", salt_bridge_lig_name_str)
-                    .replace("LIGANDNAME", ligand_name_str)
-                )
-
-    _write_prep(lig_name_str)
     if apo_ligand:
-        try:
-            run_with_log(
-                f"{vmd} -dispdev text -e prep.tcl",
-                shell=False,
-                working_dir=build_dir,
-            )
-        except RuntimeError:
-            if not (build_dir / f"equil-{mol}.pdb").exists():
-                raise
-            logger.warning(
-                "[build_complex] VMD exited while searching apo dummy anchors for {}; "
-                "continuing with fixed dummy anchors.",
-                ligand,
-            )
+        _run_python_prep(lig_name_str)
         _write_apo_anchor_outputs(
             build_dir,
             ligand=ligand,
@@ -2668,30 +2885,19 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         return True
 
     try:
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=build_dir,
-        )
+        _run_python_prep(lig_name_str)
     except RuntimeError:
         if _partial_ligand_anchors_are_expected(anchor_file):
             pass
         else:
-            # fallback: all ligand atoms
+            # fallback: all heavy ligand atoms
             lig_name_str2 = " ".join(
                 _order_ligand_names_with_priority(
-                    [str(x) for x in lig_names],
+                    lig_heavy_names if lig_heavy_names else [str(x) for x in lig_names],
                     salt_bridge_lig_names,
                 )
             )
-            _write_prep(lig_name_str2)
-            run_with_log(
-                f"{vmd} -dispdev text -e prep.tcl",
-                error_match="anchor not found",
-                shell=False,
-                working_dir=build_dir,
-            )
+            _run_python_prep(lig_name_str2)
 
     # Verify anchors.txt
     if anchor_file.stat().st_size == 0:
@@ -2815,11 +3021,19 @@ def build_complex_z(ctx) -> bool:
             raise FileNotFoundError(f"[build_complex_z] Missing ligand FF file: {src}")
         shutil.copy2(src, workdir / src.name)
 
-    # 3) extract receptor-only PDB from representative.rst7
-    run_with_log(
-        f"{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb",
-        working_dir=workdir,
-    )
+    # 3) materialize the representative structure for split/rewrite steps.
+    if _executable_available(cpptraj):
+        run_with_log(
+            f"{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb",
+            working_dir=workdir,
+        )
+    else:
+        logger.warning(
+            "cpptraj executable {!r} was not found; using representative.pdb "
+            "as rec_file.pdb for build-complex FE setup.",
+            cpptraj,
+        )
+        shutil.copy2(_p("aligned-nc.pdb"), _p("rec_file.pdb"))
 
     # 4) reapply chain IDs from renum map; optional lipid resid compaction
     renum = pd.read_csv(
@@ -2962,7 +3176,7 @@ def build_complex_z(ctx) -> bool:
     if membrane_builder:
         shutil.copy2(_p("aligned-clean.pdb"), _p("aligned_amber.pdb"))
     else:
-        _run_pdb4amber_or_copy(
+        _run_pdb4amber(
             _p("aligned-clean.pdb"),
             _p("aligned_amber.pdb"),
             working_dir=workdir,
@@ -2981,6 +3195,9 @@ def build_complex_z(ctx) -> bool:
     sdf_file = _p(f"{mol}.sdf")
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
+    lig_heavy_names = _dedupe_names(
+        str(atom.name) for atom in lig_atoms if not _atom_is_hydrogen(atom)
+    )
     lig_heavy_count = sum(1 for atom in lig_atoms if not _atom_is_hydrogen(atom))
     lig_name_str = _candidate_ligand_atom_name_string(
         sdf_file,
@@ -2989,7 +3206,6 @@ def build_complex_z(ctx) -> bool:
         stage="fe-z",
     )
     salt_bridge_lig_names: list[str] = []
-    salt_bridge_lig_name_str = ""
     default_anchor_state = {
         "P1": P1,
         "p1_resid": p1_resid,
@@ -3016,16 +3232,15 @@ def build_complex_z(ctx) -> bool:
                     salt_bridge_lig_names,
                 )
             )
-            salt_bridge_lig_name_str = " ".join(salt_bridge_lig_names)
             logger.debug(
                 "[build_complex_z] Prioritizing salt-bridge ligand atom(s) "
                 "from equil analysis for {}: {}",
                 ligand,
-                salt_bridge_lig_name_str,
+                " ".join(salt_bridge_lig_names),
             )
-    if _user_anchor_atoms_were_provided(extra):
+    if _user_anchor_triplet_was_provided(extra):
         logger.debug(
-            "[build_complex_z] Explicit create.anchor_atoms were provided; "
+            "[build_complex_z] Explicit create.anchor_atoms triplet was provided; "
             "stable equilibration distance will not modify receptor anchors."
         )
     else:
@@ -3073,7 +3288,7 @@ def build_complex_z(ctx) -> bool:
                     stable_preference.get("stable_candidate_count", 1),
                 )
 
-    # 11) prep.tcl
+    # 11) Python ligand-anchor preparation
     def _restore_anchor_state(state: dict) -> None:
         nonlocal P1, p1_resid, p1_atom, p1_vmd, lig_name_str, l1_x, l1_y, l1_z, l1_range
         P1 = state["P1"]
@@ -3085,33 +3300,6 @@ def build_complex_z(ctx) -> bool:
         l1_y = state["l1_y"]
         l1_z = state["l1_z"]
         l1_range = state["l1_range"]
-
-    def _write_prep(ligand_name_str: str) -> None:
-        with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
-            for line in fin:
-                fout.write(
-                    line.replace("MMM", mol)
-                    .replace("mmm", mol)
-                    .replace("NN", p1_atom)
-                    .replace("P1A", p1_vmd)
-                    .replace("N2A", p2_atom)
-                    .replace("P2A", p2_vmd)
-                    .replace("FIRST", "2")
-                    .replace("LAST", str(rec_res))
-                    .replace("STAGE", "fe")
-                    .replace("XDIS", f"{l1_x:4.2f}")
-                    .replace("YDIS", f"{l1_y:4.2f}")
-                    .replace("ZDIS", f"{l1_z:4.2f}")
-                    .replace("RANG", f"{l1_range:4.2f}")
-                    .replace("DMAX", f"{max_adis:4.2f}")
-                    .replace("DMIN", f"{min_adis:4.2f}")
-                    .replace("SDRD", f"{sdr_dist:4.2f}")
-                    .replace("LIGSITE", "0")  # no FB for ligand now
-                    .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
-                    .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
-                    .replace("SALTBRIDGELIGANDNAME", salt_bridge_lig_name_str)
-                    .replace("LIGANDNAME", ligand_name_str)
-                )
 
     def _anchor_names_from_file(path: Path) -> list[str]:
         if not path.exists() or path.stat().st_size == 0:
@@ -3137,37 +3325,28 @@ def build_complex_z(ctx) -> bool:
         return True
 
     def _run_prep(ligand_name_str: str) -> None:
-        _write_prep(ligand_name_str)
-        if vmd_available:
-            run_with_log(
-                f"{vmd} -dispdev text -e prep.tcl",
-                error_match="anchor not found",
-                shell=False,
-                working_dir=workdir,
-            )
-        else:
-            _python_prep_complex(
-                workdir=workdir,
-                mol=mol,
-                p1_atom=p1_atom,
-                p1_vmd=p1_vmd,
-                p2_atom=p2_atom,
-                p2_vmd=p2_vmd,
-                first_resid="2",
-                last_resid=str(rec_res),
-                stage="fe",
-                l1_x=float(l1_x),
-                l1_y=float(l1_y),
-                l1_z=float(l1_z),
-                l1_range=float(l1_range),
-                min_adis=float(min_adis),
-                max_adis=float(max_adis),
-                sdr_dist=float(sdr_dist),
-                ligand_names=str(ligand_name_str).split(),
-                other_mol=other_mol,
-                lipid_mol=lipid_mol,
-                preferred_l1_names=salt_bridge_lig_names,
-            )
+        _python_prep_complex(
+            workdir=workdir,
+            mol=mol,
+            p1_atom=p1_atom,
+            p1_vmd=p1_vmd,
+            p2_atom=p2_atom,
+            p2_vmd=p2_vmd,
+            first_resid="2",
+            last_resid=str(rec_res),
+            stage="fe",
+            l1_x=float(l1_x),
+            l1_y=float(l1_y),
+            l1_z=float(l1_z),
+            l1_range=float(l1_range),
+            min_adis=float(min_adis),
+            max_adis=float(max_adis),
+            sdr_dist=float(sdr_dist),
+            ligand_names=str(ligand_name_str).split(),
+            other_mol=other_mol,
+            lipid_mol=lipid_mol,
+            preferred_l1_names=salt_bridge_lig_names,
+        )
 
     try:
         _run_prep(lig_name_str)
@@ -3182,7 +3361,7 @@ def build_complex_z(ctx) -> bool:
             )
             all_lig_name_str = " ".join(
                 _order_ligand_names_with_priority(
-                    [str(x) for x in lig_names],
+                    lig_heavy_names if lig_heavy_names else [str(x) for x in lig_names],
                     salt_bridge_lig_names,
                 )
             )
@@ -3209,7 +3388,7 @@ def build_complex_z(ctx) -> bool:
                         else:
                             all_lig_name_str = " ".join(
                                 _order_ligand_names_with_priority(
-                                    [str(x) for x in lig_names],
+                                    lig_heavy_names if lig_heavy_names else [str(x) for x in lig_names],
                                     salt_bridge_lig_names,
                                 )
                             )

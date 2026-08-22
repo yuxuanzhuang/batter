@@ -230,3 +230,21 @@ def test_slurmm_am_body_runs_without_wrapper_tee():
     assert "| tee run.log" not in text
     assert "BATTER_SKIP_STARTUP_LOG_ARCHIVE" not in text
     assert "bash run-local.bash" in text
+
+
+def test_slurmm_batch_remd_body_does_not_requeue():
+    repo_root = Path(__file__).resolve().parents[1]
+    slurm_body = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "remd_run_files"
+        / "SLURMM-BATCH-remd.body"
+    )
+    text = slurm_body.read_text()
+
+    assert 'if [[ ! -f "${PFOLDER}/FINISHED" ]]; then' in text
+    assert 'if [[ ! -f "${PFOLDER}/FAILED" ]]; then' not in text
+    assert "scontrol requeue" not in text
+    assert 'echo "FAILED" > "${PFOLDER}/ATTEMPT_FAILED"' in text

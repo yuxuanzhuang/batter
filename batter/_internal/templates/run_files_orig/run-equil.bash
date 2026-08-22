@@ -16,7 +16,7 @@ if [[ -d "$BATTER_SOURCE_ROOT/batter" ]]; then
 fi
 
 # Constants
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 PRMTOP_MERGED="full_merged.prmtop"
 INPCRD="full.inpcrd"
 log_file="run.log"

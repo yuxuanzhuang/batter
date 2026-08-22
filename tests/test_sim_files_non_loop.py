@@ -385,7 +385,7 @@ def test_write_l_mdin_can_enable_mcwat_fe(tmp_path: Path) -> None:
         "  nmd = 1000,\n"
         "  nmc = 1000,\n"
         "  mcwatmask = ':_lig_name_',\n"
-        "  mcligshift = 10,\n"
+        "  mcligshift = 15,\n"
         "  mcwatretry = 3000,\n"
         "  mcresstr = \"WAT\",\n"
         "  infe = _enable_infe_,\n"
@@ -409,7 +409,7 @@ def test_write_l_mdin_can_enable_mcwat_fe(tmp_path: Path) -> None:
     assert "  nmd = 1000,\n" in text
     assert "  nmc = 1000,\n" in text
     assert "  mcwatmask = \":291\",\n" in text
-    assert "  mcligshift = 10,\n" in text
+    assert "  mcligshift = 15,\n" in text
     assert "  mcwatretry = 3000,\n" in text
     assert "  mcresstr = \"WAT\",\n" in text
 
@@ -692,7 +692,7 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     assert "  nmd = 1000,\n" in template_text
     assert "  nmc = 1000,\n" in template_text
     assert "  mcwatmask = \":1\",\n" in template_text
-    assert "  mcligshift = 10,\n" in template_text
+    assert "  mcligshift = 15,\n" in template_text
     assert "  mcwatretry = 3000,\n" in template_text
     assert "  mcresstr = \"WAT\",\n" in template_text
 

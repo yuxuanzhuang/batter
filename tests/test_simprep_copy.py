@@ -2,8 +2,47 @@ import math
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from batter._internal.ops import simprep
+
+
+def test_pdb4amber_is_required_for_simprep(tmp_path, monkeypatch):
+    input_pdb = tmp_path / "protein_vmd.pdb"
+    output_pdb = tmp_path / "protein.pdb"
+    input_pdb.write_text("ATOM\n")
+    monkeypatch.setattr(simprep, "_executable_path", lambda cmd: None)
+
+    with pytest.raises(FileNotFoundError, match="pdb4amber is required"):
+        simprep._run_pdb4amber(input_pdb, output_pdb)
+
+    assert not output_pdb.exists()
+
+
+def test_pdb4amber_for_simprep_resolves_from_active_python_environment(
+    tmp_path, monkeypatch
+):
+    env_bin = tmp_path / "env" / "bin"
+    env_bin.mkdir(parents=True)
+    python = env_bin / "python"
+    python.write_text("#!/bin/sh\n")
+    pdb4amber = env_bin / "pdb4amber"
+    pdb4amber.write_text("#!/bin/sh\n")
+    pdb4amber.chmod(0o755)
+    input_pdb = tmp_path / "protein_vmd.pdb"
+    output_pdb = tmp_path / "protein.pdb"
+    input_pdb.write_text("ATOM\n")
+    commands: list[str] = []
+
+    monkeypatch.setattr(simprep.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(simprep.sys, "executable", str(python))
+    monkeypatch.setattr(simprep, "run_with_log", lambda cmd: commands.append(cmd))
+
+    simprep._run_pdb4amber(input_pdb, output_pdb)
+
+    assert commands == [
+        f"{pdb4amber} -i {input_pdb} -o {output_pdb} -y",
+    ]
 
 
 def test_copy_simulation_dir_copies_disang(tmp_path):

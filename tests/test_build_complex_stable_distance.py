@@ -11,7 +11,6 @@ from batter.analysis.sim_validation import STABLE_BORESCH_DISTANCE_SCHEMA_VERSIO
 from batter._internal.ops.build_complex import (
     _apply_stable_boresch_distance_preference,
     _load_stable_boresch_distance,
-    _user_anchor_atoms_were_provided,
     _user_anchor_triplet_was_provided,
 )
 
@@ -135,11 +134,8 @@ def test_stable_boresch_preference_renumbers_original_residue_ids(
     assert preference["p1_vmd"] == "86"
 
 
-def test_user_anchor_atoms_detects_explicit_config() -> None:
-    assert _user_anchor_atoms_were_provided(
-        {"user_anchor_atoms": ["resid 10 and name CA"]}
-    )
-    assert not _user_anchor_atoms_were_provided({"user_anchor_atoms": []})
+def test_user_anchor_triplet_detects_fully_explicit_config() -> None:
+    assert not _user_anchor_triplet_was_provided({"user_anchor_atoms": []})
     assert not _user_anchor_triplet_was_provided(
         {"user_anchor_atoms": ["resid 10 and name CA"]}
     )

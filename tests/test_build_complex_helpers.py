@@ -62,6 +62,76 @@ def test_candidate_ligand_atom_name_string_uses_direct_indices_when_atom_counts_
     assert names == "C1 C2"
 
 
+def test_candidate_ligand_atom_name_string_prefers_heavy_ordinals_over_hydrogen_order(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    sdf_file = tmp_path / "lig.sdf"
+    sdf_file.write_text("")
+    atoms = _FakeAtomGroup(
+        [
+            _FakeAtom("H10", "H"),
+            _FakeAtom("C1", "C"),
+            _FakeAtom("H7", "H"),
+            _FakeAtom("C2", "C"),
+        ]
+    )
+    monkeypatch.setattr(
+        build_complex_mod,
+        "get_ligand_candidates",
+        lambda path: [0, 2],
+    )
+    monkeypatch.setattr(
+        build_complex_mod,
+        "_sdf_heavy_atom_ordinals",
+        lambda path: (4, {0: 0, 2: 1}),
+    )
+
+    names = build_complex_mod._candidate_ligand_atom_name_string(
+        sdf_file,
+        atoms,
+        ligand_label="LIG",
+        stage="equil",
+    )
+
+    assert names == "C1 C2"
+
+
+def test_candidate_ligand_atom_name_string_fallback_uses_heavy_atoms(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    sdf_file = tmp_path / "lig.sdf"
+    sdf_file.write_text("")
+    atoms = _FakeAtomGroup(
+        [
+            _FakeAtom("H10", "H"),
+            _FakeAtom("C1", "C"),
+            _FakeAtom("H7", "H"),
+            _FakeAtom("C2", "C"),
+        ]
+    )
+    monkeypatch.setattr(
+        build_complex_mod,
+        "get_ligand_candidates",
+        lambda path: [0, 2],
+    )
+    monkeypatch.setattr(
+        build_complex_mod,
+        "_sdf_heavy_atom_ordinals",
+        lambda path: (4, {}),
+    )
+
+    names = build_complex_mod._candidate_ligand_atom_name_string(
+        sdf_file,
+        atoms,
+        ligand_label="LIG",
+        stage="equil",
+    )
+
+    assert names == "C1 C2"
+
+
 def test_candidate_ligand_atom_name_string_maps_sdf_indices_to_heavy_atoms(
     monkeypatch,
     tmp_path: Path,
@@ -276,11 +346,100 @@ def _pdb_line(
     x: float,
     y: float,
     z: float,
+    element: str = "C",
 ) -> str:
     return (
         f"{record:<6}{index:5d} {name:^4s} {resname:>3s} {chain:1s}{resid:4d}"
-        f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C\n"
+        f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2s}\n"
     )
+
+
+def test_pdb4amber_is_required(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    input_pdb = tmp_path / "protein_vmd.pdb"
+    output_pdb = tmp_path / "protein.pdb"
+    input_pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "GLU", "A", 30, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CB", "GLU", "A", 30, 1.0, 0.0, 0.0),
+                _pdb_line("ATOM", 3, "CA", "VAL", "A", 31, 2.0, 0.0, 0.0),
+                "END\n",
+            ]
+        )
+    )
+    monkeypatch.setattr(build_complex_mod, "_executable_path", lambda cmd: None)
+
+    with pytest.raises(FileNotFoundError, match="pdb4amber is required"):
+        build_complex_mod._run_pdb4amber(
+            input_pdb,
+            output_pdb,
+            working_dir=tmp_path,
+        )
+    assert not output_pdb.exists()
+
+
+def test_pdb4amber_resolves_from_active_python_environment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    input_pdb = tmp_path / "protein_vmd.pdb"
+    output_pdb = tmp_path / "protein.pdb"
+    input_pdb.write_text("END\n")
+    env_bin = tmp_path / "env" / "bin"
+    env_bin.mkdir(parents=True)
+    python_exe = env_bin / "python"
+    python_exe.write_text("")
+    pdb4amber = env_bin / "pdb4amber"
+    pdb4amber.write_text("#!/bin/sh\n")
+    pdb4amber.chmod(0o755)
+    commands: list[tuple[str, Path]] = []
+
+    monkeypatch.setattr(build_complex_mod.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(build_complex_mod.sys, "executable", str(python_exe))
+    monkeypatch.setattr(
+        build_complex_mod,
+        "run_with_log",
+        lambda command, *, working_dir, **kwargs: commands.append((command, working_dir)),
+    )
+
+    build_complex_mod._run_pdb4amber(
+        input_pdb,
+        output_pdb,
+        working_dir=tmp_path,
+    )
+
+    assert commands == [
+        (f"{pdb4amber} -i protein_vmd.pdb -o protein.pdb -y", tmp_path)
+    ]
+
+
+def test_python_split_preserves_existing_parameter_ligand_pdb(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "rec_file.pdb").write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "GLU", "A", 30, 0.0, 0.0, 0.0),
+                _pdb_line("HETATM", 2, "C1", "lig", "L", 1, 1.0, 0.0, 0.0),
+                "END\n",
+            ]
+        )
+    )
+    ligand_text = _pdb_line("HETATM", 1, "C1", "adr", "L", 1, 1.0, 0.0, 0.0)
+    (tmp_path / "adr.pdb").write_text(ligand_text)
+
+    build_complex_mod._python_split_rec_file(
+        workdir=tmp_path,
+        mol="adr",
+        solv_shell=5.0,
+        other_mol=[],
+        lipid_mol=[],
+    )
+
+    assert (tmp_path / "adr.pdb").read_text() == ligand_text
 
 
 def test_lipids_need_charmm_conversion_skips_amber_split_residues(
@@ -426,6 +585,50 @@ def test_guard_abfe_boresch_anchor_frame_reselects_p2_p3_to_keep_preferred_l1(
     assert data["boresch"]["final"]["torsion_margin_deg"] >= 15.0
 
 
+def test_guard_abfe_boresch_anchor_frame_avoids_terminal_l2_l3(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    lines = [
+        _pdb_line("ATOM", 1, "CA", "ASP", "A", 86, 41.478, 30.578, 70.156),
+        _pdb_line("ATOM", 2, "CA", "ASP", "A", 52, 37.677, 28.284, 61.080),
+        _pdb_line("ATOM", 3, "CA", "ASN", "A", 263, 32.855, 35.325, 61.566),
+    ]
+    ligand_coords = [
+        ("C1", 38.491, 33.314, 75.423),
+        ("N1", 38.411, 33.918, 74.061),
+        ("C2", 39.481, 34.908, 73.686),
+        ("C3", 39.297, 35.787, 72.485),
+        ("O1", 38.600, 35.092, 71.496),
+        ("C4", 40.618, 36.344, 71.919),
+        ("C5", 41.007, 36.110, 70.606),
+        ("C6", 42.063, 36.826, 70.075),
+        ("C7", 42.864, 37.733, 70.931),
+        ("O2", 43.958, 38.441, 70.512),
+        ("C8", 42.421, 37.885, 72.298),
+        ("O3", 43.060, 38.748, 73.186),
+        ("C9", 41.277, 37.305, 72.731),
+    ]
+    for index, (name, x, y, z) in enumerate(ligand_coords, start=4):
+        lines.append(_pdb_line("HETATM", index, name, "LIG", "L", 287, x, y, z))
+    lines.append("END\n")
+    fe_pdb.write_text("".join(lines))
+
+    names = build_complex_mod._guard_abfe_boresch_ligand_anchor_names(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="adrenaline-like",
+        P1=":86@CA",
+        P2=":52@CA",
+        P3=":263@CA",
+        lig_resid="287",
+        selected_names=["N1", "C1", "O3"],
+        preferred_first_names=["N1"],
+    )
+
+    assert names == ["N1", "C5", "C9"]
+
+
 def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +666,84 @@ def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
     )
 
     assert names[0] == "N1"
+
+
+def test_pick_ligand_anchor_names_ignores_hydrogen_candidates(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "aligned_amber.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, 0.0, 1.0, 0.0),
+                _pdb_line("HETATM", 3, "H1", "LIG", "L", 10, 1.0, 0.0, 0.0, "H"),
+                _pdb_line("HETATM", 4, "C1", "LIG", "L", 10, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 5, "C2", "LIG", "L", 10, 1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 6, "C3", "LIG", "L", 10, 1.0, 1.0, 1.0),
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    names = build_complex_mod._pick_ligand_anchor_names(
+        u=u,
+        mol="LIG",
+        ligand_names=["H1", "C1", "C2", "C3"],
+        p1_resid="2",
+        p1_atom="CA",
+        p2_resid="3",
+        p2_atom="CA",
+        l1_x=1.0,
+        l1_y=0.0,
+        l1_z=0.0,
+        l1_range=3.0,
+        min_adis=0.5,
+        max_adis=2.0,
+    )
+
+    assert names == ["C1", "C2", "C3"]
+
+
+def test_pick_ligand_anchor_names_prioritizes_nonterminal_l2(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "aligned_amber.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, 0.0, 1.0, 0.0),
+                _pdb_line("HETATM", 3, "C1", "LIG", "L", 10, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 4, "O1", "LIG", "L", 10, 1.0, 1.0, 0.0, "O"),
+                _pdb_line("HETATM", 5, "C2", "LIG", "L", 10, 1.0, -1.0, 1.0),
+                _pdb_line("HETATM", 6, "C3", "LIG", "L", 10, 1.0, -2.0, 1.0),
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    names = build_complex_mod._pick_ligand_anchor_names(
+        u=u,
+        mol="LIG",
+        ligand_names=["C1", "O1", "C2", "C3"],
+        preferred_l1_names=["C1"],
+        p1_resid="2",
+        p1_atom="CA",
+        p2_resid="3",
+        p2_atom="CA",
+        l1_x=1.0,
+        l1_y=0.0,
+        l1_z=0.0,
+        l1_range=3.0,
+        min_adis=0.5,
+        max_adis=2.0,
+    )
+
+    assert names[0] == "C1"
+    assert names[1] == "C2"
 
 
 def test_guard_abfe_boresch_ligand_anchor_names_allows_pdb_resid_mismatch(

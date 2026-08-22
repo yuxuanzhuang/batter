@@ -6,6 +6,8 @@ import pickle
 import os
 from typing import Any, Iterable, List, Mapping, Tuple, Optional, Set, Sequence
 import shutil
+import shlex
+import sys
 import re
 import random
 
@@ -41,6 +43,16 @@ ABFE_DIFF_BULK_COPY_SEPARATION = 10.0
 
 
 # ---------------------- small utils ----------------------
+def _executable_path(command: str) -> str | None:
+    path = shutil.which(command)
+    if path:
+        return path
+    env_path = Path(sys.executable).resolve().parent / command
+    if env_path.exists() and os.access(env_path, os.X_OK):
+        return str(env_path)
+    return None
+
+
 def _rel_symlink(target: Path, link_path: Path) -> None:
     """Create/replace a relative symlink at link_path → target."""
     link_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,16 +62,17 @@ def _rel_symlink(target: Path, link_path: Path) -> None:
     link_path.symlink_to(rel)
 
 
-def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path) -> None:
-    if shutil.which("pdb4amber"):
-        run_with_log(f"pdb4amber -i {input_pdb} -o {output_pdb} -y")
-        return
-    logger.warning(
-        "pdb4amber was not found; copying {} to {} without additional cleanup.",
-        input_pdb,
-        output_pdb,
+def _run_pdb4amber(input_pdb: Path, output_pdb: Path) -> None:
+    executable = _executable_path("pdb4amber")
+    if executable is None:
+        raise FileNotFoundError(
+            "pdb4amber is required but was not found in PATH. "
+            "Activate the batter_dev/AmberTools environment before building complexes."
+        )
+    run_with_log(
+        f"{shlex.quote(executable)} -i {shlex.quote(str(input_pdb))} "
+        f"-o {shlex.quote(str(output_pdb))} -y"
     )
-    shutil.copy2(input_pdb, output_pdb)
 
 
 def _read_nonblank_lines(p: Path) -> List[str]:
@@ -1300,7 +1313,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
             if len(ln) >= 22 and ln[17:20] != "WAT":
                 fout.write(ln)
 
-    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    _run_pdb4amber(rec_clean, rec_amber)
     ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
@@ -1415,7 +1428,7 @@ def create_simulation_dir_l(ctx: BuildContext) -> None:
             if len(ln) >= 22 and ln[17:20] != "WAT":
                 fout.write(ln)
 
-    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    _run_pdb4amber(rec_clean, rec_amber)
     ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:

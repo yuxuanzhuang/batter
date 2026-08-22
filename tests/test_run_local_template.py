@@ -41,6 +41,24 @@ def test_production_md_uses_expected_reference_restart() -> None:
         ) in text
 
 
+def test_abfe_local_template_uses_merged_prmtop_for_cpptraj_restart_split() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+
+    text = script.read_text()
+    assert "$CPPTRAJ_EXEC -p $PRMTOP_MERGED -i /dev/stdin" in text
+    assert "$CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin" not in text
+
+
+def test_abfe_equil_template_uses_merged_prmtop() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-equil.bash"
+
+    text = script.read_text()
+    assert 'PRMTOP="full_merged.prmtop"' in text
+    assert 'PRMTOP="full.hmr.prmtop"' not in text
+
+
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:
     """run-local.bash should honor mdin-template total_steps via explicit segment restarts."""
     repo_root = Path(__file__).resolve().parents[1]

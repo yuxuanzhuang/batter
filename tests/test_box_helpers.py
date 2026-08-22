@@ -1156,37 +1156,46 @@ def test_renum_chain_ids_for_shifted_fe_protein_uses_sequence(
     ]
 
 
-def test_write_identity_amber_renum_preserves_pdb_residue_records(
-    tmp_path: Path,
+def test_pdb4amber_is_required_for_box(tmp_path: Path, monkeypatch) -> None:
+    input_pdb = tmp_path / "build.pdb"
+    output_pdb = tmp_path / "build_amber.pdb"
+    input_pdb.write_text("ATOM\n")
+    monkeypatch.setattr(box, "_executable_path", lambda cmd: None)
+
+    with pytest.raises(FileNotFoundError, match="pdb4amber is required"):
+        box._run_pdb4amber_for_box(input_pdb, output_pdb, working_dir=tmp_path)
+
+    assert not output_pdb.exists()
+    assert not (tmp_path / "build_amber_renum.txt").exists()
+
+
+def test_pdb4amber_for_box_resolves_from_active_python_environment(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    pdb = tmp_path / "build.pdb"
-    renum = tmp_path / "build_amber_renum.txt"
-    pdb.write_text(
-        "".join(
-            [
-                _pdb_atom(1, "DU", "DUM", "D", 1, 0, 0, 0, "C"),
-                "TER\n",
-                _pdb_atom(2, "DU", "DUM", "D", 2, 0, 0, 0, "C"),
-                "TER\n",
-                _pdb_atom(3, "N", "LEU", "A", 3, 0, 0, 0, "N"),
-                _pdb_atom(4, "CA", "LEU", "A", 3, 0, 0, 0, "C"),
-                _pdb_atom(5, "N", "HID", "B", 217, 0, 0, 0, "N"),
-                _pdb_atom(6, "CA", "HID", "B", 217, 0, 0, 0, "C"),
-                _pdb_atom(7, "O", "WAT", "W", 999, 0, 0, 0, "O"),
-                "TER\n",
-                "END\n",
-            ]
-        )
+    env_bin = tmp_path / "env" / "bin"
+    env_bin.mkdir(parents=True)
+    python = env_bin / "python"
+    python.write_text("#!/bin/sh\n")
+    pdb4amber = env_bin / "pdb4amber"
+    pdb4amber.write_text("#!/bin/sh\n")
+    pdb4amber.chmod(0o755)
+    input_pdb = tmp_path / "build.pdb"
+    output_pdb = tmp_path / "build_amber.pdb"
+    input_pdb.write_text("ATOM\n")
+    commands: list[tuple[str, Path | None]] = []
+
+    monkeypatch.setattr(box.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(box.sys, "executable", str(python))
+    monkeypatch.setattr(
+        box,
+        "run_with_log",
+        lambda cmd, working_dir=None: commands.append((cmd, working_dir)),
     )
 
-    box._write_identity_amber_renum(pdb, renum)
+    box._run_pdb4amber_for_box(input_pdb, output_pdb, working_dir=tmp_path)
 
-    assert renum.read_text().splitlines() == [
-        "DUM D     1 DUM     1",
-        "DUM D     2 DUM     2",
-        "LEU A     3 LEU     3",
-        "HID B   217 HID   217",
-        "WAT W   999 WAT   999",
+    assert commands == [
+        (f"{pdb4amber} -i {input_pdb.name} -o {output_pdb.name} -y", tmp_path),
     ]
 
 

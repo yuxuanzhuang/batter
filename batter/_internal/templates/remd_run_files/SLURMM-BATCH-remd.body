@@ -96,18 +96,15 @@ else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
 
     if failure_outputs_have_titan_xp "$RETRY_COUNT"; then
-        echo "Requeuing the job for attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
-        sleep 60
-        scontrol requeue "$SLURM_JOB_ID"
+        echo "FAILED" > "${PFOLDER}/ATTEMPT_FAILED"
+        echo "Retrying attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
         exit 0
     fi
 
     if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        echo "FAILED" > "${PFOLDER}/ATTEMPT_FAILED"
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
-        echo "Requeuing the job for attempt $NEXT_RETRY..."
-        sleep 60
-        scontrol requeue "$SLURM_JOB_ID"
         exit 0
     else
         echo "FAILED" > "${PFOLDER}/FAILED"
@@ -116,9 +113,8 @@ else
     fi
 fi
 
-if [[ ! -f "${PFOLDER}/FAILED" ]]; then
+if [[ ! -f "${PFOLDER}/FINISHED" ]]; then
     echo "Simulation is not complete."
-    scontrol requeue $SLURM_JOB_ID
     exit 0
 fi
 echo "Job completed at $(date)"

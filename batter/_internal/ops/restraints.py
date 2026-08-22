@@ -40,7 +40,99 @@ BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
 BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
 SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
 LIGAND_DIHEDRAL_DEFAULT_FORCE = 10.0
-BoreschCandidate = tuple[float, tuple[int, int, int], tuple[float, ...], float, float]
+BoreschCandidate = tuple[
+    float,
+    int,
+    tuple[int, int, int],
+    tuple[float, ...],
+    float,
+    float,
+]
+
+_COVALENT_RADII_ANGSTROM = {
+    "B": 0.84,
+    "BR": 1.20,
+    "C": 0.76,
+    "CL": 1.02,
+    "F": 0.57,
+    "I": 1.39,
+    "N": 0.71,
+    "O": 0.66,
+    "P": 1.07,
+    "S": 1.05,
+    "SE": 1.20,
+    "SI": 1.11,
+}
+
+
+def _atom_element_symbol(atom) -> str:
+    for attr in ("element", "type", "name"):
+        try:
+            value = str(getattr(atom, attr, "")).strip()
+        except Exception:
+            continue
+        if not value:
+            continue
+        letters = re.sub(r"[^A-Za-z]", "", value).upper()
+        if not letters:
+            continue
+        if len(letters) >= 2 and letters[:2] in _COVALENT_RADII_ANGSTROM:
+            return letters[:2]
+        return letters[0]
+    return "C"
+
+
+def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
+    """Estimate heavy-atom degrees from topology bonds, then covalent distances."""
+    counts = {idx: 0 for idx in range(len(atoms))}
+    index_to_pos: dict[int, int] = {}
+    for idx, atom in enumerate(atoms):
+        try:
+            index_to_pos[int(atom.index)] = idx
+        except Exception:
+            pass
+
+    if index_to_pos:
+        for idx, atom in enumerate(atoms):
+            try:
+                bonded_atoms = list(atom.bonded_atoms)
+            except Exception:
+                bonded_atoms = []
+            for bonded in bonded_atoms:
+                try:
+                    bonded_idx = int(bonded.index)
+                except Exception:
+                    continue
+                bonded_pos = index_to_pos.get(bonded_idx)
+                if bonded_pos is not None and bonded_pos != idx:
+                    counts[idx] += 1
+        if any(counts.values()):
+            return counts
+
+    positions: list[np.ndarray] = []
+    elements: list[str] = []
+    for atom in atoms:
+        try:
+            positions.append(np.asarray(atom.position, dtype=float))
+        except Exception:
+            positions.append(np.full(3, np.nan))
+        elements.append(_atom_element_symbol(atom))
+
+    for i in range(len(atoms)):
+        if positions[i].shape != (3,) or not np.all(np.isfinite(positions[i])):
+            continue
+        for j in range(i + 1, len(atoms)):
+            if positions[j].shape != (3,) or not np.all(np.isfinite(positions[j])):
+                continue
+            distance = float(np.linalg.norm(positions[i] - positions[j]))
+            if distance < 0.40:
+                continue
+            radius_i = _COVALENT_RADII_ANGSTROM.get(elements[i], 0.76)
+            radius_j = _COVALENT_RADII_ANGSTROM.get(elements[j], 0.76)
+            if distance <= radius_i + radius_j + 0.45:
+                counts[i] += 1
+                counts[j] += 1
+    return counts
 
 def _stride_atom_serials(
     atoms: Sequence[str | int],
@@ -1144,6 +1236,8 @@ def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
         handle.write("# Bulk ligand z flat-bottom restraint\n")
         handle.write("&rst\n")
         handle.write("  iat=-1,-1,\n")
+        handle.write("  fxyz=0,0,1,\n")
+        handle.write("  outxyz=1,\n")
         handle.write(
             "  r1=-999.0, "
             f"r2={-BULK_LIGAND_RESTRAINT_HALF_WIDTH:.1f}, "
@@ -1163,6 +1257,10 @@ def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
         f"2 to bulk atom {bulk_idx}"
     )
     return 1
+
+
+def _append_bulk_ligand_z_restraint(ctx: BuildContext, disang: Path) -> int:
+    return _append_BULK_LIGAND_restraint(ctx, disang)
 
 
 def _residue_ix_for_atom_indices(
@@ -2442,9 +2540,11 @@ def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list
     span = max(span, 1.0)
 
     best_score: float | None = None
+    best_terminal_count: int | None = None
     best_indices: tuple[int, int, int] | None = None
     min_anchor_distance = 0.5
     min_sine = 0.25
+    heavy_neighbor_counts = _ligand_heavy_neighbor_counts(atoms)
 
     for i in range(len(atoms)):
         l1_centrality = np.linalg.norm(coords[i] - centroid) / span
@@ -2471,8 +2571,20 @@ def _independent_boresch_atom_names_from_residue(residue, *, label: str) -> list
                     continue
                 spread = (min(d12, d13) + 0.5 * d23) / span
                 score = 4.0 * sine + 0.25 * spread - l1_centrality
-                if best_score is None or score > best_score:
+                terminal_count = int(heavy_neighbor_counts.get(j, 0) < 2) + int(
+                    heavy_neighbor_counts.get(k, 0) < 2
+                )
+                if best_score is None or (
+                    terminal_count,
+                    -score,
+                    (i, j, k),
+                ) < (
+                    int(best_terminal_count or 0),
+                    -best_score,
+                    best_indices or (0, 0, 0),
+                ):
                     best_score = score
+                    best_terminal_count = terminal_count
                     best_indices = (i, j, k)
 
     if best_indices is None:
@@ -2666,6 +2778,7 @@ def _preferred_l1_ligand_triplet_candidates(
     all_positions = np.asarray([coords[i] for i in range(len(atoms))], dtype=float)
     centroid = all_positions.mean(axis=0)
     span = max(float(np.max(np.linalg.norm(all_positions - centroid, axis=1))), 1.0)
+    heavy_neighbor_counts = _ligand_heavy_neighbor_counts(atoms)
 
     candidates: list[dict] = []
     for preferred_rank, preferred_name in enumerate(preferred_names):
@@ -2699,6 +2812,9 @@ def _preferred_l1_ligand_triplet_candidates(
                         continue
                     spread = (min(d12, d13) + 0.5 * d23) / span
                     local_score = 4.0 * sine + 0.25 * spread - l1_centrality
+                    terminal_l2_l3_count = int(
+                        heavy_neighbor_counts.get(j, 0) < 2
+                    ) + int(heavy_neighbor_counts.get(k, 0) < 2)
                     candidates.append(
                         {
                             "preferred_rank": preferred_rank,
@@ -2709,12 +2825,14 @@ def _preferred_l1_ligand_triplet_candidates(
                             ],
                             "positions": (l1_pos, l2_pos, l3_pos),
                             "score": local_score,
+                            "terminal_l2_l3_count": terminal_l2_l3_count,
                         }
                     )
 
     candidates.sort(
         key=lambda item: (
             int(item["preferred_rank"]),
+            int(item.get("terminal_l2_l3_count", 0)),
             -float(item["score"]),
             item["names"],
         )
@@ -2750,13 +2868,18 @@ def _best_preferred_l1_triplet_for_receptor_frame(
             "values": values,
             "margins": (angle_margin, torsion_margin),
             "score": score,
+            "terminal_l2_l3_count": int(
+                candidate.get("terminal_l2_l3_count", 0)
+            ),
         }
         if best is None or (
             int(scored["preferred_rank"]),
+            int(scored["terminal_l2_l3_count"]),
             -float(scored["score"]),
             scored["names"],
         ) < (
             int(best["preferred_rank"]),
+            int(best.get("terminal_l2_l3_count", 0)),
             -float(best["score"]),
             best["names"],
         ):
@@ -2934,6 +3057,7 @@ def _select_receptor_p2_p3_for_preferred_l1_sets(
         )
         key = (
             change_count,
+            int(int(p2_atom.index) != int(current_p2_atom.index)),
             max_preferred_rank,
             -min_torsion_margin,
             -min_angle_margin,
@@ -3079,6 +3203,23 @@ def _frame_safe_boresch_atom_names_from_residue(
         if str(name).strip()
     ]
     preferred_set = set(preferred_names)
+    heavy_neighbor_counts = _ligand_heavy_neighbor_counts(atoms)
+
+    def _candidate_is_better(
+        candidate: BoreschCandidate,
+        current: BoreschCandidate | None,
+    ) -> bool:
+        if current is None:
+            return True
+        return (
+            int(candidate[1]),
+            -float(candidate[0]),
+            candidate[2],
+        ) < (
+            int(current[1]),
+            -float(current[0]),
+            current[2],
+        )
 
     def _scan_candidates(
         *,
@@ -3133,21 +3274,25 @@ def _frame_safe_boresch_atom_names_from_residue(
                     local_score = 4.0 * sine + 0.25 * spread - l1_centrality
                     endpoint_score = 0.03 * angle_margin + 0.05 * torsion_margin
                     score = local_score + endpoint_score
+                    terminal_count = int(heavy_neighbor_counts.get(j, 0) < 2) + int(
+                        heavy_neighbor_counts.get(k, 0) < 2
+                    )
                     candidate = (
                         score,
+                        terminal_count,
                         (i, j, k),
                         values,
                         angle_margin,
                         torsion_margin,
                     )
-                    if best_fallback is None or score > best_fallback[0]:
+                    if _candidate_is_better(candidate, best_fallback):
                         best_fallback = candidate
                     if (
                         angle_margin < angle_margin_cutoff
                         or torsion_margin < torsion_margin_cutoff
                     ):
                         continue
-                    if best_valid is None or score > best_valid[0]:
+                    if _candidate_is_better(candidate, best_valid):
                         best_valid = candidate
                     if preferred_atom_set:
                         candidate_names = {
@@ -3155,20 +3300,25 @@ def _frame_safe_boresch_atom_names_from_residue(
                             for idx in (i, j, k)
                         }
                         if candidate_names <= preferred_atom_set and (
-                            preferred_triplet_valid is None
-                            or score > preferred_triplet_valid[0]
+                            _candidate_is_better(
+                                candidate,
+                                preferred_triplet_valid,
+                            )
                         ):
                             preferred_triplet_valid = candidate
                     if first_name in preferred_set and (
                         first_name not in preferred_valid
-                        or score > preferred_valid[first_name][0]
+                        or _candidate_is_better(
+                            candidate,
+                            preferred_valid[first_name],
+                        )
                     ):
                         preferred_valid[first_name] = candidate
 
         return best_valid, best_fallback, preferred_triplet_valid, preferred_valid
 
     def _names_from_candidate(candidate: BoreschCandidate) -> list[str]:
-        return [str(atoms[idx].name).strip() for idx in candidate[1]]
+        return [str(atoms[idx].name).strip() for idx in candidate[2]]
 
     best_valid, best_fallback, preferred_triplet_valid, preferred_valid = (
         _scan_candidates(
@@ -3180,7 +3330,7 @@ def _frame_safe_boresch_atom_names_from_residue(
     )
 
     if preferred_triplet_valid is not None:
-        _, _, values, angle_margin, torsion_margin = preferred_triplet_valid
+        _, _, _, values, angle_margin, torsion_margin = preferred_triplet_valid
         names = _names_from_candidate(preferred_triplet_valid)
         logger.debug(
             "[restraints:x] Selected {} Boresch anchors {} from mapped common "
@@ -3197,7 +3347,7 @@ def _frame_safe_boresch_atom_names_from_residue(
         selected = preferred_valid.get(first_name)
         if selected is None:
             continue
-        _, _, values, angle_margin, torsion_margin = selected
+        _, _, _, values, angle_margin, torsion_margin = selected
         names = _names_from_candidate(selected)
         logger.debug(
             "[restraints:x] Selected {} Boresch anchors {} with preferred L1 {} "
@@ -3266,7 +3416,7 @@ def _frame_safe_boresch_atom_names_from_residue(
         )
         return _independent_boresch_atom_names_from_residue(residue, label=label)
 
-    _, _, values, angle_margin, torsion_margin = selected
+    _, _, _, values, angle_margin, torsion_margin = selected
     names = _names_from_candidate(selected)
     if selected_source == "strict_fallback":
         logger.warning(

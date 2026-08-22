@@ -5,7 +5,9 @@ import glob
 import json
 import os
 import shutil
+import shlex
 import re
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,65 +46,29 @@ def _first_atom_position(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
     return np.asarray(atoms[0].position, dtype=float).copy()
 
 
-def _pdb_residue_records(path: Path) -> list[tuple[str, str, int]]:
-    records: list[tuple[str, str, int]] = []
-    seen: set[tuple[str, str, int]] = set()
-    for line in path.read_text(errors="ignore").splitlines():
-        if not line.startswith(("ATOM", "HETATM")):
-            continue
-        resname = line[17:20].strip()
-        chain = line[21].strip() or "_"
-        resid_text = line[22:26].strip()
-        try:
-            resid = int(resid_text)
-        except ValueError:
-            fields = line.split()
-            if len(fields) < 5:
-                continue
-            resname = fields[3]
-            if len(fields) >= 6 and re.fullmatch(r"-?\d+", fields[5]):
-                chain = fields[4]
-                resid_text = fields[5]
-            else:
-                chain = "_"
-                resid_text = fields[4]
-            try:
-                resid = int(resid_text)
-            except ValueError:
-                continue
-        key = (resname, chain, resid)
-        if key in seen:
-            continue
-        seen.add(key)
-        records.append(key)
-    return records
+def _executable_path(command: str) -> str | None:
+    path = shutil.which(command)
+    if path:
+        return path
+    env_path = Path(sys.executable).resolve().parent / command
+    if env_path.exists() and os.access(env_path, os.X_OK):
+        return str(env_path)
+    return None
 
 
-def _write_identity_amber_renum(input_pdb: Path, renum_path: Path) -> None:
-    lines = []
-    for resname, chain, resid in _pdb_residue_records(input_pdb):
-        lines.append(f"{resname} {chain} {resid:5d} {resname} {resid:5d}\n")
-    renum_path.write_text("".join(lines))
-
-
-def _run_pdb4amber_for_box_or_copy(
+def _run_pdb4amber_for_box(
     input_pdb: Path, output_pdb: Path, *, working_dir: Path
 ) -> None:
-    if shutil.which("pdb4amber"):
-        run_with_log(
-            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
-            working_dir=working_dir,
+    executable = _executable_path("pdb4amber")
+    if executable is None:
+        raise FileNotFoundError(
+            "pdb4amber is required but was not found in PATH. "
+            "Activate the batter_dev/AmberTools environment before building complexes."
         )
-        return
-
-    shutil.copy2(input_pdb, output_pdb)
-    _write_identity_amber_renum(input_pdb, working_dir / "build_amber_renum.txt")
-    (working_dir / "build_amber_sslink").write_text("")
-    logger.warning(
-        "pdb4amber was not found; copying {} to {} and writing identity "
-        "build_amber_renum.txt without additional cleanup.",
-        input_pdb,
-        output_pdb,
+    run_with_log(
+        f"{shlex.quote(executable)} -i {shlex.quote(input_pdb.name)} "
+        f"-o {shlex.quote(output_pdb.name)} -y",
+        working_dir=working_dir,
     )
 
 
@@ -2823,7 +2789,7 @@ def create_box(ctx: BuildContext) -> None:
     # pdb4amber is only used here for residue-renumbering and disulfide metadata.
     # For membrane FE systems, do not send the full solvent box through pdb4amber.
     pdb4amber_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
-    _run_pdb4amber_for_box_or_copy(
+    _run_pdb4amber_for_box(
         window_dir / pdb4amber_input,
         window_dir / "build_amber.pdb",
         working_dir=window_dir,

@@ -175,10 +175,10 @@ def test_septop_alt_boresch_ignores_atom_mapping(tmp_path: Path) -> None:
     )
     alt = _FakeResidue(
         [
-            _FakeAtom("A0", (9.0, 9.0, 9.0)),
+            _FakeAtom("A0", (0.0, 1.0, 1.0)),
             _FakeAtom("A1", (0.0, 0.0, 0.0)),
             _FakeAtom("A2", (1.0, 0.0, 0.0)),
-            _FakeAtom("A3", (0.0, 1.0, 0.0)),
+            _FakeAtom("A3", (2.0, 0.0, 0.0)),
         ]
     )
     mapping = tmp_path / "mapping.json"
@@ -317,6 +317,44 @@ def test_boresch_selection_relaxes_local_geometry_before_first_three() -> None:
 
     assert names != ["A1", "A2", "A3"]
     assert values is not None
+
+
+def test_preferred_l1_triplet_prioritizes_nonterminal_l2_l3() -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (41.478, 30.578, 70.156)),
+        _FakeAtom("P2", (37.677, 28.284, 61.080)),
+        _FakeAtom("P3", (32.855, 35.325, 61.566)),
+    ]
+    residue = _FakeResidue(
+        [
+            _FakeAtom("C1", (38.491, 33.314, 75.423)),
+            _FakeAtom("N1", (38.411, 33.918, 74.061)),
+            _FakeAtom("C2", (39.481, 34.908, 73.686)),
+            _FakeAtom("C3", (39.297, 35.787, 72.485)),
+            _FakeAtom("O1", (38.600, 35.092, 71.496)),
+            _FakeAtom("C4", (40.618, 36.344, 71.919)),
+            _FakeAtom("C5", (41.007, 36.110, 70.606)),
+            _FakeAtom("C6", (42.063, 36.826, 70.075)),
+            _FakeAtom("C7", (42.864, 37.733, 70.931)),
+            _FakeAtom("O2", (43.958, 38.441, 70.512)),
+            _FakeAtom("C8", (42.421, 37.885, 72.298)),
+            _FakeAtom("O3", (43.060, 38.748, 73.186)),
+            _FakeAtom("C9", (41.277, 37.305, 72.731)),
+        ]
+    )
+
+    candidates = restraints._preferred_l1_ligand_triplet_candidates(
+        residue,
+        ["N1"],
+    )
+    selected = restraints._best_preferred_l1_triplet_for_receptor_frame(
+        receptor_atoms,
+        candidates,
+    )
+
+    assert selected is not None
+    assert selected["names"] == ["N1", "C5", "C9"]
+    assert selected["terminal_l2_l3_count"] == 0
 
 
 def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
@@ -638,7 +676,7 @@ def test_ion_guard_adds_one_lower_wall_per_bulk_ion_for_z(tmp_path: Path) -> Non
     assert "iat=4,1," in text
     assert "iat=3,2," not in text
     assert "iat=4,2," not in text
-    assert "r2=   15.0000" in text
+    assert f"r2={restraints.ION_GUARD_DISTANCE:10.4f}" in text
     assert "rk2= 10.0000000" in text
     assert "rk3=  0.0000000" in text
 
@@ -670,7 +708,7 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
 
     text = disang.read_text()
     assert written == 1
-    assert "#Bulk_Lig_Z" in text
+    assert "#Bulk_Lig" in text
     assert "iat=-1,-1," in text
     assert "fxyz=0,0,1," in text
     assert "outxyz=1," in text
