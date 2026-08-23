@@ -9,5 +9,5 @@ class RemdArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     nstlim: int = Field(
-        100, ge=1, description="Total MD steps for each REMD segment (nstlim)."
+        1000, ge=1, description="Total MD steps for each REMD segment (nstlim)."
     )

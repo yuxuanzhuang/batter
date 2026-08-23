@@ -22,7 +22,7 @@ from batter._internal.ops.helpers import (
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
-ION_GUARD_DISTANCE = 15.0
+ION_GUARD_DISTANCE = 10.0
 ION_GUARD_FORCE = 10.0
 ION_GUARD_TAG = "Ion_Guard"
 BULK_LIGAND_RESTRAINT_HALF_WIDTH = 3.0
@@ -1236,8 +1236,6 @@ def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
         handle.write("# Bulk ligand z flat-bottom restraint\n")
         handle.write("&rst\n")
         handle.write("  iat=-1,-1,\n")
-        handle.write("  fxyz=0,0,1,\n")
-        handle.write("  outxyz=1,\n")
         handle.write(
             "  r1=-999.0, "
             f"r2={-BULK_LIGAND_RESTRAINT_HALF_WIDTH:.1f}, "
