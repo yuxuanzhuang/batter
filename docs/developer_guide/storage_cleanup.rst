@@ -35,7 +35,8 @@ The cleanup helpers preserve these classes of files across stages:
   ``SLURMM-BATCH-remd``, ``lambda.sch``, ``mdin-template``,
   ``mdin-batch-template`` and ``mdin-remd-template``;
 * final topology/coordinate inputs such as ``full.prmtop``, ``full.inpcrd``,
-  ``full.hmr.prmtop``, ``full_merged.prmtop`` and ``full.pdb``;
+  ``full.hmr.prmtop``, ``full_merged.prmtop`` and ``full.pdb``; generated
+  local, batch, and REMD launchers use ``full_merged.prmtop`` at runtime;
 * restraint and component metadata such as ``disang.rest``, ``cv.in``,
   ``restraints.in``, ``sdr_info.txt`` and ``anchors*.txt/json``;
 * all files whose name starts with ``md-``;

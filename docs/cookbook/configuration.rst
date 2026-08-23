@@ -128,11 +128,14 @@ used by later equilibration/FE setup are also written per ligand to
 * For apo-only MD, BATTER switches to a protein-only heuristic so dummy ligand
   coordinates do not determine the anchor geometry.
 
-If you know the receptor interaction that should define the Boresch reference,
-provide one selection. BATTER treats that atom as P1 and chooses P2/P3
-automatically. Prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry.
+Provide three selections only when you need fully manual P1/P2/P3 geometry. If
+you provide one selection, BATTER treats that atom as P1 and chooses P2/P3
+automatically. When zero or one receptor selection is provided and a charged
+protein-ligand contact is detected, BATTER prefers that salt bridge for P1/L1.
+For L2/L3 it first prefers valid ring atoms connected to at least two heavy
+atoms, then heavier-connected non-ring atoms, and then other nonterminal heavy
+atoms. Receptor P1/P2/P3 candidates are chosen from stable non-loop Cα atoms and
+screened to avoid near-planar Boresch frames.
 
 Component-Specific Inputs
 -------------------------
@@ -198,7 +201,7 @@ FE ion guard
 windows. When enabled, BATTER appends ``#Ion_Guard`` lower-wall distance
 restraints to ``disang.rest`` for ``z`` and ``x`` components. Each configured
 bulk ion (from ``create.cation`` / ``create.anion``) is restrained from coming
-within 15 Å of the ligand reference atom in the binding site. Set
+within 10 Å of the ligand reference atom in the binding site. Set
 ``fe_sim.ion_guard: no`` to disable this
 FE-stage guard; equilibration restraints are unchanged.
 
@@ -208,12 +211,13 @@ Equilibration options
 Two frequently toggled equilibration knobs live under ``fe_sim`` and flow into the
 resolved :class:`~batter.config.simulation.SimulationConfig`:
 
-* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning. The builder swaps in HMR
-  parameter files and switches equilibration/production mdins to the HMR topology
-  (``full.hmr.prmtop``).
+* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning during preparation.
+  BATTER may still generate HMR helper files, but generated local, batch, and
+  REMD launch scripts use ``full_merged.prmtop`` as the runtime topology.
 * ``enable_mcwat`` – ``"yes"`` (default) enables Monte Carlo water moves during
   equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
-  :func:`batter._internal.ops.amber.write_amber_templates`.
+  :func:`batter._internal.ops.amber.write_amber_templates`; MC-water
+  equilibration templates place the shifted ligand dummy 15 Å from the site.
 * ``mcwat_fe`` – ``"no"`` (default) enables the same MC-water move block in FE
   production input templates when set to ``"yes"``. Runtime ``mdin-current``,
   REMD, and batch inputs inherit it from the generated production template.
@@ -223,11 +227,13 @@ REMD runs
 
 REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
 submit time whether to run them. Use ``fe_sim.remd.nstlim`` to set the exchange interval
-and segment length; the exchange count is derived from the remaining steps so total
-runtime is controlled by ``n_steps``. Control execution with ``run.remd`` (``yes`` or
-``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
-scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
-monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
+and segment length; the default is ``1000`` MD steps. The exchange count is derived from
+the remaining steps so total runtime is controlled by ``n_steps``. Runtime templates keep
+``bar_intervall=100`` and cap ``DUMPFREQ`` so center-of-mass dumps stay inside each
+exchange block. Control execution with ``run.remd`` (``yes`` or ``no``); when
+``run.remd: no`` the files are still generated but no REMD jobs are scheduled. REMD jobs
+submit one Slurm job per component via ``SLURMM-BATCH-remd`` and monitor
+``FINISHED``/``FAILED`` sentinels in the component folder. See
 :doc:`remote_bundled_jobs` for operational details.
 
 SLURM header templates

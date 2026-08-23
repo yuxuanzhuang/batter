@@ -125,11 +125,14 @@ Anchor Atoms
 * ligand-bound MD uses the first real ligand pose to select receptor anchors;
 * apo-only MD uses the protein-only heuristic.
 
-If you know the receptor interaction that should define the anchor frame, you
-can provide one selection and BATTER will treat it as P1 while choosing P2/P3
-automatically. Prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry:
+If you provide three selections, BATTER uses them directly as P1/P2/P3. If you
+provide one selection, BATTER treats it as P1 and chooses P2/P3 automatically.
+With zero or one receptor anchor in ligand-bound runs, a detected salt bridge can
+define P1/L1; L2/L3 then prefer ring atoms connected to at least two heavy atoms,
+followed by other highly connected nonterminal heavy atoms. Auto-selected
+receptor anchors come from stable non-loop Cα atoms and are screened against
+near-planar frames. Provide three selections only when you need fully manual
+P1/P2/P3 geometry:
 
 .. code-block:: yaml
 

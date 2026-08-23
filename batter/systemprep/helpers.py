@@ -1174,8 +1174,10 @@ def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = False) -> Lis
     Return ligand atom indices suitable for anchor selection.
 
     Criteria: heavy atoms bound to at least two other heavy atoms while skipping
-    hydrogens and sp-hybridised carbons. Falls back to all non-hydrogen atoms
-    when fewer than three candidates survive.
+    hydrogens and sp-hybridised carbons. Charged atoms are retained so
+    salt-bridge L1 candidates remain available. Falls back to all non-hydrogen
+    atoms when fewer than three candidates survive. Later build/restraint
+    scoring ranks L2/L3 by ring membership and heavy-atom degree.
     """
     if Chem is None:
         raise RuntimeError("RDKit is required for get_ligand_candidates.")

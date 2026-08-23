@@ -9,7 +9,9 @@ developers should consult in order to become productive quickly.
 
    Before submitting jobs through Slurm, make sure the seeded files under
    ``~/.batter/`` are edited for your cluster so Amber/AmberTools loads
-   successfully. In practice this usually means updating
+   successfully. The active environment must expose AmberTools commands such as
+   ``pdb4amber``, ``tleap``, and ``cpptraj``, plus the AMBER engine executables
+   used by your jobs. In practice this usually means updating
    ``job_manager.header`` and ``SLURMM-Am.header`` (and
    ``SLURMM-BATCH-remd.header`` if you plan to use REMD) so the right modules,
    environment activation, and executable paths are set for your site.

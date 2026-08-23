@@ -145,9 +145,9 @@ def _atom_element_symbol(atom) -> str:
     return "C"
 
 
-def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
-    """Estimate heavy-atom degrees from topology bonds, then covalent distances."""
-    counts = {idx: 0 for idx in range(len(atoms))}
+def _ligand_heavy_adjacency(atoms: Sequence[object]) -> dict[int, set[int]]:
+    """Estimate heavy-atom connectivity from topology bonds, then distances."""
+    adjacency: dict[int, set[int]] = {idx: set() for idx in range(len(atoms))}
     index_to_pos: dict[int, int] = {}
     for idx, atom in enumerate(atoms):
         try:
@@ -168,9 +168,10 @@ def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
                     continue
                 bonded_pos = index_to_pos.get(bonded_idx)
                 if bonded_pos is not None and bonded_pos != idx:
-                    counts[idx] += 1
-        if any(counts.values()):
-            return counts
+                    adjacency[idx].add(bonded_pos)
+                    adjacency[bonded_pos].add(idx)
+        if any(adjacency.values()):
+            return adjacency
 
     positions: list[np.ndarray] = []
     elements: list[str] = []
@@ -193,9 +194,84 @@ def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
             radius_i = _COVALENT_RADII_ANGSTROM.get(elements[i], 0.76)
             radius_j = _COVALENT_RADII_ANGSTROM.get(elements[j], 0.76)
             if distance <= radius_i + radius_j + 0.45:
-                counts[i] += 1
-                counts[j] += 1
-    return counts
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+    return adjacency
+
+
+def _ligand_heavy_neighbor_counts(atoms: Sequence[object]) -> dict[int, int]:
+    """Estimate heavy-atom degrees from topology bonds, then covalent distances."""
+    return {
+        idx: len(neighbors)
+        for idx, neighbors in _ligand_heavy_adjacency(atoms).items()
+    }
+
+
+def _ligand_ring_membership(atoms: Sequence[object]) -> dict[int, bool]:
+    """Return whether each heavy atom participates in an inferred ring."""
+    adjacency = _ligand_heavy_adjacency(atoms)
+    membership = {idx: False for idx in range(len(atoms))}
+
+    for idx, neighbors in adjacency.items():
+        neighbor_list = list(neighbors)
+        if len(neighbor_list) < 2:
+            continue
+        blocked = idx
+        for start_pos, start in enumerate(neighbor_list[:-1]):
+            targets = set(neighbor_list[start_pos + 1 :])
+            stack = [start]
+            visited = {blocked, start}
+            while stack and targets:
+                current = stack.pop()
+                if current in targets:
+                    membership[idx] = True
+                    targets.clear()
+                    break
+                for neighbor in adjacency.get(current, set()):
+                    if neighbor in visited:
+                        continue
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+            if membership[idx]:
+                break
+    return membership
+
+
+def _ligand_anchor_priority_class(heavy_neighbors: int, in_ring: bool) -> int:
+    """Lower class is preferred for ligand L2/L3 anchor selection."""
+    degree = int(heavy_neighbors)
+    if bool(in_ring) and degree >= 2:
+        return 0
+    if degree > 2:
+        return 1
+    if degree >= 2:
+        return 2
+    return 3
+
+
+def _ligand_anchor_pair_priority_rank(
+    first_name: str,
+    second_name: str,
+    *,
+    heavy_neighbors_by_name: dict[str, int],
+    ring_by_name: dict[str, bool],
+) -> int:
+    """Rank L2/L3 pairs by ring/internal character before geometry tie-breaks."""
+    degree1 = int(heavy_neighbors_by_name.get(first_name, 0))
+    degree2 = int(heavy_neighbors_by_name.get(second_name, 0))
+    low_degree_count = int(degree1 < 2) + int(degree2 < 2)
+    class1 = _ligand_anchor_priority_class(degree1, ring_by_name.get(first_name, False))
+    class2 = _ligand_anchor_priority_class(degree2, ring_by_name.get(second_name, False))
+    degree_sum = min(degree1 + degree2, 99)
+    return (
+        low_degree_count * 10_000_000
+        + (class1 + class2) * 1_000_000
+        + class1 * 100_000
+        + class2 * 10_000
+        - degree_sum * 100
+        - min(degree1, 9) * 10
+        - min(degree2, 9)
+    )
 
 
 def _executable_path(command: str) -> str | None:
@@ -876,12 +952,26 @@ def _preferred_l1_ligand_triplet_candidates(
     centroid = all_positions.mean(axis=0)
     span = max(float(np.max(np.linalg.norm(all_positions - centroid, axis=1))), 1.0)
     heavy_neighbor_counts = _ligand_heavy_neighbor_counts(atoms)
+    ring_membership = _ligand_ring_membership(atoms)
     atom_positions: dict[int, int] = {}
     for idx, atom in enumerate(atoms):
         try:
             atom_positions[int(atom.index)] = idx
         except Exception:
             atom_positions[idx] = idx
+    heavy_neighbors_by_name: dict[str, int] = {}
+    ring_by_name: dict[str, bool] = {}
+    for idx, atom in enumerate(atoms):
+        name = str(atom.name).strip()
+        if not name:
+            continue
+        heavy_neighbors_by_name[name] = max(
+            heavy_neighbors_by_name.get(name, 0),
+            int(heavy_neighbor_counts.get(idx, 0)),
+        )
+        ring_by_name[name] = bool(ring_by_name.get(name, False)) or bool(
+            ring_membership.get(idx, False)
+        )
 
     candidates: list[dict] = []
     for preferred_rank, preferred_name in enumerate(preferred_names):
@@ -923,27 +1013,36 @@ def _preferred_l1_ligand_triplet_candidates(
                         l3_index = atom_positions.get(int(l3.index), -1)
                     except Exception:
                         l3_index = -1
-                    terminal_l2_l3_count = int(
+                    low_degree_l2_l3_count = int(
                         heavy_neighbor_counts.get(l2_index, 0) < 2
                     ) + int(heavy_neighbor_counts.get(l3_index, 0) < 2)
+                    l2_name = str(l2.name).strip()
+                    l3_name = str(l3.name).strip()
                     candidates.append(
                         {
                             "preferred_rank": preferred_rank,
                             "names": [
                                 str(l1.name).strip(),
-                                str(l2.name).strip(),
-                                str(l3.name).strip(),
+                                l2_name,
+                                l3_name,
                             ],
                             "positions": (l1_pos, l2_pos, l3_pos),
                             "score": local_score,
-                            "terminal_l2_l3_count": terminal_l2_l3_count,
+                            "low_degree_l2_l3_count": low_degree_l2_l3_count,
+                            "terminal_l2_l3_count": low_degree_l2_l3_count,
+                            "l2_l3_priority_rank": _ligand_anchor_pair_priority_rank(
+                                l2_name,
+                                l3_name,
+                                heavy_neighbors_by_name=heavy_neighbors_by_name,
+                                ring_by_name=ring_by_name,
+                            ),
                         }
                     )
 
     candidates.sort(
         key=lambda item: (
             int(item["preferred_rank"]),
-            int(item.get("terminal_l2_l3_count", 0)),
+            int(item.get("l2_l3_priority_rank", 0)),
             -float(item["score"]),
             item["names"],
         )
@@ -1003,18 +1102,23 @@ def _best_preferred_l1_triplet_for_receptor_frame(
             "values": values,
             "margins": (angle_margin, torsion_margin),
             "score": score,
-            "terminal_l2_l3_count": int(
-                candidate.get("terminal_l2_l3_count", 0)
+            "low_degree_l2_l3_count": int(
+                candidate.get(
+                    "low_degree_l2_l3_count",
+                    candidate.get("terminal_l2_l3_count", 0),
+                )
             ),
+            "terminal_l2_l3_count": int(candidate.get("terminal_l2_l3_count", 0)),
+            "l2_l3_priority_rank": int(candidate.get("l2_l3_priority_rank", 0)),
         }
         if best is None or (
             int(scored_candidate["preferred_rank"]),
-            int(scored_candidate["terminal_l2_l3_count"]),
+            int(scored_candidate["l2_l3_priority_rank"]),
             -float(scored_candidate["score"]),
             names,
         ) < (
             int(best["preferred_rank"]),
-            int(best.get("terminal_l2_l3_count", 0)),
+            int(best.get("l2_l3_priority_rank", 0)),
             -float(best["score"]),
             best["names"],
         ):
@@ -1435,7 +1539,9 @@ def _pick_ligand_anchor_names(
         atom for atom in u.select_atoms(f"resname {mol}") if not _atom_is_hydrogen(atom)
     ]
     heavy_neighbor_counts = _ligand_heavy_neighbor_counts(ligand_heavy_atoms)
+    ring_membership = _ligand_ring_membership(ligand_heavy_atoms)
     heavy_neighbors_by_name: dict[str, int] = {}
+    ring_by_name: dict[str, bool] = {}
     for idx, atom in enumerate(ligand_heavy_atoms):
         name = str(atom.name).strip()
         if not name:
@@ -1443,6 +1549,9 @@ def _pick_ligand_anchor_names(
         heavy_neighbors_by_name[name] = max(
             heavy_neighbors_by_name.get(name, 0),
             int(heavy_neighbor_counts.get(idx, 0)),
+        )
+        ring_by_name[name] = bool(ring_by_name.get(name, False)) or bool(
+            ring_membership.get(idx, False)
         )
     ligand_name_rank = {
         name: rank for rank, name in enumerate(_dedupe_names([str(x) for x in ligand_names]))
@@ -1522,11 +1631,18 @@ def _pick_ligand_anchor_names(
                     continue
                 angle3_diff = abs(angle3 - 90.0)
                 aa3_terminal = int(heavy_neighbors_by_name.get(aa3, 0) < 2)
+                l2_l3_priority_rank = _ligand_anchor_pair_priority_rank(
+                    aa2,
+                    aa3,
+                    heavy_neighbors_by_name=heavy_neighbors_by_name,
+                    ring_by_name=ring_by_name,
+                )
                 score = (
                     float(aa1_score[0]),
                     float(aa2_terminal + aa3_terminal),
                     float(aa2_terminal),
                     float(aa3_terminal),
+                    float(l2_l3_priority_rank),
                     float(aa1_score[1]),
                     float(aa1_score[2]),
                     float(angle2_diff + angle3_diff),

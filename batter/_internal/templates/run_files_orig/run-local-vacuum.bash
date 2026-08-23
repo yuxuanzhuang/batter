@@ -10,7 +10,7 @@ SANDER_EXEC=${SANDER_EXEC:-sander}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}

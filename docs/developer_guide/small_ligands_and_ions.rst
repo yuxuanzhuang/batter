@@ -11,6 +11,8 @@ The feature spans three layers:
   is physically too small for a full frame;
 * FE restraint preparation can add ion guard lower walls so bulk ions do not
   approach the bound or solvent ligand reference atoms during alchemical windows;
+* ABFE z-window restraint preparation adds a bulk-ligand flat-bottom distance
+  restraint between the first bound ligand atom and the first bulk ligand atom;
 * analysis applies an analytical reduced external-restraint correction when
   ``disang.rest`` contains three or five ligand translation/rotation terms.
 
@@ -73,10 +75,17 @@ anchor restraints plus the ligand terms that can be defined. For a one-anchor
 ligand it emits three ligand terms; for a two-anchor ligand it emits five; for a
 normal ligand it emits six.
 
-``batter._internal.ops.build_complex`` mirrors the same guard around VMD
-``anchors.txt`` parsing via ``_partial_ligand_anchors_are_expected``. This keeps
-ABFE preparation from failing just because VMD can only find one or two ligand
-anchors for a genuinely small ligand.
+``batter._internal.ops.build_complex`` mirrors the same guard when reading the
+prepared ``anchors*.txt/json`` files via ``_partial_ligand_anchors_are_expected``.
+This keeps ABFE preparation from failing when a genuinely small ligand can only
+define one or two ligand anchors.
+
+For normal ligands with an automatically chosen L1, charged protein-ligand
+contacts can promote a salt-bridge atom to L1. L2/L3 are then ranked to avoid
+terminal atoms: valid ring atoms with at least two heavy neighbours are preferred
+first, then atoms with more than two heavy neighbours, then other nonterminal
+heavy atoms. The Boresch guard applies the same ranking after filtering out
+near-planar receptor-ligand frames.
 
 Ion guard path
 --------------
@@ -100,7 +109,7 @@ tagged ``#Ion_Guard``:
 .. code-block:: text
 
    r1 = 0.0
-   r2 = 15.0
+   r2 = 10.0
    r3 = 999.0
    r4 = 999.0
    rk2 = 10.0
@@ -108,6 +117,28 @@ tagged ``#Ion_Guard``:
 
 The tag is intentionally distinct from ``#Lig_TR`` so reduced/Boresch analytical
 correction detection ignores these guard terms.
+
+Bulk ligand restraint path
+--------------------------
+
+For ABFE z-windows with a bound ligand and a translated bulk-solvent ligand copy,
+BATTER no longer appends the bulk ligand atom to the positional ``ATOM 1 2``
+restraint in ``mdin-template``. Instead, ``disang.rest`` receives a separate
+``#Bulk_Lig`` flat-bottom restraint between AMBER atom 2 in the binding-site
+ligand and the first heavy atom in the bulk ligand copy:
+
+.. code-block:: text
+
+   &rst
+     iat=-1,-1,
+     r1=-999.0, r2=-3.0, r3=3.0, r4=999.0,
+     rk2=10.0, rk3=10.0,
+     igr1=2,0,
+     igr2=<bulk first atom>,0,
+   &end
+
+The bulk dummy coordinate used during MC-water setup is placed at the first
+bulk-ligand atom rather than at the bulk-ligand center of mass.
 
 Analysis path
 -------------

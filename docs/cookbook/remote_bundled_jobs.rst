@@ -100,9 +100,12 @@ Key behaviours:
   minimisation groupfile (``mini.in.remd.groupfile``) is still prepared during
   setup.
 * ``run-local-remd.bash`` computes the exchange count from the remaining
-  ``total_steps`` and ``remd_nstlim``, runs a single REMD segment, then exits. It
-  tracks completion with ``FINISHED``/``FAILED`` sentinels and expects window
-  folders ``<comp>00/`` etc. for REMD rolling restarts
+  ``total_steps`` and ``remd_nstlim`` (default ``1000``), runs a single REMD
+  segment, then exits. ``mdin-remd-template`` keeps ``bar_intervall=100`` and
+  caps ``DUMPFREQ`` so center-of-mass dumps remain inside each exchange block.
+  The generated REMD groupfiles invoke AMBER with ``-p full_merged.prmtop``.
+  Completion is tracked with ``FINISHED``/``FAILED`` sentinels, and window
+  folders ``<comp>00/`` etc. provide REMD rolling restarts
   (``eq.rst7`` -> ``md-current.rst7``/``md-previous.rst7``).
 * The Slurm body for REMD components is ``SLURMM-BATCH-remd`` sitting in the
   component folder. The generated remote bundled job invokes these component

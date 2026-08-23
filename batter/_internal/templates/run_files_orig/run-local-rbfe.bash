@@ -11,7 +11,7 @@ MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 PRMTOP_MERGED="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
@@ -151,7 +151,7 @@ if [[ $only_eq -eq 1 ]]; then
     # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
     if [[ $overwrite -ne 0 || $seed_eq_ran -eq 1 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
         rm -f eq.rst7.[0-9]*
-        $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
+        $CPPTRAJ_EXEC -p $PRMTOP_MERGED -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
 run

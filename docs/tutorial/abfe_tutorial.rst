@@ -134,10 +134,13 @@ Generating Simulation Inputs
      this can be omitted; BATTER will choose anchors automatically and write the
      prepared-system selections to each ligand's ``equil/anchors.json``.
 
-     If you know the interaction that should define the Boresch reference, you
-     can provide one atom. BATTER treats that atom as P1 and chooses P2/P3
-     automatically. Prefer the binding-site Cα of a residue associated with a
-     conserved ligand interaction, such as the residue forming a salt bridge.
+     If you provide three atoms, BATTER uses them directly as P1/P2/P3. If you
+     provide one atom, BATTER treats it as P1 and chooses P2/P3 automatically.
+     With zero or one receptor anchor, a detected salt bridge can define P1/L1;
+     L2/L3 then prefer ring atoms connected to at least two heavy atoms, followed
+     by other highly connected nonterminal heavy atoms. Auto-selected receptor
+     anchors come from stable non-loop Cα atoms and are screened against
+     near-planar Boresch frames.
 
      Provide three atoms only when you need fully manual geometry. In that case,
      anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å,

@@ -4,6 +4,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from batter._internal.ops.helpers import rewrite_prmtop_reference
+
 
 def _write_stub_exe(path: Path, body: str) -> None:
     path.write_text(body)
@@ -43,7 +47,14 @@ def test_production_md_uses_expected_reference_restart() -> None:
 
 def test_abfe_local_template_uses_merged_prmtop_for_cpptraj_restart_split() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-local.bash"
+    )
 
     text = script.read_text()
     assert "$CPPTRAJ_EXEC -p $PRMTOP_MERGED -i /dev/stdin" in text
@@ -52,11 +63,71 @@ def test_abfe_local_template_uses_merged_prmtop_for_cpptraj_restart_split() -> N
 
 def test_abfe_equil_template_uses_merged_prmtop() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-equil.bash"
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-equil.bash"
+    )
 
     text = script.read_text()
     assert 'PRMTOP="full_merged.prmtop"' in text
     assert 'PRMTOP="full.hmr.prmtop"' not in text
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    [
+        "run-local.bash",
+        "run-local-rbfe.bash",
+        "run-local-vacuum.bash",
+        "run-equil.bash",
+    ],
+)
+def test_local_templates_use_merged_prmtop(template_name: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / template_name
+    )
+
+    text = script.read_text()
+    assert 'PRMTOP="full_merged.prmtop"' in text
+    assert 'PRMTOP="full.hmr.prmtop"' not in text
+    assert 'PRMTOP="full.prmtop"' not in text
+
+
+def test_check_penetration_template_uses_merged_prmtop() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_penetration.py"
+    )
+
+    text = script.read_text()
+    assert 'PRMTOP = "full_merged.prmtop"' in text
+    assert "full.hmr.prmtop" not in text
+    assert "full.prmtop" not in text
+
+
+def test_rewrite_prmtop_reference_normalizes_to_merged_prmtop() -> None:
+    text = 'PRMTOP="full.hmr.prmtop"\nparm full.prmtop\n'
+
+    rewritten = rewrite_prmtop_reference(text, hmr=True)
+    rewritten_no_hmr = rewrite_prmtop_reference(text, hmr=False)
+
+    assert rewritten == 'PRMTOP="full_merged.prmtop"\nparm full_merged.prmtop\n'
+    assert rewritten_no_hmr == rewritten
 
 
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:

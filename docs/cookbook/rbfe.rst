@@ -46,19 +46,19 @@ Anchor selection
 receptor anchors heuristically during system preparation:
 
 * For ABFE/RBFE and MD runs with at least one real ligand, BATTER uses the first
-  real ligand pose as the binding-site reference. It prefers stable receptor
-  backbone atoms near the ligand, keeps P1-P2 and P2-P3 separated by the usual
-  BATTER distance guideline, and scores P1 using nearby ligand interaction
-  atoms.
+  real ligand pose as the binding-site reference. It prefers stable non-loop
+  receptor Cα atoms near the ligand, keeps P1-P2 and P2-P3 separated by the
+  usual BATTER distance guideline, and scores P1 using nearby ligand interaction
+  atoms. With zero or one receptor override, a detected salt bridge can define
+  P1/L1; L2/L3 then prefer ring atoms connected to at least two heavy atoms,
+  followed by other highly connected nonterminal heavy atoms.
 * For apo-only MD runs, BATTER uses a protein-only heuristic that chooses a
   stable, non-degenerate receptor-anchor triplet without relying on dummy
   ligand coordinates.
 
-If you know the receptor interaction that should define the Boresch reference,
-provide one selection. BATTER treats that atom as P1 and chooses P2/P3
-automatically; prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry. Resolved
+If you provide one selection, BATTER treats that atom as P1 and chooses P2/P3
+automatically. Provide three selections only when you need fully manual
+P1/P2/P3 geometry. Resolved
 global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
 under ``anchors`` and ``anchor_atom_selections``. Prepared-system anchor masks
 used later by equilibration and FE setup are written to each ligand's

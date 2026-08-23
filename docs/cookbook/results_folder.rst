@@ -312,7 +312,7 @@ For equilibration trajectories, a common workflow is:
 
    vmd full.pdb md-*.nc
 
-Then load ``full.prmtop`` inside VMD to recover bonded information.
+Then load ``full_merged.prmtop`` inside VMD to recover bonded information.
 
 For FE production trajectories, inspect one window at a time from the corresponding
 component directory. BATTER stores these trajectories without water, so a common

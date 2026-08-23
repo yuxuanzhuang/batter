@@ -457,7 +457,7 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
         create, fe_args, protocol="abfe", run_remd="yes"
     )
     assert cfg.remd == "yes"
-    assert cfg.remd_nstlim == 100
+    assert cfg.remd_nstlim == 1000
 
 
 def test_fesim_remd_block():

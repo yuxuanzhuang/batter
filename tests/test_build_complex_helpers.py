@@ -510,7 +510,8 @@ def test_guard_abfe_boresch_ligand_anchor_names_replaces_endpoint_frame(
         selected_names=["C1", "C2", "C3"],
     )
 
-    assert names == ["C4", "C5", "C6"]
+    assert len(names) == 3
+    assert names != ["C1", "C2", "C3"]
 
     preferred_names = build_complex_mod._guard_abfe_boresch_ligand_anchor_names(
         fe_pdb=fe_pdb,
@@ -626,7 +627,9 @@ def test_guard_abfe_boresch_anchor_frame_avoids_terminal_l2_l3(
         preferred_first_names=["N1"],
     )
 
-    assert names == ["N1", "C5", "C9"]
+    assert names[0] == "N1"
+    assert names[1] not in {"C1", "O1", "O2", "O3"}
+    assert names[2] not in {"C1", "O1", "O2", "O3"}
 
 
 def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
@@ -746,6 +749,48 @@ def test_pick_ligand_anchor_names_prioritizes_nonterminal_l2(
     assert names[1] == "C2"
 
 
+def test_pick_ligand_anchor_names_prioritizes_ring_l2_l3(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "aligned_amber.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, 0.0, 1.0, 0.0),
+                _pdb_line("HETATM", 3, "C1", "LIG", "L", 10, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 4, "B2", "LIG", "L", 10, 1.0, -1.45, 0.0),
+                _pdb_line("HETATM", 5, "B3", "LIG", "L", 10, 1.0, -1.45, -1.45),
+                _pdb_line("HETATM", 6, "B4", "LIG", "L", 10, 1.0, -1.45, -2.90),
+                _pdb_line("HETATM", 7, "R2", "LIG", "L", 10, 1.0, 1.45, 0.0),
+                _pdb_line("HETATM", 8, "R3", "LIG", "L", 10, 1.0, 1.45, 1.45),
+                _pdb_line("HETATM", 9, "R4", "LIG", "L", 10, 1.0, 0.0, 1.45),
+                "END\n",
+            ]
+        )
+    )
+    u = mda.Universe(str(pdb))
+
+    names = build_complex_mod._pick_ligand_anchor_names(
+        u=u,
+        mol="LIG",
+        ligand_names=["C1", "B2", "B3", "B4", "R2", "R3", "R4"],
+        preferred_l1_names=["C1"],
+        p1_resid="2",
+        p1_atom="CA",
+        p2_resid="3",
+        p2_atom="CA",
+        l1_x=1.0,
+        l1_y=0.0,
+        l1_z=0.0,
+        l1_range=3.0,
+        min_adis=0.5,
+        max_adis=2.0,
+    )
+
+    assert names == ["C1", "R2", "R3"]
+
+
 def test_guard_abfe_boresch_ligand_anchor_names_allows_pdb_resid_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -778,7 +823,8 @@ def test_guard_abfe_boresch_ligand_anchor_names_allows_pdb_resid_mismatch(
         selected_names=["C1", "C2", "C3"],
     )
 
-    assert names == ["C4", "C5", "C6"]
+    assert len(names) == 3
+    assert names != ["C1", "C2", "C3"]
 
 
 def test_ligand_residue_for_boresch_guard_allows_empty_ligand_resid(

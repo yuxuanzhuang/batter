@@ -145,10 +145,12 @@ def copy_if_exists(src: Path, dst: Path, *, on_missing: str = "warn") -> bool:
 
 
 def rewrite_prmtop_reference(text: str, *, hmr: bool) -> str:
-    """Rewrite run-script PRMTOP references for HMR on/off modes."""
-    if hmr:
-        return text.replace("full.prmtop", "full.hmr.prmtop")
-    return text.replace("full.hmr.prmtop", "full.prmtop")
+    """Normalize generated run-script PRMTOP references to the merged topology."""
+    _ = hmr
+    return (
+        text.replace("full.hmr.prmtop", "full_merged.prmtop")
+        .replace("full.prmtop", "full_merged.prmtop")
+    )
 
 
 def run_parmed_hmr_if_enabled(sim_hmr: str | bool, amber_dir: Path, window_dir: Path) -> None:

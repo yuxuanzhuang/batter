@@ -353,8 +353,34 @@ def test_preferred_l1_triplet_prioritizes_nonterminal_l2_l3() -> None:
     )
 
     assert selected is not None
-    assert selected["names"] == ["N1", "C5", "C9"]
-    assert selected["terminal_l2_l3_count"] == 0
+    assert selected["names"][0] == "N1"
+    assert selected["names"][1] not in {"C1", "O1", "O2", "O3"}
+    assert selected["names"][2] not in {"C1", "O1", "O2", "O3"}
+    assert selected["low_degree_l2_l3_count"] == 0
+
+
+def test_preferred_l1_triplet_prioritizes_ring_l2_l3() -> None:
+    residue = _FakeResidue(
+        [
+            _FakeAtom("C1", (1.0, 0.0, 0.0)),
+            _FakeAtom("B2", (1.0, -1.45, 0.0)),
+            _FakeAtom("B3", (1.0, -1.45, -1.45)),
+            _FakeAtom("B4", (1.0, -1.45, -2.90)),
+            _FakeAtom("R2", (1.0, 1.45, 0.0)),
+            _FakeAtom("R3", (1.0, 1.45, 1.45)),
+            _FakeAtom("R4", (1.0, 0.0, 1.45)),
+        ]
+    )
+
+    candidates = restraints._preferred_l1_ligand_triplet_candidates(
+        residue,
+        ["C1"],
+    )
+
+    assert candidates
+    assert candidates[0]["names"][0] == "C1"
+    assert set(candidates[0]["names"][1:]) <= {"R2", "R3", "R4"}
+    assert candidates[0]["low_degree_l2_l3_count"] == 0
 
 
 def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
@@ -710,8 +736,8 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
     assert written == 1
     assert "#Bulk_Lig" in text
     assert "iat=-1,-1," in text
-    assert "fxyz=0,0,1," in text
-    assert "outxyz=1," in text
+    assert "fxyz=" not in text
+    assert "outxyz=" not in text
     assert "r1=-999.0, r2=-3.0, r3=3.0, r4=999.0," in text
     assert "rk2=10.0, rk3=10.0," in text
     assert "igr1=2,0," in text

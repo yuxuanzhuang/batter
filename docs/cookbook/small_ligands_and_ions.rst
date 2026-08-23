@@ -101,7 +101,7 @@ produce effectively zero MBAR overlap even when the simulation completes.
 ``fe_sim.ion_guard`` is enabled by default for FE window generation. It writes
 ``#Ion_Guard`` flat-bottom lower-wall restraints in ``fe/z/*/disang.rest`` for
 ABFE and ``fe/x/*/disang.rest`` for RBFE/RBFE-SEPTOP, keeping configured bulk
-ions at least 15 Å from the binding-site ligand reference atom. This guard is
+ions at least 10 Å from the binding-site ligand reference atom. This guard is
 not applied to top-level equilibration. Disable it with
 ``fe_sim.ion_guard: no`` only when those ion-ligand close approaches are expected
 for the system being modeled.
