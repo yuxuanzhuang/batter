@@ -3,11 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from batter._internal.ops import remd
 
 
+@pytest.mark.parametrize(
+    ("remd_nstlim", "total_steps", "expected_interval"),
+    [(1000, 10000, 1000), (100, 1000, 100)],
+)
 def test_patch_component_inputs_rewrites_existing_remd_template(
     tmp_path: Path,
+    remd_nstlim: int,
+    total_steps: int,
+    expected_interval: int,
 ) -> None:
     comp_dir = tmp_path / "z"
     win_dir = comp_dir / "z00"
@@ -23,7 +32,9 @@ def test_patch_component_inputs_rewrites_existing_remd_template(
     )
     (win_dir / "mdin-remd-template").write_text("stale\n")
 
-    sim = SimpleNamespace(remd_nstlim=100, dic_n_steps={"z": 1000})
+    sim = SimpleNamespace(
+        remd_nstlim=remd_nstlim, dic_n_steps={"z": total_steps}
+    )
 
     patched = remd.patch_component_inputs(
         comp_dir,
@@ -34,13 +45,13 @@ def test_patch_component_inputs_rewrites_existing_remd_template(
 
     assert patched == [win_dir / "mdin-remd-template"]
     text = (win_dir / "mdin-remd-template").read_text()
-    assert text.startswith("! total_steps=1000\n")
+    assert text.startswith(f"! total_steps={total_steps}\n")
     assert "stale" not in text
-    assert "nstlim = 100," in text
+    assert f"nstlim = {remd_nstlim}," in text
     assert "numexchg = 10," in text
-    assert "bar_intervall = 100," in text
+    assert f"bar_intervall = {expected_interval}," in text
     assert "DISANG = z00/disang.rest," in text
-    assert "type='DUMPFREQ', istep1=100" in text
+    assert f"type='DUMPFREQ', istep1={expected_interval}" in text
 
 
 def test_remd_groupfiles_always_use_merged_prmtop(tmp_path: Path) -> None:

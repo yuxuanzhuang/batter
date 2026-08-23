@@ -83,6 +83,14 @@ def _extract_dt(template_path: Path) -> float:
     return float(match.group(1).replace("D", "e").replace("d", "e"))
 
 
+def _restart_text(time_ps: float) -> str:
+    return (
+        "Stub Amber restart\n"
+        f"1  {time_ps:.7E}\n"
+        "  0.0  0.0  0.0\n"
+    )
+
+
 def _write_success_pmemd_stub(path: Path) -> None:
     _write_exe(
         path,
@@ -284,7 +292,43 @@ def test_remd_run_templates_write_segmented_cmass_dumpave(
     assert "DUMPAVE=cmass.txt" not in text
 
 
-def test_run_local_remd_caps_dumpfreq_inside_exchange_block(tmp_path: Path) -> None:
+def test_run_local_remd_preserves_template_nstlim_for_short_tail(
+    tmp_path: Path,
+) -> None:
+    comp_dir, win0, _ = _prepare_component(
+        tmp_path,
+        script_name="run-local-remd.bash",
+        template_name="mdin-remd-template",
+        total_steps=15,
+        nstlim=10,
+    )
+    (win0 / "md-current.rst7").write_text(_restart_text(0.020))
+
+    pmemd_stub = tmp_path / "pmemd-success.sh"
+    _write_success_pmemd_stub(pmemd_stub)
+
+    env = os.environ.copy()
+    env["PMEMD_MPI_EXEC"] = str(pmemd_stub)
+    env["MPI_EXEC"] = "/bin/bash"
+    env["MPI_FLAGS"] = " "
+
+    result = subprocess.run(
+        ["bash", "./run-local-remd.bash"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = (win0 / "mdin-remd-current").read_text()
+    assert "nstlim = 10," in text
+    assert "nstlim = 5," not in text
+    assert "numexchg = 1," in text
+
+
+def test_run_local_remd_caps_dumpfreq_to_exchange_block(tmp_path: Path) -> None:
     comp_dir, win0, tmpl = _prepare_component(
         tmp_path,
         script_name="run-local-remd.bash",
@@ -313,4 +357,4 @@ def test_run_local_remd_caps_dumpfreq_inside_exchange_block(tmp_path: Path) -> N
 
     assert result.returncode == 0, result.stdout + result.stderr
     text = (win0 / "mdin-remd-current").read_text()
-    assert "type='DUMPFREQ', istep1=100" in text
+    assert "type='DUMPFREQ', istep1=200" in text

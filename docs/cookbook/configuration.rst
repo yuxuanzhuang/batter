@@ -228,9 +228,12 @@ REMD runs
 REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
 submit time whether to run them. Use ``fe_sim.remd.nstlim`` to set the exchange interval
 and segment length; the default is ``1000`` MD steps. The exchange count is derived from
-the remaining steps so total runtime is controlled by ``n_steps``. Runtime templates keep
-``bar_intervall=100`` and cap ``DUMPFREQ`` so center-of-mass dumps stay inside each
-exchange block. Control execution with ``run.remd`` (``yes`` or ``no``); when
+the remaining steps so total runtime is controlled by ``n_steps``. Runtime REMD launchers
+preserve the ``nstlim`` already present in ``mdin-remd-template`` and update
+``numexchg`` for each segment. The MBAR ``bar_intervall`` and center-of-mass
+``DUMPFREQ`` intervals are both ``1000`` steps by default and are capped at
+``nstlim`` for shorter exchange blocks. Control execution with ``run.remd``
+(``yes`` or ``no``); when
 ``run.remd: no`` the files are still generated but no REMD jobs are scheduled. REMD jobs
 submit one Slurm job per component via ``SLURMM-BATCH-remd`` and monitor
 ``FINISHED``/``FAILED`` sentinels in the component folder. See

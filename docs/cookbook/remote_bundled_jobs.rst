@@ -100,10 +100,13 @@ Key behaviours:
   minimisation groupfile (``mini.in.remd.groupfile``) is still prepared during
   setup.
 * ``run-local-remd.bash`` computes the exchange count from the remaining
-  ``total_steps`` and ``remd_nstlim`` (default ``1000``), runs a single REMD
-  segment, then exits. ``mdin-remd-template`` keeps ``bar_intervall=100`` and
-  caps ``DUMPFREQ`` so center-of-mass dumps remain inside each exchange block.
-  The generated REMD groupfiles invoke AMBER with ``-p full_merged.prmtop``.
+  ``total_steps`` and the ``nstlim`` already present in ``mdin-remd-template``,
+  runs a single REMD segment, then exits. ``batter batch --remd`` preserves that
+  template ``nstlim`` in ``mdin-remd-current`` and updates ``numexchg`` for the
+  segment length. ``mdin-remd-template`` uses ``1000`` steps for both
+  ``bar_intervall`` and ``DUMPFREQ`` by default, capped at ``nstlim`` for
+  shorter exchange blocks. The generated REMD groupfiles invoke AMBER with
+  ``-p full_merged.prmtop``.
   Completion is tracked with ``FINISHED``/``FAILED`` sentinels, and window
   folders ``<comp>00/`` etc. provide REMD rolling restarts
   (``eq.rst7`` -> ``md-current.rst7``/``md-previous.rst7``).

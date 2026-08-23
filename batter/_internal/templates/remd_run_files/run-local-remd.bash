@@ -45,7 +45,7 @@ production_is_complete() {
 fi
 
 # Write a REMD mdin current file:
-# - keep nstlim fixed to the REMD interval
+# - keep nstlim fixed from mdin-remd-template
 # - update numexchg based on remaining steps
 # - set irest/ntx according to first_run
 cap_dumpfreq_for_remd_chunk() {
@@ -53,11 +53,9 @@ cap_dumpfreq_for_remd_chunk() {
     local dumpfreq_value
 
     [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
-    dumpfreq_value=$((nstlim_value / 2))
-    (( dumpfreq_value > 0 )) || dumpfreq_value=1
+    dumpfreq_value=$nstlim_value
 
-    # HIP/CUDA REMD suppresses exchange-force DUMPAVE records. Keep at least
-    # two dump opportunities inside each exchange block so cmass output survives.
+    # Keep the center-of-mass print interval inside each exchange block.
     awk -v freq="$dumpfreq_value" '
         BEGIN { IGNORECASE = 1 }
         {
@@ -93,7 +91,6 @@ write_mdin_remd_current() {
     else
         text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
     fi
-    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
     text=$(printf "%s\n" "$text" | cap_dumpfreq_for_remd_chunk "$nstlim_value")
     if echo "$text" | grep -Eq "^[[:space:]]*numexchg[[:space:]]*="; then
         text=$(echo "$text" | sed -E "s/^[[:space:]]*numexchg[[:space:]]*=.*/  numexchg = ${numexchg_value},/")
@@ -211,7 +208,7 @@ done
 total_steps=$(parse_total_steps "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")
 target_dt_ps=$(parse_target_dt_ps "$tmpl0")
-chunk_steps=$(scaled_nstlim_for_dt "$tmpl0" "$dt_ps")
+chunk_steps=$(parse_nstlim "$tmpl0")
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 read restart_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")

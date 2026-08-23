@@ -11,8 +11,11 @@ from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
-BAR_INTERVAL_DEFAULT = 100
-REMD_DUMPFREQ_MAX = 100
+# Amber gates MBAR collection with mod(nstep + 1, bar_intervall), and PMEMD
+# resets nstep at each REMD exchange block. Keep this no larger than the
+# default REMD nstlim so each block can emit MBAR samples.
+BAR_INTERVAL_DEFAULT = 1000
+REMD_DUMPFREQ_MAX = 1000
 
 
 def _prefix_path(value: str, prefix: str) -> str:
@@ -55,7 +58,9 @@ def _rewrite_path_line(line: str, key: str, prefix: str) -> tuple[str, bool]:
     return new_line, True
 
 
-def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str], bool]:
+def _inject_numexchg(
+    lines: List[str], numexchg: int | None, bar_interval: int
+) -> tuple[List[str], bool]:
     """
     Insert numexchg/bar_intervall into the &cntrl block if missing.
     """
@@ -63,7 +68,9 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
         return lines, False
     out: List[str] = []
     in_cntrl = False
-    inserted = False
+    found_numexchg = False
+    found_bar_interval = False
+    changed = False
     num_val = numexchg
 
     for line in lines:
@@ -71,18 +78,22 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
         if lower.startswith("&cntrl"):
             in_cntrl = True
         if "numexchg" in lower:
-            inserted = True
+            found_numexchg = True
+        if "bar_intervall" in lower:
+            found_bar_interval = True
 
         if in_cntrl and lower == "/":
-            if not inserted:
+            if not found_numexchg:
                 out.append(f"  numexchg = {num_val},\n")
-                out.append(f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n")
-                inserted = True
+                changed = True
+            if not found_bar_interval:
+                out.append(f"  bar_intervall = {bar_interval},\n")
+                changed = True
             in_cntrl = False
 
         out.append(line)
 
-    return out, inserted
+    return out, changed
 
 
 def _rewrite_dumpfreq_line(line: str, dumpfreq: int) -> tuple[str, bool]:
@@ -102,13 +113,13 @@ def _rewrite_dumpfreq_line(line: str, dumpfreq: int) -> tuple[str, bool]:
     return new_line, new_line != line
 
 
-def _remd_dumpfreq(remd_nstlim: int | None) -> int:
+def _bounded_remd_interval(remd_nstlim: int | None, maximum: int) -> int:
     """
-    DUMPAVE should fire inside short REMD exchange blocks, not every ntwx steps.
+    Keep output intervals inside each REMD exchange block.
     """
     if remd_nstlim is None or remd_nstlim <= 0:
-        return REMD_DUMPFREQ_MAX
-    return max(1, min(REMD_DUMPFREQ_MAX, remd_nstlim))
+        return maximum
+    return max(1, min(maximum, remd_nstlim))
 
 
 def patch_mdin_file(
@@ -118,6 +129,7 @@ def patch_mdin_file(
     add_numexchg: bool,
     remd_nstlim: int | None = None,
     remd_numexchg: int | None = None,
+    remd_bar_interval: int | None = None,
     remd_dumpfreq: int | None = None,
 ) -> bool:
     """
@@ -149,8 +161,8 @@ def patch_mdin_file(
         elif remd_numexchg is not None and "numexchg" in lower:
             line = f"  numexchg = {remd_numexchg},\n"
             changed = True
-        elif remd_numexchg is not None and "bar_intervall" in lower:
-            line = f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n"
+        elif remd_bar_interval is not None and "bar_intervall" in lower:
+            line = f"  bar_intervall = {remd_bar_interval},\n"
             changed = True
         elif remd_nstlim is not None and "nstlim" in lower:
             line = f"  nstlim = {remd_nstlim},\n"
@@ -161,7 +173,10 @@ def patch_mdin_file(
         new_lines.append(line)
 
     if add_numexchg:
-        new_lines, inserted = _inject_numexchg(new_lines, remd_numexchg)
+        bar_interval = remd_bar_interval or BAR_INTERVAL_DEFAULT
+        new_lines, inserted = _inject_numexchg(
+            new_lines, remd_numexchg, bar_interval
+        )
         changed = changed or inserted
 
     if changed:
@@ -248,7 +263,12 @@ def patch_component_inputs(
                 add_numexchg=add_numexchg,
                 remd_nstlim=nstlim_val,
                 remd_numexchg=remd_exchg,
-                remd_dumpfreq=_remd_dumpfreq(nstlim_val),
+                remd_bar_interval=_bounded_remd_interval(
+                    nstlim_val, BAR_INTERVAL_DEFAULT
+                ),
+                remd_dumpfreq=_bounded_remd_interval(
+                    nstlim_val, REMD_DUMPFREQ_MAX
+                ),
             )
             if not total_steps:
                 total_steps = nstlim_val or 0
