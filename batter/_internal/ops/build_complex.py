@@ -2249,7 +2249,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 8
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 9
 
 
 def _user_anchor_triplet_was_provided(extra: dict | None) -> bool:
@@ -2323,6 +2323,23 @@ def _stable_salt_bridge_ligand_atom_names(stable_record: dict | None) -> list[st
     if not isinstance(preference, dict):
         return []
     return _dedupe_names(preference.get("ligand_atom_names") or [])
+
+
+def _stable_ligand_anchor_atom_names(stable_record: dict | None) -> list[str]:
+    if not isinstance(stable_record, dict):
+        return []
+    prolif_preference = stable_record.get("prolif_preference")
+    prolif_names = (
+        prolif_preference.get("ligand_atom_names") or []
+        if isinstance(prolif_preference, dict)
+        else []
+    )
+    return _dedupe_names(
+        [
+            *_stable_salt_bridge_ligand_atom_names(stable_record),
+            *prolif_names,
+        ]
+    )
 
 
 def _renumber_stable_protein_residue(
@@ -3461,7 +3478,7 @@ def build_complex_z(ctx) -> bool:
         ligand_label=ligand,
         stage="fe-z",
     )
-    salt_bridge_lig_names: list[str] = []
+    preferred_interaction_lig_names: list[str] = []
     default_anchor_state = {
         "P1": P1,
         "p1_resid": p1_resid,
@@ -3480,20 +3497,32 @@ def build_complex_z(ctx) -> bool:
     extra = dict(ctx.extra or {})
     stable_record = _load_stable_boresch_distance(equil_dir)
     if stable_record is not None:
-        salt_bridge_lig_names = _stable_salt_bridge_ligand_atom_names(stable_record)
-        if salt_bridge_lig_names:
+        preferred_interaction_lig_names = _stable_ligand_anchor_atom_names(
+            stable_record
+        )
+        lig_heavy_name_set = set(lig_heavy_names)
+        preferred_interaction_lig_names = [
+            name
+            for name in preferred_interaction_lig_names
+            if name in lig_heavy_name_set
+        ]
+        if preferred_interaction_lig_names:
             lig_name_str = " ".join(
-                _order_ligand_names_with_priority(
-                    lig_name_str.split(),
-                    salt_bridge_lig_names,
+                _dedupe_names(
+                    [
+                        *preferred_interaction_lig_names,
+                        *lig_name_str.split(),
+                    ]
                 )
             )
             logger.debug(
-                "[build_complex_z] Prioritizing salt-bridge ligand atom(s) "
+                "[build_complex_z] Prioritizing persistent ionic/hydrogen-bond "
+                "ligand atom(s) "
                 "from equil analysis for {}: {}",
                 ligand,
-                " ".join(salt_bridge_lig_names),
+                " ".join(preferred_interaction_lig_names),
             )
+            default_anchor_state["lig_name_str"] = lig_name_str
     user_anchor_triplet = _user_anchor_triplet_was_provided(extra)
     user_p1_pinned = _user_p1_was_provided(extra)
     if user_anchor_triplet:
@@ -3533,7 +3562,7 @@ def build_complex_z(ctx) -> bool:
                 lig_name_str = " ".join(
                     _order_ligand_names_with_priority(
                         lig_name_str.split(),
-                        salt_bridge_lig_names,
+                        preferred_interaction_lig_names,
                     )
                 )
                 l1_x = stable_preference["l1_x"]
@@ -3610,7 +3639,7 @@ def build_complex_z(ctx) -> bool:
             ligand_names=str(ligand_name_str).split(),
             other_mol=other_mol,
             lipid_mol=lipid_mol,
-            preferred_l1_names=salt_bridge_lig_names,
+            preferred_l1_names=preferred_interaction_lig_names,
         )
 
     try:
@@ -3627,7 +3656,7 @@ def build_complex_z(ctx) -> bool:
             all_lig_name_str = " ".join(
                 _order_ligand_names_with_priority(
                     lig_heavy_names if lig_heavy_names else [str(x) for x in lig_names],
-                    salt_bridge_lig_names,
+                    preferred_interaction_lig_names,
                 )
             )
             try:
@@ -3654,7 +3683,7 @@ def build_complex_z(ctx) -> bool:
                             all_lig_name_str = " ".join(
                                 _order_ligand_names_with_priority(
                                     lig_heavy_names if lig_heavy_names else [str(x) for x in lig_names],
-                                    salt_bridge_lig_names,
+                                    preferred_interaction_lig_names,
                                 )
                             )
                             _run_prep(all_lig_name_str)
@@ -3691,7 +3720,7 @@ def build_complex_z(ctx) -> bool:
         old_ligand_names = list(a[:3])
         preferred_first_names = _dedupe_names(
             [
-                *salt_bridge_lig_names,
+                *preferred_interaction_lig_names,
                 *(
                     [stable_preference["stable_ligand_name"]]
                     if stable_preference_applied and stable_preference is not None

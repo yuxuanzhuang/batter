@@ -12,6 +12,7 @@ from batter.analysis.sim_validation import STABLE_BORESCH_DISTANCE_SCHEMA_VERSIO
 from batter._internal.ops.build_complex import (
     _apply_stable_boresch_distance_preference,
     _load_stable_boresch_distance,
+    _stable_ligand_anchor_atom_names,
     _user_anchor_triplet_was_provided,
     _user_p1_was_provided,
 )
@@ -213,6 +214,15 @@ def test_user_p1_detects_single_explicit_anchor() -> None:
     assert _user_p1_was_provided(
         {"user_anchor_atoms": ["resid 10 and name CA"]}
     )
+
+
+def test_stable_ligand_anchor_names_rank_salt_bridge_before_hbond() -> None:
+    assert _stable_ligand_anchor_atom_names(
+        {
+            "salt_bridge_preference": {"ligand_atom_names": ["N1"]},
+            "prolif_preference": {"ligand_atom_names": ["N3", "N1"]},
+        }
+    ) == ["N1", "N3"]
 
 
 def test_stable_boresch_selection_keeps_user_p1(monkeypatch) -> None:

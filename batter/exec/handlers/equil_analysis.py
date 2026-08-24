@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import MDAnalysis as mda
     from batter.analysis.sim_validation import SimValidator
 
-PROLIF_INTERACTIONS_SCHEMA_VERSION = 3
+PROLIF_INTERACTIONS_SCHEMA_VERSION = 4
 PROLIF_OCCUPANCY_THRESHOLD = 0.30
 PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS = frozenset(
     {"hydrophobic", "vdwcontact", "vdwinteraction", "vdwinteractions"}
@@ -801,6 +801,109 @@ def _normalized_prolif_interaction_name(interaction: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(interaction).strip().lower())
 
 
+def _prolif_interaction_key(
+    ligand_id: Any,
+    protein_id: Any,
+    interaction: Any,
+) -> tuple[str, str, str]:
+    return (
+        str(ligand_id),
+        str(protein_id),
+        _normalized_prolif_interaction_name(interaction),
+    )
+
+
+def _prolif_ligand_atom_names_by_interaction(
+    fingerprint: Any,
+    ligand_selection: Any,
+) -> dict[tuple[str, str, str], list[str]]:
+    """Recover participating ligand heavy atoms from ProLIF IFP metadata."""
+    atoms = list(ligand_selection)
+    atoms_by_parent_index = {}
+    for atom in atoms:
+        try:
+            atoms_by_parent_index[int(atom.index)] = atom
+        except (AttributeError, TypeError, ValueError):
+            continue
+    names_by_key: dict[tuple[str, str, str], list[str]] = {}
+
+    ifp = getattr(fingerprint, "ifp", None)
+    if not isinstance(ifp, Mapping):
+        return names_by_key
+
+    for frame_interactions in ifp.values():
+        if not isinstance(frame_interactions, Mapping):
+            continue
+        for residue_pair, interaction_map in frame_interactions.items():
+            if (
+                not isinstance(residue_pair, tuple)
+                or len(residue_pair) < 2
+                or not isinstance(interaction_map, Mapping)
+            ):
+                continue
+            ligand_id, protein_id = residue_pair[:2]
+            for interaction, occurrences in interaction_map.items():
+                key = _prolif_interaction_key(ligand_id, protein_id, interaction)
+                output_names = names_by_key.setdefault(key, [])
+                if isinstance(occurrences, Mapping):
+                    metadata_items = [occurrences]
+                elif isinstance(occurrences, Sequence) and not isinstance(
+                    occurrences, (str, bytes)
+                ):
+                    metadata_items = occurrences
+                else:
+                    continue
+
+                for metadata in metadata_items:
+                    if not isinstance(metadata, Mapping):
+                        continue
+                    parent_indices = metadata.get("parent_indices")
+                    local_indices = metadata.get("indices")
+                    parent_ligand_indices = (
+                        parent_indices.get("ligand", ())
+                        if isinstance(parent_indices, Mapping)
+                        else ()
+                    )
+                    local_ligand_indices = (
+                        local_indices.get("ligand", ())
+                        if isinstance(local_indices, Mapping)
+                        else ()
+                    )
+
+                    resolved_atoms = []
+                    for atom_index in parent_ligand_indices or ():
+                        try:
+                            atom = atoms_by_parent_index.get(int(atom_index))
+                        except (TypeError, ValueError):
+                            atom = None
+                        if atom is not None:
+                            resolved_atoms.append(atom)
+                    if not resolved_atoms:
+                        for atom_index in local_ligand_indices or ():
+                            try:
+                                atom = atoms[int(atom_index)]
+                            except (IndexError, TypeError, ValueError):
+                                continue
+                            resolved_atoms.append(atom)
+
+                    for atom in resolved_atoms:
+                        name = str(getattr(atom, "name", "")).strip()
+                        try:
+                            element = str(atom.element).strip().upper()
+                        except Exception:
+                            element = ""
+                        if (
+                            not name
+                            or element == "H"
+                            or (not element and name.upper().startswith("H"))
+                        ):
+                            continue
+                        if name not in output_names:
+                            output_names.append(name)
+
+    return {key: names for key, names in names_by_key.items() if names}
+
+
 def _prolif_interaction_priority(interaction: Any) -> int:
     name = _normalized_prolif_interaction_name(interaction)
     if name in PROLIF_SALT_BRIDGE_INTERACTIONS:
@@ -816,6 +919,10 @@ def _records_from_prolif_dataframe(
     df: pd.DataFrame,
     *,
     occupancy_threshold: float,
+    ligand_atom_names_by_interaction: Mapping[
+        tuple[str, str, str], Sequence[str]
+    ]
+    | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if df is None or df.empty:
         return [], []
@@ -825,6 +932,7 @@ def _records_from_prolif_dataframe(
     records: list[dict[str, Any]] = []
     persistent_by_key: dict[tuple[int, str, str], dict[str, Any]] = {}
     n_frames = int(len(bool_df.index))
+    atom_name_lookup = ligand_atom_names_by_interaction or {}
 
     for column, value in occupancy.items():
         parsed = _prolif_column_parts(column)
@@ -843,6 +951,14 @@ def _records_from_prolif_dataframe(
             "active_frames": active_frames,
             "n_frames": n_frames,
         }
+        ligand_atom_names = _dedupe_preserve_order(
+            str(name)
+            for name in atom_name_lookup.get(
+                _prolif_interaction_key(ligand_id, protein_id, interaction), ()
+            )
+        )
+        if ligand_atom_names:
+            record["ligand_atom_names"] = ligand_atom_names
         records.append(record)
         resid = protein_meta.get("resid")
         if (
@@ -867,14 +983,15 @@ def _records_from_prolif_dataframe(
             },
         )
         entry["max_occupancy"] = max(float(entry["max_occupancy"]), occ)
-        entry["interactions"].append(
-            {
-                "interaction": str(interaction),
-                "occupancy": occ,
-                "active_frames": active_frames,
-                "ligand": ligand_meta,
-            }
-        )
+        persistent_interaction = {
+            "interaction": str(interaction),
+            "occupancy": occ,
+            "active_frames": active_frames,
+            "ligand": ligand_meta,
+        }
+        if ligand_atom_names:
+            persistent_interaction["ligand_atom_names"] = ligand_atom_names
+        entry["interactions"].append(persistent_interaction)
 
     records.sort(
         key=lambda item: (
@@ -930,6 +1047,52 @@ def _persistent_prolif_residue_priorities(
         if best_priority != 99:
             priorities[int(resid)] = best_priority
     return priorities
+
+
+def _persistent_prolif_ligand_anchor_preferences(
+    prolif_record: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Rank ligand atoms in persistent ionic and hydrogen-bond interactions."""
+    if not isinstance(prolif_record, dict) or not prolif_record.get("usable", False):
+        return []
+
+    best_by_name: dict[str, tuple[tuple[int, float, int, str], dict[str, Any]]] = {}
+    for residue in prolif_record.get("persistent_protein_residues") or []:
+        if not isinstance(residue, dict):
+            continue
+        resid = _int_or_none(residue.get("resid"))
+        for interaction in residue.get("interactions") or []:
+            if not isinstance(interaction, dict):
+                continue
+            interaction_name = str(interaction.get("interaction") or "")
+            interaction_priority = _prolif_interaction_priority(interaction_name)
+            if interaction_priority > 1:
+                continue
+            try:
+                occupancy = float(interaction.get("occupancy", 0.0))
+            except (TypeError, ValueError):
+                occupancy = 0.0
+            for name in _dedupe_preserve_order(
+                interaction.get("ligand_atom_names") or []
+            ):
+                rank = (
+                    int(interaction_priority),
+                    -float(occupancy),
+                    int(resid) if resid is not None else 2**31 - 1,
+                    name,
+                )
+                record = {
+                    "name": name,
+                    "interaction": interaction_name,
+                    "interaction_priority": int(interaction_priority),
+                    "occupancy": float(occupancy),
+                    "protein_resid": int(resid) if resid is not None else None,
+                }
+                previous = best_by_name.get(name)
+                if previous is None or rank < previous[0]:
+                    best_by_name[name] = (rank, record)
+
+    return [record for _rank, record in sorted(best_by_name.values())]
 
 
 def _persistent_prolif_salt_bridge_residues(
@@ -1022,9 +1185,21 @@ def _write_prolif_interactions(
             protein,
         )
         df = fp.to_dataframe()
+        try:
+            ligand_atom_names_by_interaction = (
+                _prolif_ligand_atom_names_by_interaction(fp, ligand)
+            )
+        except Exception as exc:
+            logger.debug(
+                "[equil_check:{}] Could not recover ProLIF ligand atom metadata: {}",
+                ligand_label,
+                exc,
+            )
+            ligand_atom_names_by_interaction = {}
         interactions, persistent = _records_from_prolif_dataframe(
             df,
             occupancy_threshold=occupancy_threshold,
+            ligand_atom_names_by_interaction=ligand_atom_names_by_interaction,
         )
         artifacts, artifact_errors = _write_prolif_artifacts(
             prolif_path=prolif_path,
@@ -1413,9 +1588,22 @@ def _write_stable_boresch_distance(
     salt_bridge_ligand_names = list(
         salt_bridge_preference.get("ligand_atom_names") or []
     )
-    salt_bridge_ligand_priorities = {
-        name: idx for idx, name in enumerate(salt_bridge_ligand_names)
+    prolif_ligand_anchor_preferences = _persistent_prolif_ligand_anchor_preferences(
+        prolif_record
+    )
+    prolif_ligand_anchor_names = [
+        str(item["name"]) for item in prolif_ligand_anchor_preferences
+    ]
+    preferred_ligand_names = _dedupe_preserve_order(
+        [*salt_bridge_ligand_names, *prolif_ligand_anchor_names]
+    )
+    preferred_ligand_priorities = {
+        name: idx for idx, name in enumerate(preferred_ligand_names)
     }
+    if preferred_ligand_names:
+        ligand_candidate_names = _dedupe_preserve_order(
+            [*preferred_ligand_names, *(ligand_candidate_names or [])]
+        )
     salt_bridge_residue_ids = []
     for resid in salt_bridge_preference.get("protein_residue_ids") or []:
         value = _int_or_none(resid)
@@ -1445,7 +1633,7 @@ def _write_stable_boresch_distance(
                 min_distance=min_distance,
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
-                ligand_atom_priorities=salt_bridge_ligand_priorities,
+                ligand_atom_priorities=preferred_ligand_priorities,
                 protein_residue_ids=residue_filter_ids,
                 protein_residue_priorities=residue_filter_priorities,
             )
@@ -1468,7 +1656,7 @@ def _write_stable_boresch_distance(
                 min_distance=min_distance,
                 max_distance=max_distance,
                 ligand_atom_names=ligand_candidate_names,
-                ligand_atom_priorities=salt_bridge_ligand_priorities,
+                ligand_atom_priorities=preferred_ligand_priorities,
                 protein_residue_priorities=residue_filter_priorities,
             )
     else:
@@ -1477,7 +1665,7 @@ def _write_stable_boresch_distance(
             min_distance=min_distance,
             max_distance=max_distance,
             ligand_atom_names=ligand_candidate_names,
-            ligand_atom_priorities=salt_bridge_ligand_priorities,
+            ligand_atom_priorities=preferred_ligand_priorities,
             protein_residue_priorities=residue_filter_priorities,
         )
     stable_record["mode"] = mode
@@ -1499,6 +1687,8 @@ def _write_stable_boresch_distance(
         "used_residue_filter": used_prolif_filter,
         "used_salt_bridge_residue_filter": used_salt_bridge_filter,
         "fallback_reason": fallback_reason,
+        "ligand_atom_names": preferred_ligand_names,
+        "ligand_atom_preferences": prolif_ligand_anchor_preferences,
     }
     stable_record["salt_bridge_preference"] = salt_bridge_preference
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
@@ -1907,7 +2097,7 @@ def equil_analysis_handler(
     # runs, still allow a later invocation to backfill the stable-distance JSON.
     # Always allow a later invocation to backfill ProLIF interaction analysis.
     # Always backfill this record. FE preserves user-pinned receptor anchors, but
-    # still reads salt_bridge_preference from this JSON to prioritize ligand L1.
+    # still reads its persistent ionic/hydrogen-bond atom preferences for L1.
     stable_distance_needed = True
     prolif_needed = not _prolif_interactions_current(p["prolif_interactions"])
     representative_refresh_needed = _representative_selection_needs_refresh(

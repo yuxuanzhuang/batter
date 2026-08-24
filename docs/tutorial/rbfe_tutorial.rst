@@ -200,13 +200,15 @@ Generating Simulation Inputs
      the P1 hint and P2/P3 are selected together. Invalid or ambiguous input
      warns and falls back to automatic selection.
 
-     During automatic selection, a detected salt bridge can define P1/L1.
-     L2/L3 then prefer ring atoms connected to at least two heavy atoms, followed
-     by atoms with more than two heavy-atom connections and other nonterminal
-     heavy atoms. Auto-selected receptor anchors come from stable non-loop Cα
-     atoms and are screened against near-linear Boresch frames. If the preferred
-     distance window is impossible for a compact receptor or ligand, BATTER uses
-     the best non-collinear frame and reports the relaxation.
+     During automatic FE refinement, persistent salt-bridge atoms define P1/L1
+     first. If there is no salt bridge, a ligand heavy atom participating in a
+     persistent ProLIF hydrogen bond is preferred for L1. L2/L3 then prefer ring
+     atoms connected to at least two heavy atoms, followed by atoms with more
+     than two heavy-atom connections and other nonterminal heavy atoms.
+     Auto-selected receptor anchors come from stable non-loop Cα atoms and are
+     screened against near-linear Boresch frames. If the preferred distance
+     window is impossible for a compact receptor or ligand, BATTER uses the best
+     non-collinear frame and reports the relaxation.
 
      Provide three atoms only when you need fully manual geometry. In that case,
      anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å,

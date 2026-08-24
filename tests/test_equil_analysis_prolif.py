@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,14 +11,18 @@ mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter.exec.handlers.equil_analysis import (
     PROLIF_ARTIFACT_FILENAMES,
+    PROLIF_INTERACTIONS_SCHEMA_VERSION,
     _copy_equil_analysis_artifacts,
     _equil_anchor_masks_for_analysis_topology,
     _equil_anchor_masks_to_original_resids,
     _load_equil_anchor_masks,
     _load_no_equil_representative_universe,
+    _persistent_prolif_ligand_anchor_preferences,
     _persistent_prolif_residue_ids,
     _persistent_prolif_residue_priorities,
     _prolif_interaction_id,
+    _prolif_interactions_current,
+    _prolif_ligand_atom_names_by_interaction,
     _prolif_residue_metadata,
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
@@ -161,6 +166,17 @@ def test_prolif_residue_labels_show_integer_resids() -> None:
     )
 
 
+def test_prolif_atom_metadata_schema_invalidates_old_cache(tmp_path: Path) -> None:
+    path = tmp_path / "prolif_interactions.json"
+    path.write_text(json.dumps({"schema_version": 3}) + "\n")
+    assert not _prolif_interactions_current(path)
+
+    path.write_text(
+        json.dumps({"schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION}) + "\n"
+    )
+    assert _prolif_interactions_current(path)
+
+
 def test_persistent_prolif_residue_priorities_rank_salt_bridge_first() -> None:
     prolif_record = {
         "usable": True,
@@ -188,6 +204,68 @@ def test_persistent_prolif_residue_priorities_rank_salt_bridge_first() -> None:
         20: 0,
         30: 2,
     }
+
+
+def test_prolif_atom_metadata_prioritizes_hbond_heavy_atom() -> None:
+    ligand_atoms = [
+        SimpleNamespace(index=100, name="N3", element="N"),
+        SimpleNamespace(index=101, name="H8", element="H"),
+        SimpleNamespace(index=102, name="C14", element="C"),
+    ]
+    fingerprint = SimpleNamespace(
+        ifp={
+            0: {
+                ("LIG300.A", "VAL93.A"): {
+                    "HBDonor": (
+                        {
+                            "indices": {"ligand": (0, 1)},
+                            "parent_indices": {"ligand": (100, 101)},
+                        },
+                    ),
+                    "VdWContact": (
+                        {
+                            "indices": {"ligand": (2,)},
+                            "parent_indices": {"ligand": (102,)},
+                        },
+                    ),
+                }
+            }
+        }
+    )
+
+    atom_names = _prolif_ligand_atom_names_by_interaction(
+        fingerprint,
+        ligand_atoms,
+    )
+    assert atom_names[("LIG300.A", "VAL93.A", "hbdonor")] == ["N3"]
+    assert atom_names[("LIG300.A", "VAL93.A", "vdwcontact")] == ["C14"]
+
+    df = pd.DataFrame(
+        [[True, True]],
+        columns=pd.MultiIndex.from_tuples(
+            [
+                ("LIG300.A", "VAL93.A", "HBDonor"),
+                ("LIG300.A", "VAL93.A", "VdWContact"),
+            ]
+        ),
+    )
+    _interactions, persistent = _records_from_prolif_dataframe(
+        df,
+        occupancy_threshold=0.3,
+        ligand_atom_names_by_interaction=atom_names,
+    )
+    assert persistent[0]["interactions"][0]["ligand_atom_names"] == ["N3"]
+    assert _persistent_prolif_ligand_anchor_preferences(
+        {"usable": True, "persistent_protein_residues": persistent}
+    ) == [
+        {
+            "name": "N3",
+            "interaction": "HBDonor",
+            "interaction_priority": 1,
+            "occupancy": 1.0,
+            "protein_resid": 93,
+        }
+    ]
 
 
 def _atom_line(
@@ -520,7 +598,9 @@ def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> Non
 def test_equil_analysis_artifacts_are_copied_to_results_folder(tmp_path: Path) -> None:
     equil_dir = tmp_path / "equil"
     equil_dir.mkdir()
-    (equil_dir / "prolif_interactions.json").write_text('{"schema_version": 3}\n')
+    (equil_dir / "prolif_interactions.json").write_text(
+        json.dumps({"schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION}) + "\n"
+    )
     (equil_dir / "prolif_interactions_barcode.png").write_bytes(b"png")
     (equil_dir / "simulation_analysis.png").write_bytes(b"png")
 
