@@ -16,7 +16,7 @@ import logging
 from loguru import logger
 from joblib import Parallel, delayed
 
-from pymbar.timeseries import detect_equilibration, subsample_correlated_data
+from pymbar.timeseries import detect_equilibration
 import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
@@ -37,6 +37,8 @@ from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
 from batter.analysis.utils import exclude_outliers
 
 MIN_BOOTSTRAP_SAMPLES_PER_WINDOW = 10
+MIN_EQUILIBRATION_SAMPLES_PER_WINDOW = 10
+MIN_GLOBAL_EQUILIBRATION_POINTS = 10
 MAX_MBAR_BOOTSTRAPS = 200
 
 
@@ -291,8 +293,10 @@ class MBARAnalysis(FEAnalysisBase):
     analysis_start_step : int, optional
         Discard frames with step <= this value before analysis.
     detect_equil : bool, optional
-        When ``True`` the equilibration time of each window is detected and
-        the pre-equilibrated portion is discarded.
+        When ``True``, detect one global equilibration time and statistical
+        inefficiency from all windows on a shared physical-time grid. The
+        resulting cutoff and decorrelation time are then applied to every
+        window using its native timestamps.
     n_bootstraps : int, optional
         Number of bootstrap samples handed to :class:`MBAR`.
     n_jobs : int, optional
@@ -349,6 +353,339 @@ class MBARAnalysis(FEAnalysisBase):
         self.n_jobs = int(n_jobs)
         self.load = bool(load)
         self._data_initialized = False
+
+    @staticmethod
+    def _time_values(df: pd.DataFrame) -> np.ndarray:
+        """Return a dataframe's physical-time index as a float array."""
+        if isinstance(df.index, pd.MultiIndex):
+            level = "time" if "time" in df.index.names else 0
+            values = df.index.get_level_values(level)
+        else:
+            values = df.index
+        try:
+            return np.asarray(values, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("MBAR sample times must be numeric.") from exc
+
+    @classmethod
+    def _sort_by_time(cls, df: pd.DataFrame) -> pd.DataFrame:
+        times = cls._time_values(df)
+        order = np.argsort(times, kind="stable")
+        return df.iloc[order]
+
+    @classmethod
+    def _global_effective_energy_timeseries(
+        cls, df_list: List[pd.DataFrame]
+    ) -> Tuple[np.ndarray, np.ndarray, float]:
+        """Build an OpenMMTools-style summed energy trace on a common time grid."""
+        native_series: List[Tuple[np.ndarray, np.ndarray]] = []
+        native_steps: List[float] = []
+
+        for win_i, df in enumerate(df_list):
+            if win_i >= df.shape[1]:
+                raise ValueError(
+                    f"Window {win_i} has {df.shape[1]} energy columns; "
+                    "cannot select its sampled-state energy."
+                )
+            times = cls._time_values(df)
+            energies = pd.to_numeric(df.iloc[:, win_i], errors="coerce").to_numpy(
+                dtype=float
+            )
+            finite = np.isfinite(times) & np.isfinite(energies)
+            if finite.sum() < 2:
+                raise ValueError(
+                    f"Window {win_i} has fewer than two finite time/energy samples."
+                )
+
+            series = pd.Series(energies[finite], index=times[finite])
+            # Segment boundaries can contain the same reported Amber time.
+            series = series.groupby(level=0, sort=True).mean()
+            unique_times = series.index.to_numpy(dtype=float)
+            unique_energies = series.to_numpy(dtype=float)
+            time_deltas = np.diff(unique_times)
+            positive_deltas = time_deltas[time_deltas > 0]
+            if positive_deltas.size == 0:
+                raise ValueError(f"Window {win_i} has no increasing sample times.")
+            native_steps.append(float(np.median(positive_deltas)))
+            native_series.append((unique_times, unique_energies))
+
+        common_start = max(times[0] for times, _ in native_series)
+        common_end = min(times[-1] for times, _ in native_series)
+        common_step = max(native_steps)
+        if not math.isfinite(common_step) or common_step <= 0:
+            raise ValueError("Could not determine a positive common sampling interval.")
+        if common_end < common_start:
+            raise ValueError(
+                "Lambda windows do not share an overlapping physical-time interval."
+            )
+
+        n_common = int(math.floor((common_end - common_start) / common_step)) + 1
+        if n_common < MIN_GLOBAL_EQUILIBRATION_POINTS:
+            raise ValueError(
+                "Only "
+                f"{n_common} common-time samples are available; at least "
+                f"{MIN_GLOBAL_EQUILIBRATION_POINTS} are required."
+            )
+        common_times = common_start + np.arange(n_common, dtype=float) * common_step
+
+        aligned = []
+        for times, energies in native_series:
+            values = np.interp(common_times, times, energies)
+            # Removing a constant per window improves numerical conditioning and
+            # does not affect equilibration detection or autocorrelation.
+            aligned.append(values - values[0])
+        effective_energy = np.sum(np.asarray(aligned), axis=0)
+        return common_times, effective_energy, common_step
+
+    @classmethod
+    def _filter_window_by_time(
+        cls, df: pd.DataFrame, cutoff_time: float, spacing_time: float
+    ) -> pd.DataFrame:
+        """Apply a physical-time cutoff and greedy native-time subsampling."""
+        ordered = cls._sort_by_time(df)
+        times = cls._time_values(ordered)
+        tolerance = max(1.0, abs(cutoff_time)) * 1e-12
+        keep_after = times >= cutoff_time - tolerance
+        truncated = ordered.iloc[np.flatnonzero(keep_after)]
+        if truncated.empty or spacing_time <= 0:
+            return truncated
+
+        times = cls._time_values(truncated)
+        selected = [0]
+        last_time = float(times[0])
+        spacing_tolerance = max(1.0, abs(spacing_time)) * 1e-10
+        for idx in range(1, len(times)):
+            current_time = float(times[idx])
+            if current_time - last_time >= spacing_time - spacing_tolerance:
+                selected.append(idx)
+                last_time = current_time
+        return truncated.iloc[selected]
+
+    @classmethod
+    def _filter_all_windows_by_time(
+        cls,
+        df_list: List[pd.DataFrame],
+        cutoff_time: float,
+        spacing_time: float,
+    ) -> List[pd.DataFrame]:
+        return [
+            cls._filter_window_by_time(df, cutoff_time, spacing_time)
+            for df in df_list
+        ]
+
+    def _apply_global_equilibration(
+        self, df_list: List[pd.DataFrame]
+    ) -> Tuple[List[pd.DataFrame], dict]:
+        """Detect and apply one time-based equilibration policy to all windows."""
+        raw_counts = [int(len(df)) for df in df_list]
+        diagnostics: dict = {
+            "method": "global_effective_energy_time",
+            "enabled": self.detect_equil,
+            "status": "disabled" if not self.detect_equil else "pending",
+            "time_unit": "ps",
+            "time_origin": "after_analysis_start_step",
+            "analysis_start_time_ps": self.analysis_start_step * self.dt,
+            "minimum_samples_per_window": MIN_EQUILIBRATION_SAMPLES_PER_WINDOW,
+            "raw_window_sample_counts": raw_counts,
+            "guard_actions": [],
+        }
+        if not self.detect_equil:
+            diagnostics["retained_window_sample_counts"] = raw_counts
+            return df_list, diagnostics
+
+        if not raw_counts or min(raw_counts) < MIN_EQUILIBRATION_SAMPLES_PER_WINDOW:
+            smallest = min(raw_counts) if raw_counts else 0
+            reason = (
+                f"The smallest window has {smallest} samples before equilibration "
+                f"filtering; at least {MIN_EQUILIBRATION_SAMPLES_PER_WINDOW} are "
+                "required. Retaining all available samples."
+            )
+            logger.warning(f"[MBARAnalysis] {self.component}: {reason}")
+            diagnostics.update(
+                {
+                    "status": "guarded_all_samples",
+                    "warning": reason,
+                    "retained_window_sample_counts": raw_counts,
+                }
+            )
+            diagnostics["guard_actions"].append("insufficient_raw_samples")
+            return df_list, diagnostics
+
+        try:
+            common_times, effective_energy, common_step = (
+                self._global_effective_energy_timeseries(df_list)
+            )
+        except ValueError as exc:
+            reason = f"Global equilibration detection was skipped: {exc}"
+            logger.warning(f"[MBARAnalysis] {self.component}: {reason}")
+            diagnostics.update(
+                {
+                    "status": "guarded_all_samples",
+                    "warning": reason,
+                    "retained_window_sample_counts": raw_counts,
+                }
+            )
+            diagnostics["guard_actions"].append("global_timeseries_unavailable")
+            return df_list, diagnostics
+
+        try:
+            with SilenceAlchemlybOnly():
+                t0_index, detected_g, detected_neff = detect_equilibration(
+                    effective_energy, nskip=10
+                )
+            t0_index = max(0, min(int(t0_index), len(common_times) - 1))
+            detected_g = float(detected_g)
+            detected_neff = float(detected_neff)
+        except Exception as exc:
+            reason = f"Global equilibration detection failed: {exc}"
+            logger.warning(f"[MBARAnalysis] {self.component}: {reason}")
+            diagnostics.update(
+                {
+                    "status": "guarded_all_samples",
+                    "warning": reason,
+                    "retained_window_sample_counts": raw_counts,
+                }
+            )
+            diagnostics["guard_actions"].append("global_detection_failed")
+            return df_list, diagnostics
+
+        detected_t0 = float(common_times[t0_index])
+        if not math.isfinite(detected_g) or detected_g < 1.0:
+            diagnostics["guard_actions"].append("invalid_g_replaced_with_one")
+            detected_g = 1.0
+        detected_spacing = detected_g * common_step
+
+        diagnostics.update(
+            {
+                "common_start_time_ps": float(common_times[0]),
+                "common_end_time_ps": float(common_times[-1]),
+                "common_time_step_ps": float(common_step),
+                "common_time_sample_count": int(len(common_times)),
+                "detected_t0_index": t0_index,
+                "detected_t0_ps": detected_t0,
+                "detected_t0_from_production_start_ps": (
+                    self.analysis_start_step * self.dt + detected_t0
+                ),
+                "detected_g_samples": detected_g,
+                "detected_g_time_ps": float(detected_spacing),
+                "detected_effective_samples": detected_neff,
+            }
+        )
+
+        # Cap the common cutoff so every native trajectory keeps the minimum
+        # number of samples. This is based on physical time, not row count.
+        latest_allowed_cutoffs = []
+        for df in df_list:
+            times = np.sort(self._time_values(df))
+            latest_allowed_cutoffs.append(
+                float(times[-MIN_EQUILIBRATION_SAMPLES_PER_WINDOW])
+            )
+        latest_allowed_cutoff = min(latest_allowed_cutoffs)
+        applied_t0 = min(detected_t0, latest_allowed_cutoff)
+        if applied_t0 < detected_t0:
+            diagnostics["guard_actions"].append("equilibration_cutoff_reduced")
+            logger.warning(
+                f"[MBARAnalysis] {self.component}: global t0 {detected_t0:.6g} ps "
+                f"would leave too few samples; using {applied_t0:.6g} ps."
+            )
+
+        post_t0 = self._filter_all_windows_by_time(df_list, applied_t0, 0.0)
+        post_t0_counts = [int(len(df)) for df in post_t0]
+
+        # If the detected decorrelation time leaves too few samples, find the
+        # largest common time spacing that preserves the minimum in every window.
+        applied_spacing = detected_spacing
+        filtered = self._filter_all_windows_by_time(
+            df_list, applied_t0, applied_spacing
+        )
+        if min(len(df) for df in filtered) < MIN_EQUILIBRATION_SAMPLES_PER_WINDOW:
+            low = 0.0
+            high = detected_spacing
+            for _ in range(50):
+                trial = (low + high) / 2.0
+                trial_data = self._filter_all_windows_by_time(
+                    df_list, applied_t0, trial
+                )
+                if (
+                    min(len(df) for df in trial_data)
+                    >= MIN_EQUILIBRATION_SAMPLES_PER_WINDOW
+                ):
+                    low = trial
+                else:
+                    high = trial
+            applied_spacing = low
+            filtered = self._filter_all_windows_by_time(
+                df_list, applied_t0, applied_spacing
+            )
+            diagnostics["guard_actions"].append("decorrelation_spacing_reduced")
+            logger.warning(
+                f"[MBARAnalysis] {self.component}: global decorrelation time "
+                f"{detected_spacing:.6g} ps would leave too few samples; using "
+                f"{applied_spacing:.6g} ps. Retained samples may remain correlated."
+            )
+
+        retained_counts = [int(len(df)) for df in filtered]
+        diagnostics.update(
+            {
+                "status": (
+                    "applied_with_guard"
+                    if diagnostics["guard_actions"]
+                    else "applied"
+                ),
+                "latest_guard_cutoff_ps": float(latest_allowed_cutoff),
+                "applied_t0_ps": float(applied_t0),
+                "applied_t0_from_production_start_ps": (
+                    self.analysis_start_step * self.dt + applied_t0
+                ),
+                "applied_g_time_ps": float(applied_spacing),
+                "applied_g_samples_on_common_grid": float(
+                    applied_spacing / common_step
+                ),
+                "post_t0_window_sample_counts": post_t0_counts,
+                "retained_window_sample_counts": retained_counts,
+            }
+        )
+        logger.debug(
+            f"[MBARAnalysis] {self.component}: global equilibration "
+            f"t0={applied_t0:.6g} ps, spacing={applied_spacing:.6g} ps, "
+            f"retained={retained_counts}"
+        )
+        return filtered, diagnostics
+
+    def _finalize_data_list(
+        self, df_list: List[pd.DataFrame]
+    ) -> List[pd.DataFrame]:
+        """Apply global equilibration, annotate, and persist parsed MBAR data."""
+        df_list, equilibration = self._apply_global_equilibration(df_list)
+        for df in df_list:
+            df.attrs["temperature"] = self.temperature
+            df.attrs["energy_unit"] = "kT"
+
+        time_ranges = {}
+        for i, df in enumerate(df_list):
+            times = self._time_values(df)
+            time_ranges[i] = {
+                "start": float(np.min(times)) if len(times) else None,
+                "end": float(np.max(times)) if len(times) else None,
+            }
+        df_list_attrs = {
+            "component": self.component,
+            "temperature": self.temperature,
+            "energy_unit": "kT",
+            "analysis_start_step": self.analysis_start_step,
+            "detect_equil": self.detect_equil,
+            "dt": self.dt,
+            "win_sizes": {i: len(df) for i, df in enumerate(df_list)},
+            "window_time_ranges_ps": time_ranges,
+            "equilibration": equilibration,
+        }
+        with open(
+            f"{self.result_folder}/{self.component}_df_list_attrs.json", "w"
+        ) as f:
+            json.dump(_json_safe(df_list_attrs), f, indent=2)
+        with open(f"{self.result_folder}/{self.component}_df_list.pickle", "wb") as f:
+            pickle.dump(df_list, f)
+        return df_list
 
     def _effective_n_bootstraps(self) -> int:
         """Return a bootstrap count that is unlikely to stall sparse MBAR fits."""
@@ -604,7 +941,8 @@ class MBARAnalysis(FEAnalysisBase):
         analysis_start_step : int
             Discard frames with step <= this value.
         truncate : bool
-            If ``True``, detect equilibration and discard early frames.
+            Deprecated compatibility argument. Global equilibration filtering is
+            applied after every window has been parsed.
         dt : float
             Time step (ps) used to convert analysis_start_step into ps.
 
@@ -675,30 +1013,17 @@ class MBARAnalysis(FEAnalysisBase):
                 # reduce index to start from zero time
                 df.index = df.index.map(lambda t: (t[0] - threshold, *t[1:]))
         # Mixed precision spikes guard
+        unfiltered_df = df
         df = exclude_outliers(df, iclam=win_i)
         if df.empty:
-            df = pd.concat(dfs)
+            df = unfiltered_df
             logger.warning(
                 f"[MBARAnalysis] {component}{win_i:02d} WARNING: "
                 "outlier filtering removed all samples; using unfiltered data."
             )
 
-        # detect_equilibration on the reference column of this window
-        if truncate:
-            if len(df) < 2:
-                logger.warning(
-                    f"[MBARAnalysis] {component}{win_i:02d} has only {len(df)} "
-                    "sample(s); skipping equilibration detection."
-                )
-            else:
-                with SilenceAlchemlybOnly():
-                    t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
-                    df = df.iloc[t0:, :]
-                    indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
-                    df = df.iloc[indices, :]
-                logger.debug(
-                    f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
-                )
+        # ``truncate`` is retained for compatibility with callers of this private
+        # helper. Equilibration is now detected only after all windows are parsed.
         # subtract reference (this window) to yield reduced potentials
         # do it later
         # ref = df.iloc[:, win_i]
@@ -723,33 +1048,12 @@ class MBARAnalysis(FEAnalysisBase):
                 component=self.component,
                 temperature=self.temperature,
                 analysis_start_step=self.analysis_start_step,
-                truncate=self.detect_equil,
+                truncate=False,
                 dt=self.dt,
             )
             for win_i in range(len(self.windows))
         )
-        for df in df_list:
-            df.attrs["temperature"] = self.temperature
-            df.attrs["energy_unit"] = "kT"
-
-        # save df_list info
-        df_list_attrs = {
-            "component": self.component,
-            "temperature": self.temperature,
-            "energy_unit": "kT",
-            "analysis_start_step": self.analysis_start_step,
-            "detect_equil": self.detect_equil,
-            "dt": self.dt,
-            "win_sizes": {i: len(df) for i, df in enumerate(df_list)},
-        }
-        with open(
-            f"{self.result_folder}/{self.component}_df_list_attrs.json", "w"
-        ) as f:
-            json.dump(df_list_attrs, f, indent=2)
-
-        with open(f"{self.result_folder}/{self.component}_df_list.pickle", "wb") as f:
-            pickle.dump(df_list, f)
-        return df_list
+        return self._finalize_data_list(df_list)
 
     def plot_time_convergence(self, ax=None, **kwargs):
         df = self.results["convergence"]["time_convergence"]
@@ -846,12 +1150,14 @@ class RESTMBARAnalysis(MBARAnalysis):
         num_rest: int,
         analysis_start_step: int,
         ntwx: int,
-    ) -> Optional[np.ndarray]:
+        dt: float,
+    ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         cmass_paths = RESTMBARAnalysis._cmass_trace_list(win_dir)
         if not cmass_paths:
             return None
 
         rows: list[list[float]] = []
+        times: list[float] = []
         frame_idx = 0
         for cmass_path in cmass_paths:
             with open(cmass_path, "r") as fin:
@@ -886,13 +1192,17 @@ class RESTMBARAnalysis(MBARAnalysis):
                     if frame_step <= analysis_start_step:
                         continue
                     rows.append(values)
+                    if ntwx > 0:
+                        times.append((frame_step - analysis_start_step) * dt)
+                    else:
+                        times.append(float(frame_idx))
 
         if not rows:
             raise ValueError(
                 f"No cmass frames remain in {win_dir} after "
                 f"analysis_start_step={analysis_start_step}"
             )
-        return np.asarray(rows, dtype=float)
+        return np.asarray(rows, dtype=float), np.asarray(times, dtype=float)
 
     def _extract_restraints_from_windows(self):
         num_win = len(self.windows)
@@ -981,7 +1291,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                 component=self.component,
                 temperature=self.temperature,
                 analysis_start_step=self.analysis_start_step,
-                truncate=self.detect_equil,
+                truncate=False,
                 rfc=rfc,
                 req=req,
                 rty=rty,
@@ -993,13 +1303,7 @@ class RESTMBARAnalysis(MBARAnalysis):
             for win_i in range(len(self.windows))
         )
 
-        with open(f"{self.result_folder}/{self.component}_df_list.pickle", "wb") as f:
-            pickle.dump(df_list, f)
-
-        for df in df_list:
-            df.attrs["temperature"] = self.temperature
-            df.attrs["energy_unit"] = "kT"
-        return df_list
+        return self._finalize_data_list(df_list)
 
     @staticmethod
     def _extract_all_for_window(
@@ -1021,10 +1325,10 @@ class RESTMBARAnalysis(MBARAnalysis):
         kT = 0.0019872041 * temperature
         win_dir = Path(f"{comp_folder}/{component}{win_i:02d}").resolve()
 
-        val = RESTMBARAnalysis._read_cmass_values(
-            win_dir, num_rest, analysis_start_step, ntwx
+        cmass_data = RESTMBARAnalysis._read_cmass_values(
+            win_dir, num_rest, analysis_start_step, ntwx, dt
         )
-        if val is None:
+        if cmass_data is None:
             nc_list = RESTMBARAnalysis._window_nc_list(win_dir)
             if not nc_list:
                 raise FileNotFoundError("No cmass traces or NetCDF trajs for REST window")
@@ -1065,6 +1369,16 @@ class RESTMBARAnalysis(MBARAnalysis):
                     f"{analysis_start_step}, ntwx={ntwx})"
                 )
                 val = val[start_idx:]
+            if ntwx > 0:
+                frame_steps = (
+                    np.arange(start_idx + 1, start_idx + len(val) + 1, dtype=float)
+                    * ntwx
+                )
+                mbar_time = (frame_steps - analysis_start_step) * dt
+            else:
+                mbar_time = np.arange(len(val), dtype=float)
+        else:
+            val, mbar_time = cmass_data
 
         for r in range(num_rest):
             if rty[r] != "t":
@@ -1084,13 +1398,6 @@ class RESTMBARAnalysis(MBARAnalysis):
         else:
             u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
 
-        t0 = 0
-        if truncate:
-            with SilenceAlchemlybOnly():
-                t0, _, _ = detect_equilibration(u, nskip=10)
-            u = u[t0:]
-            val = val[t0:]
-
         Upot = np.zeros((num_win, len(u)), np.float64)
         for w in range(num_win):
             if component != "u":
@@ -1100,7 +1407,6 @@ class RESTMBARAnalysis(MBARAnalysis):
 
         # Pack like alchemlyb (time,lambdas) MultiIndex
         win_i_list = np.arange(num_win, dtype=np.float64)
-        mbar_time = np.arange(len(u), dtype=np.float64)
         clambda = float(win_i)
 
         mbar_df = pd.DataFrame(
@@ -1440,6 +1746,7 @@ def analyze_lig_task(
     component_windows_dict: Dict[str, List[int]],
     rocklin_correction: bool = False,
     analysis_start_step: int = 0,
+    detect_equil: bool = True,
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
@@ -1581,7 +1888,9 @@ def analyze_lig_task(
 
             logger.debug(
                 f"[analyze_lig] {lig} comp={comp} windows={windows} "
-                f"analysis_start_step={analysis_start_step}, n_bootstraps={n_bootstraps}, dt={dt}, ntwx={ntwx}"
+                f"analysis_start_step={analysis_start_step}, "
+                f"detect_equil={detect_equil}, n_bootstraps={n_bootstraps}, "
+                f"dt={dt}, ntwx={ntwx}"
             )
 
             if comp in COMPONENTS_DICT["dd"]:
@@ -1591,6 +1900,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    detect_equil=detect_equil,
                     n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,
@@ -1619,6 +1929,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    detect_equil=detect_equil,
                     n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,

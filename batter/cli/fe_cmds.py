@@ -790,6 +790,7 @@ def _submit_fe_analyze_slurm(
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    detect_equil: bool | None,
     n_bootstraps: int | None,
     overwrite: bool,
     log_level: str,
@@ -816,6 +817,8 @@ def _submit_fe_analyze_slurm(
     parts.append("--raise-on-error" if raise_on_error else "--no-raise-on-error")
     if analysis_start_step is not None:
         parts += ["--analysis-start-step", str(analysis_start_step)]
+    if detect_equil is not None:
+        parts.append("--detect-equil" if detect_equil else "--no-detect-equil")
     if n_bootstraps is not None:
         parts += ["--n-bootstrap", str(n_bootstraps)]
     if overwrite:
@@ -834,6 +837,7 @@ def _submit_fe_analyze_slurm(
         analysis_start_step=analysis_start_step
         if analysis_start_step is not None
         else "",
+        detect_equil=detect_equil if detect_equil is not None else "",
         n_bootstraps=n_bootstraps if n_bootstraps is not None else "",
         overwrite=overwrite,
         log_level=log_level.upper(),
@@ -960,6 +964,7 @@ def _write_fe_analyze_job_array(
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    detect_equil: bool | None,
     n_bootstraps: int | None,
     overwrite: bool,
     log_level: str,
@@ -991,6 +996,7 @@ def _write_fe_analyze_job_array(
         analysis_start_step=analysis_start_step
         if analysis_start_step is not None
         else "",
+        detect_equil=detect_equil if detect_equil is not None else "",
         n_bootstraps=n_bootstraps if n_bootstraps is not None else "",
         overwrite=overwrite,
         log_level=log_level.upper(),
@@ -1026,6 +1032,10 @@ def _write_fe_analyze_job_array(
     ]
     if analysis_start_step is not None:
         cmd_lines.append(f"  --analysis-start-step {int(analysis_start_step)}")
+    if detect_equil is not None:
+        cmd_lines.append(
+            "  --detect-equil" if detect_equil else "  --no-detect-equil"
+        )
     if n_bootstraps is not None:
         cmd_lines.append(f"  --n-bootstrap {int(n_bootstraps)}")
     if overwrite:
@@ -1134,6 +1144,14 @@ def _write_fe_analyze_job_array(
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
+    "--detect-equil/--no-detect-equil",
+    default=None,
+    help=(
+        "Override fe_sim.detect_equil. Enabled mode uses one global, "
+        "physical-time equilibration cutoff and decorrelation time."
+    ),
+)
+@click.option(
     "--n-bootstrap",
     "--n-bootstraps",
     "n_bootstraps",
@@ -1203,6 +1221,7 @@ def fe_analyze(
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    detect_equil: bool | None,
     n_bootstraps: int | None,
     overwrite: bool,
     log_level: str = "INFO",
@@ -1249,6 +1268,7 @@ def fe_analyze(
             workers=workers,
             raise_on_error=raise_on_error,
             analysis_start_step=analysis_start_step,
+            detect_equil=detect_equil,
             n_bootstraps=n_bootstraps,
             overwrite=overwrite,
             log_level=log_level,
@@ -1278,6 +1298,7 @@ def fe_analyze(
                 workers=workers,
                 raise_on_error=raise_on_error,
                 analysis_start_step=analysis_start_step,
+                detect_equil=detect_equil,
                 n_bootstraps=n_bootstraps,
                 overwrite=overwrite,
                 log_level=log_level,
@@ -1295,15 +1316,20 @@ def fe_analyze(
     failed_runs: list[tuple[str, str]] = []
     for rid in run_ids:
         try:
+            analysis_kwargs = {
+                "ligand": ligand,
+                "n_workers": workers,
+                "analysis_start_step": analysis_start_step,
+                "n_bootstraps": n_bootstraps,
+                "overwrite": overwrite,
+                "raise_on_error": raise_on_error,
+            }
+            if detect_equil is not None:
+                analysis_kwargs["detect_equil"] = detect_equil
             run_analysis_from_execution(
                 work_dir,
                 rid,
-                ligand=ligand,
-                n_workers=workers,
-                analysis_start_step=analysis_start_step,
-                n_bootstraps=n_bootstraps,
-                overwrite=overwrite,
-                raise_on_error=raise_on_error,
+                **analysis_kwargs,
             )
         except Exception as exc:
             if raise_on_error:
@@ -1485,6 +1511,14 @@ def _run_in_place_ligand_analysis(system, params: dict[str, object]) -> None:
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
+    "--detect-equil/--no-detect-equil",
+    default=None,
+    help=(
+        "Override fe_sim.detect_equil. Enabled mode uses one global, "
+        "physical-time equilibration cutoff and decorrelation time."
+    ),
+)
+@click.option(
     "--n-bootstrap",
     "--n-bootstraps",
     "n_bootstraps",
@@ -1502,6 +1536,7 @@ def fe_ligand_analyze(
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    detect_equil: bool | None,
     n_bootstraps: int | None,
     overwrite: bool,
 ) -> None:
@@ -1518,15 +1553,20 @@ def fe_ligand_analyze(
 
     if work_dir is not None and run_id is not None:
         try:
+            analysis_kwargs = {
+                "ligand": ligand_name,
+                "n_workers": workers,
+                "analysis_start_step": analysis_start_step,
+                "n_bootstraps": n_bootstraps,
+                "overwrite": overwrite,
+                "raise_on_error": raise_on_error,
+            }
+            if detect_equil is not None:
+                analysis_kwargs["detect_equil"] = detect_equil
             run_analysis_from_execution(
                 work_dir,
                 run_id,
-                ligand=ligand_name,
-                n_workers=workers,
-                analysis_start_step=analysis_start_step,
-                n_bootstraps=n_bootstraps,
-                overwrite=overwrite,
-                raise_on_error=raise_on_error,
+                **analysis_kwargs,
             )
         except Exception as exc:
             raise click.ClickException(str(exc))
@@ -1558,6 +1598,8 @@ def fe_ligand_analyze(
         params["n_workers"] = workers
     if analysis_start_step is not None:
         params["analysis_start_step"] = int(analysis_start_step)
+    if detect_equil is not None:
+        params["detect_equil"] = bool(detect_equil)
     if n_bootstraps is not None:
         params["n_bootstraps"] = int(n_bootstraps)
     dt, ntwx, temperature = _infer_analysis_timing_from_fe(fe_dir)

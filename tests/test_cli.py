@@ -493,6 +493,31 @@ def test_cli_fe_analyze_invokes_api(
     assert called["raise_on_error"] is False
 
 
+def test_cli_fe_analyze_can_disable_global_equilibration(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+
+    def fake_run(work_dir, run_id, **kwargs):
+        called.update(kwargs)
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(tmp_path),
+            "run1",
+            "--no-detect-equil",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["detect_equil"] is False
+
+
 def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:
@@ -551,6 +576,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
             "3",
             "--analysis-start-step",
             "2500",
+            "--no-detect-equil",
             "--n-bootstrap",
             "64",
             "--overwrite",
@@ -578,6 +604,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     assert "--ligand LIG1" in script_text
     assert "--workers 3" in script_text
     assert "--analysis-start-step 2500" in script_text
+    assert "--no-detect-equil" in script_text
     assert "--n-bootstrap 64" in script_text
     assert "--overwrite" in script_text
     assert "--no-raise-on-error" in script_text

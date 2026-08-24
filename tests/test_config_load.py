@@ -883,6 +883,28 @@ def test_analysis_start_step_respects_user_override(tmp_path: Path) -> None:
     assert cfg.analysis_start_step == 5000
 
 
+def test_detect_equil_defaults_true_and_respects_false_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    default_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    disabled_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        detect_equil=False,
+    )
+
+    assert SimulationConfig.from_sections(
+        create, default_args, protocol="abfe"
+    ).detect_equil is True
+    assert SimulationConfig.from_sections(
+        create, disabled_args, protocol="abfe"
+    ).detect_equil is False
+
+
 def test_n_bootstraps_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(

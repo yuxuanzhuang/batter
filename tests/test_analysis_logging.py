@@ -657,6 +657,154 @@ def test_mbar_extract_window_skips_detect_equilibration_for_single_sample(
     assert len(out) == 1
 
 
+def _global_equil_window(
+    times: np.ndarray, sampled_state: int, n_states: int = 2
+) -> pd.DataFrame:
+    index = pd.MultiIndex.from_arrays(
+        [times, np.full(len(times), float(sampled_state))],
+        names=["time", "lambdas"],
+    )
+    data = {
+        float(state): np.sin(times / 7.0) + sampled_state + state * 0.25
+        for state in range(n_states)
+    }
+    return pd.DataFrame(data, index=index)
+
+
+def test_mbar_global_equilibration_uses_physical_time_with_unequal_windows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(0.0, 121.0, 1.0), 0),
+        _global_equil_window(np.arange(0.0, 101.0, 2.0), 1),
+    ]
+    seen: dict[str, np.ndarray] = {}
+
+    def _fake_detect(values, nskip=1):
+        seen["values"] = np.asarray(values)
+        assert nskip == 10
+        return 5, 2.0, 20.0
+
+    monkeypatch.setattr(analysis_mod, "detect_equilibration", _fake_detect)
+
+    filtered = ana._finalize_data_list(data)
+    attrs = json.loads((tmp_path / "Results" / "z_df_list_attrs.json").read_text())
+    equil = attrs["equilibration"]
+
+    assert len(seen["values"]) == 51
+    assert equil["common_time_step_ps"] == 2.0
+    assert equil["detected_t0_ps"] == 10.0
+    assert equil["applied_t0_ps"] == 10.0
+    assert equil["applied_g_time_ps"] == 4.0
+    assert equil["status"] == "applied"
+    assert [len(df) for df in filtered] == [28, 23]
+    for df in filtered:
+        times = df.index.get_level_values("time").to_numpy(dtype=float)
+        assert times[0] == 10.0
+        assert np.all(np.diff(times) >= 4.0)
+
+
+def test_mbar_global_equilibration_guard_preserves_minimum_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(15.0), 0),
+        _global_equil_window(np.arange(15.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod, "detect_equilibration", lambda values, nskip=1: (12, 5.0, 1.0)
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert equil["detected_t0_ps"] == 12.0
+    assert equil["applied_t0_ps"] == 5.0
+    assert equil["applied_g_time_ps"] <= 1.000001
+    assert equil["status"] == "applied_with_guard"
+    assert "equilibration_cutoff_reduced" in equil["guard_actions"]
+    assert "decorrelation_spacing_reduced" in equil["guard_actions"]
+    assert [len(df) for df in filtered] == [10, 10]
+
+
+def test_mbar_detect_equil_false_retains_all_native_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=False,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(20.0), 0),
+        _global_equil_window(np.arange(0.0, 30.0, 2.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("detect_equilibration should be disabled")
+        ),
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert [len(df) for df in filtered] == [20, 15]
+    assert equil["status"] == "disabled"
+    assert equil["retained_window_sample_counts"] == [20, 15]
+
+
+def test_mbar_global_equilibration_detection_failure_retains_all_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(20.0), 0),
+        _global_equil_window(np.arange(20.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("bad trace")),
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert [len(df) for df in filtered] == [20, 20]
+    assert equil["status"] == "guarded_all_samples"
+    assert equil["guard_actions"] == ["global_detection_failed"]
+    assert "bad trace" in equil["warning"]
+
+
 def test_rest_mbar_extract_window_does_not_remove_global_logger(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -208,6 +208,8 @@ class SimulationConfig(BaseModel):
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
 
+        detect_equil_val = bool(_fe_attr("detect_equil", lambda: True))
+
         n_bootstraps_val = DEFAULT_N_BOOTSTRAPS
         if hasattr(fe, "n_bootstraps"):
             n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
@@ -330,6 +332,7 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
+            "detect_equil": detect_equil_val,
             "n_bootstraps": n_bootstraps_val,
             "cinnabar_x_convergence_filter": _coerce_cinnabar_x_convergence_filter(
                 _fe_attr("cinnabar_x_convergence_filter", lambda: (0.8, 1.0))
@@ -447,6 +450,13 @@ class SimulationConfig(BaseModel):
         0,
         ge=0,
         description="Analyze only steps after this (per FE window).",
+    )
+    detect_equil: bool = Field(
+        True,
+        description=(
+            "Detect one global MBAR equilibration cutoff and decorrelation time "
+            "across lambda windows."
+        ),
     )
     n_bootstraps: int = Field(
         DEFAULT_N_BOOTSTRAPS,

@@ -594,6 +594,13 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Only analyze FE production steps after this step (per window).",
     )
+    detect_equil: bool = Field(
+        True,
+        description=(
+            "Detect one global MBAR equilibration cutoff and decorrelation time "
+            "across lambda windows."
+        ),
+    )
     n_bootstraps: int = Field(
         DEFAULT_N_BOOTSTRAPS,
         ge=0,

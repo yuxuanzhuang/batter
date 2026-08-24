@@ -39,7 +39,9 @@ The run YAML file is divided into three sections grouped inside
     letting runtime scripts determine the target length without regenerating inputs.
     Legacy production extend knobs (``num_fe_extends``) are rejected; set
     ``n_steps`` to total steps instead. ``analysis_range`` is likewise
-    disallowed—use ``analysis_start_step`` to skip early production frames. FE
+    disallowed—use ``analysis_start_step`` to skip early production frames. Set
+    ``detect_equil: false`` to make MBAR use all remaining samples instead of
+    applying the default global physical-time equilibration/decorrelation filter. FE
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
     ``run-local*.bash`` reads that marker plus the first ``nstlim`` it finds to choose

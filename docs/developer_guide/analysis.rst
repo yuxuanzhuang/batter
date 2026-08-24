@@ -18,9 +18,10 @@ Key capabilities:
 * **Deterministic caching** – reduced potentials are written to
   ``<lig_folder>/Results/<component>_df_list.pickle`` and re-used when
   ``load=True``.
-* **Equilibration detection** – each window can be truncated using
-  :func:`pymbar.timeseries.detect_equilibration` by setting
-  ``detect_equil=True``.
+* **Equilibration detection** – BATTER sums the sampled-state energy from all
+  lambda windows on their common physical-time grid, detects one global ``t0``
+  and statistical inefficiency, and applies both to each window's native
+  timestamps. Set ``detect_equil=False`` to retain all post-start samples.
 * **Convergence summaries** – MBAR diagnostics (forward/backward convergence,
   block averages, window overlap) are stored alongside the analysis object and can be
   plotted via helper methods such as :meth:`MBARAnalysis.plot_convergence`.
@@ -45,14 +46,25 @@ Config-driven trimming
 ======================
 
 ``analysis_start_step`` in ``SimulationConfig`` (set via ``fe_sim.analysis_start_step``)
-controls how much of each FE window is ignored before MBAR runs. The orchestrator
-passes that value into record writers so downstream consumers (CLI, notebooks) can
-respect the same cutoff. ``analysis_range`` is deprecated and rejected at load time;
-use ``analysis_start_step`` instead. To mirror the config in standalone scripts, set
-``start_step`` when instantiating ``MBARAnalysis``::
+controls how much of each FE window is ignored before MBAR runs. Set
+``fe_sim.detect_equil: false`` to disable the subsequent automatic global cutoff
+and decorrelation. The same setting can be overridden while reanalyzing with
+``batter fe analyze ... --detect-equil`` or ``--no-detect-equil``. The orchestrator
+passes these values into analysis. ``analysis_range`` is deprecated and rejected at
+load time; use ``analysis_start_step`` instead. To mirror the config in standalone
+scripts, set both arguments when instantiating ``MBARAnalysis``::
 
-    analysis = MBARAnalysis(..., start_step=sim_cfg.analysis_start_step)
+    analysis = MBARAnalysis(
+        ...,
+        analysis_start_step=sim_cfg.analysis_start_step,
+        detect_equil=sim_cfg.detect_equil,
+    )
     analysis.run_analysis()
+
+The global detector uses the common physical-time interval, so windows may have
+different total durations or output counts. ``<component>_df_list_attrs.json``
+records detected and applied values in ps, retained counts, and any minimum-sample
+guard that reduced the cutoff or decorrelation spacing.
 
 Handling Restrained Components
 ==============================
