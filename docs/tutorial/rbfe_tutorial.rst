@@ -195,13 +195,18 @@ Generating Simulation Inputs
      this can be omitted; BATTER will choose anchors automatically and write the
      prepared-system selections to each ligand's ``equil/anchors.json``.
 
-     If you provide three atoms, BATTER uses them directly as P1/P2/P3. If you
-     provide one atom, BATTER treats it as P1 and chooses P2/P3 automatically.
-     With zero or one receptor anchor, a detected salt bridge can define P1/L1;
+     BATTER uses three distinct, unambiguous atoms directly as P1/P2/P3. One
+     atom is a P1 hint. Two atoms are treated as incomplete: the first remains
+     the P1 hint and P2/P3 are selected together. Invalid or ambiguous input
+     warns and falls back to automatic selection.
+
+     During automatic selection, a detected salt bridge can define P1/L1.
      L2/L3 then prefer ring atoms connected to at least two heavy atoms, followed
-     by other highly connected nonterminal heavy atoms. Auto-selected receptor
-     anchors come from stable non-loop Cα atoms and are screened against
-     near-planar Boresch frames.
+     by atoms with more than two heavy-atom connections and other nonterminal
+     heavy atoms. Auto-selected receptor anchors come from stable non-loop Cα
+     atoms and are screened against near-linear Boresch frames. If the preferred
+     distance window is impossible for a compact receptor or ligand, BATTER uses
+     the best non-collinear frame and reports the relaxation.
 
      Provide three atoms only when you need fully manual geometry. In that case,
      anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å,

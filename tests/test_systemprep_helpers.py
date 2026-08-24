@@ -7,9 +7,11 @@ import pytest
 
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
+from batter.systemprep import helpers as systemprep_helpers
 from batter.systemprep.helpers import (
     find_anchor_atoms,
     get_ligand_candidates,
+    resolve_receptor_anchor_atoms,
     select_apo_receptor_anchor_atoms,
     select_receptor_anchor_atoms,
 )
@@ -57,6 +59,21 @@ def _make_ligand(tmp_path: Path, xyz: tuple[float, float, float]) -> mda.Univers
         [
             _atom_line(1, "C1", "LIG", "L", 1, x, y, z, "C"),
             _atom_line(2, "C2", "LIG", "L", 1, x + 0.5, y, z, "C"),
+        ],
+    )
+    return mda.Universe(str(pdb))
+
+
+def _make_auto_protein(tmp_path: Path, *, compact: bool = False) -> mda.Universe:
+    spacing = 3.0 if compact else 8.0
+    pdb = tmp_path / ("protein_auto_compact.pdb" if compact else "protein_auto.pdb")
+    _write_pdb(
+        pdb,
+        [
+            _atom_line(1, "CA", "ALA", "A", 1, 0.0, 0.0, 0.0, "C"),
+            _atom_line(2, "CA", "ALA", "A", 2, 0.0, spacing, 0.0, "C"),
+            _atom_line(3, "CA", "ALA", "A", 3, spacing, spacing, 0.0, "C"),
+            _atom_line(4, "CA", "ALA", "A", 4, -spacing, spacing, 0.0, "C"),
         ],
     )
     return mda.Universe(str(pdb))
@@ -123,6 +140,77 @@ def test_find_anchor_atoms_uses_synthetic_vector_for_apo_dummy(tmp_path: Path) -
     assert np.linalg.norm(vector) == pytest.approx(5.0)
     assert np.linalg.norm(vector - np.array([-150.0, 25.0, -170.0])) > 100.0
     assert result[6] == pytest.approx(6.0)
+
+
+def test_find_anchor_atoms_allows_single_atom_ligand(tmp_path: Path) -> None:
+    u_prot = _make_protein(tmp_path)
+    ligand = tmp_path / "single_atom_ligand.pdb"
+    _write_pdb(
+        ligand,
+        [_atom_line(1, "NA", "SOD", "L", 1, 1.5, 2.5, 3.5, "NA")],
+    )
+
+    result = find_anchor_atoms(
+        u_prot=u_prot,
+        u_lig=mda.Universe(str(ligand)),
+        lig_sdf=None,
+        anchor_atoms=[
+            "resid 10 and name CA",
+            "resid 11 and name CB",
+            "resid 12 and name CG",
+        ],
+    )
+
+    assert np.asarray(result[:3]) == pytest.approx([1.5, 2.5, 3.5])
+    assert result[6] == pytest.approx(np.linalg.norm([1.5, 2.5, 3.5]) + 1.0)
+
+
+def test_find_anchor_atoms_ignores_invalid_sdf_candidate_indices(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    u_prot = _make_protein(tmp_path)
+    u_lig = _make_ligand(tmp_path, (1.0, 1.0, 0.0))
+    monkeypatch.setattr(
+        systemprep_helpers,
+        "get_ligand_candidates",
+        lambda _path: [999, "invalid", 0, 0],
+    )
+
+    result = find_anchor_atoms(
+        u_prot=u_prot,
+        u_lig=u_lig,
+        lig_sdf=tmp_path / "placeholder.sdf",
+        anchor_atoms=[
+            "resid 10 and name CA",
+            "resid 11 and name CB",
+            "resid 12 and name CG",
+        ],
+    )
+
+    assert np.asarray(result[:3]) == pytest.approx([1.0, 1.0, 0.0])
+
+
+def test_find_anchor_atoms_accepts_merged_ligand_index_selection(
+    tmp_path: Path,
+) -> None:
+    u_prot = _make_protein(tmp_path)
+    u_lig = _make_ligand(tmp_path, (1.0, 1.0, 0.0))
+    first_merged_ligand_index = u_prot.atoms.n_atoms
+
+    result = find_anchor_atoms(
+        u_prot=u_prot,
+        u_lig=u_lig,
+        lig_sdf=None,
+        anchor_atoms=[
+            "resid 10 and name CA",
+            "resid 11 and name CB",
+            "resid 12 and name CG",
+        ],
+        ligand_anchor_atom=f"index {first_merged_ligand_index}",
+    )
+
+    assert np.asarray(result[:3]) == pytest.approx([1.0, 1.0, 0.0])
 
 
 def test_get_ligand_candidates_keeps_terminal_charged_atoms(tmp_path: Path) -> None:
@@ -215,6 +303,58 @@ def test_select_receptor_anchor_atoms_can_pin_p1(tmp_path: Path) -> None:
     assert selections[0] == "protein and resid 2 and name CA"
     assert len(selections) == 3
     assert all(selection.endswith("name CA") for selection in selections)
+
+
+def test_resolve_receptor_anchor_atoms_recovers_from_invalid_manual_input(
+    tmp_path: Path,
+) -> None:
+    u_prot = _make_auto_protein(tmp_path)
+    u_lig = _make_ligand(tmp_path, (6.0, 0.0, 0.0))
+
+    selections = resolve_receptor_anchor_atoms(
+        u_prot,
+        u_lig,
+        None,
+        ["name DOES_NOT_EXIST", "resid 2 and name CA", "resid 3 and name CA"],
+    )
+
+    assert len(selections) == 3
+    assert len({u_prot.select_atoms(selection)[0].index for selection in selections}) == 3
+
+
+def test_resolve_receptor_anchor_atoms_treats_two_entries_as_p1_hint(
+    tmp_path: Path,
+) -> None:
+    u_prot = _make_auto_protein(tmp_path)
+    u_lig = _make_ligand(tmp_path, (6.0, 0.0, 0.0))
+
+    selections = resolve_receptor_anchor_atoms(
+        u_prot,
+        u_lig,
+        None,
+        ["resid 2 and name CA", "resid 999 and name CA"],
+    )
+
+    assert selections[0] == "protein and resid 2 and name CA"
+    assert len(set(selections)) == 3
+
+
+def test_select_receptor_anchor_atoms_relaxes_spacing_for_compact_receptor(
+    tmp_path: Path,
+) -> None:
+    u_prot = _make_auto_protein(tmp_path, compact=True)
+    u_lig = _make_ligand(tmp_path, (1.0, 1.0, 0.0))
+
+    selections = select_receptor_anchor_atoms(
+        u_prot,
+        u_lig,
+        min_anchor_distance=8.0,
+        max_candidates=10,
+        max_p1_candidates=4,
+    )
+
+    assert len(selections) == 3
+    assert len({u_prot.select_atoms(selection)[0].index for selection in selections}) == 3
 
 
 def test_select_apo_receptor_anchor_atoms_does_not_need_ligand(

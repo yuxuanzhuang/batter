@@ -374,6 +374,30 @@ def test_create_args_rejects_reserved_ligand_name(tmp_path: Path) -> None:
         CreateArgs(system_name="sys", ligand_paths={"transformations": lig})
 
 
+@pytest.mark.parametrize(
+    ("raw_anchors", "expected"),
+    [
+        (None, []),
+        ("resid 10 and name CA", ["resid 10 and name CA"]),
+    ],
+)
+def test_create_args_normalizes_optional_anchor_atoms(
+    tmp_path: Path,
+    raw_anchors,
+    expected: list[str],
+) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy\n")
+
+    args = CreateArgs(
+        system_name="sys",
+        ligand_paths={"LIG": lig},
+        anchor_atoms=raw_anchors,
+    )
+
+    assert args.anchor_atoms == expected
+
+
 def test_fesim_args_invalid_remd_type():
     with pytest.raises(ValidationError, match="fe_sim\\.remd"):
         FESimArgs(remd="maybe")

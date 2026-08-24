@@ -417,8 +417,11 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
         _make_ligand_pdb(out)
         self.ligand_dict = {"LIG1": str(out)}
 
-    def _fake_select_receptor_anchor_atoms(*args, **kwargs):
+    def _fake_resolve_receptor_anchor_atoms(
+        _u_prot, _u_lig, _lig_sdf, anchor_atoms, **kwargs
+    ):
         seen["protein_dssp"] = kwargs.get("protein_dssp")
+        seen["resolver_input"] = list(anchor_atoms)
         return selected
 
     def _fake_find_anchor_atoms(*args, **kwargs):
@@ -431,8 +434,8 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
     )
     monkeypatch.setattr(
         system_prep_mod,
-        "select_receptor_anchor_atoms",
-        _fake_select_receptor_anchor_atoms,
+        "resolve_receptor_anchor_atoms",
+        _fake_resolve_receptor_anchor_atoms,
     )
     monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
 
@@ -444,6 +447,7 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
     )
 
     assert seen["protein_dssp"] == fake_dssp["results"]
+    assert seen["resolver_input"] == []
     assert seen["anchor_atoms"] == selected
     assert manifest["anchor_atom_selections"] == selected
 
@@ -488,8 +492,10 @@ def test_run_auto_completes_anchor_atoms_when_only_p1_provided(
         _make_ligand_pdb(out)
         self.ligand_dict = {"LIG1": str(out)}
 
-    def _fake_select_receptor_anchor_atoms(*args, **kwargs):
-        seen["preferred_p1_selection"] = kwargs.get("preferred_p1_selection")
+    def _fake_resolve_receptor_anchor_atoms(
+        _u_prot, _u_lig, _lig_sdf, anchor_atoms, **kwargs
+    ):
+        seen["resolver_input"] = list(anchor_atoms)
         seen["protein_dssp"] = kwargs.get("protein_dssp")
         return selected
 
@@ -503,8 +509,8 @@ def test_run_auto_completes_anchor_atoms_when_only_p1_provided(
     )
     monkeypatch.setattr(
         system_prep_mod,
-        "select_receptor_anchor_atoms",
-        _fake_select_receptor_anchor_atoms,
+        "resolve_receptor_anchor_atoms",
+        _fake_resolve_receptor_anchor_atoms,
     )
     monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
 
@@ -515,7 +521,7 @@ def test_run_auto_completes_anchor_atoms_when_only_p1_provided(
         anchor_atoms=[pinned_p1],
     )
 
-    assert seen["preferred_p1_selection"] == pinned_p1
+    assert seen["resolver_input"] == [pinned_p1]
     assert seen["protein_dssp"] == fake_dssp["results"]
     assert seen["anchor_atoms"] == selected
     assert manifest["anchor_atom_selections"] == selected
@@ -583,10 +589,14 @@ def test_run_uses_real_ligand_as_anchor_reference_when_apo_is_present(
             "PF06882961": str(real_out),
         }
 
-    def _fake_select_receptor_anchor_atoms(_u_prot, u_lig, lig_sdf, **kwargs):
+    def _fake_resolve_receptor_anchor_atoms(
+        _u_prot, u_lig, lig_sdf, anchor_atoms, **kwargs
+    ):
         seen["lig_sdf"] = lig_sdf
         seen["ligand_first_x"] = float(u_lig.atoms.positions[0][0])
         seen["protein_dssp"] = kwargs.get("protein_dssp")
+        seen["resolver_input"] = list(anchor_atoms)
+        seen["apo_ligand"] = kwargs.get("apo_ligand")
         return selected
 
     def _fake_find_anchor_atoms(_u_prot, u_lig, lig_sdf, anchor_atoms, *_args, **_kwargs):
@@ -601,15 +611,8 @@ def test_run_uses_real_ligand_as_anchor_reference_when_apo_is_present(
     )
     monkeypatch.setattr(
         system_prep_mod,
-        "select_receptor_anchor_atoms",
-        _fake_select_receptor_anchor_atoms,
-    )
-    monkeypatch.setattr(
-        system_prep_mod,
-        "select_apo_receptor_anchor_atoms",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("apo anchor selector should not be used")
-        ),
+        "resolve_receptor_anchor_atoms",
+        _fake_resolve_receptor_anchor_atoms,
     )
     monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
 
@@ -628,6 +631,8 @@ def test_run_uses_real_ligand_as_anchor_reference_when_apo_is_present(
     assert seen["ligand_first_x"] == pytest.approx(10.0)
     assert seen["find_ligand_first_x"] == pytest.approx(10.0)
     assert seen["protein_dssp"] == fake_dssp["results"]
+    assert seen["resolver_input"] == []
+    assert seen["apo_ligand"] is False
     assert seen["anchor_atoms"] == selected
     assert manifest["anchor_atom_selections"] == selected
 

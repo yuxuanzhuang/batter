@@ -8,6 +8,7 @@ import pytest
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import build_complex as build_complex_mod
+from batter._internal.ops import restraints as restraints_mod
 
 
 class _FakeAtom:
@@ -583,7 +584,10 @@ def test_guard_abfe_boresch_anchor_frame_reselects_p2_p3_to_keep_preferred_l1(
     assert data["receptor"]["reselected"]
     assert data["receptor"]["final"]["P3"]["amber_iat"] == 4
     assert data["ligand"]["final"]["L1"]["name"] == "N1"
-    assert data["boresch"]["final"]["torsion_margin_deg"] >= 15.0
+    assert (
+        data["boresch"]["final"]["torsion_margin_deg"]
+        >= restraints_mod.BORESCH_MIN_TORSION_MARGIN_DEG
+    )
 
 
 def test_guard_abfe_boresch_anchor_frame_avoids_terminal_l2_l3(
@@ -669,6 +673,43 @@ def test_pick_ligand_anchor_names_prioritizes_salt_bridge_first_anchor(
     )
 
     assert names[0] == "N1"
+
+
+def test_pick_ligand_anchor_names_relaxes_distances_for_compact_ligand(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "compact_ligand.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "CA", "ALA", "A", 2, 0.0, 0.0, 0.0),
+                _pdb_line("ATOM", 2, "CA", "GLY", "A", 3, 0.0, 1.0, 0.0),
+                _pdb_line("HETATM", 3, "C1", "LIG", "L", 10, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 4, "C2", "LIG", "L", 10, 1.0, 1.0, 0.0),
+                _pdb_line("HETATM", 5, "C3", "LIG", "L", 10, 1.0, 1.0, 1.0),
+                "END\n",
+            ]
+        )
+    )
+
+    names = build_complex_mod._pick_ligand_anchor_names(
+        u=mda.Universe(str(pdb)),
+        mol="LIG",
+        ligand_names=["C1", "C2", "C3"],
+        preferred_l1_names=["C1"],
+        p1_resid="2",
+        p1_atom="CA",
+        p2_resid="3",
+        p2_atom="CA",
+        l1_x=1.0,
+        l1_y=0.0,
+        l1_z=0.0,
+        l1_range=3.0,
+        min_adis=3.0,
+        max_adis=7.0,
+    )
+
+    assert names == ["C1", "C2", "C3"]
 
 
 def test_pick_ligand_anchor_names_ignores_hydrogen_candidates(

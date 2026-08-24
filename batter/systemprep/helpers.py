@@ -19,6 +19,7 @@ except Exception as e:  # pragma: no cover - RDKit optional at runtime
 __all__ = [
     "find_anchor_atoms",
     "get_ligand_candidates",
+    "resolve_receptor_anchor_atoms",
     "select_apo_receptor_anchor_atoms",
     "select_receptor_anchor_atoms",
     "select_ions_away_from_complex",
@@ -218,6 +219,30 @@ def select_receptor_anchor_atoms(
             )
             return selections
 
+    anchors = _score_anchor_triplets(
+        base_candidates,
+        ligand_reference,
+        ligand_interactions,
+        min_anchor_distance=min_anchor_distance,
+        target_angle=target_angle,
+        max_candidates=max_candidates,
+        max_p1_candidates=max_p1_candidates,
+        fixed_p1_atom=preferred_p1_atom,
+        p1_candidates=base_candidates,
+        enforce_min_anchor_distance=False,
+    )
+    if anchors is not None:
+        selections = [_atom_selection(atom, u_prot) for atom in anchors]
+        logger.warning(
+            "Auto receptor-anchor selection could not satisfy the preferred "
+            "host-distance/spacing criteria; using the best non-collinear "
+            "protein backbone triplet: P1={}, P2={}, P3={}.",
+            selections[0],
+            selections[1],
+            selections[2],
+        )
+        return selections
+
     raise ValueError(
         "Could not auto-select receptor anchors satisfying BATTER tutorial "
         f"criteria: P1 backbone atom near the first ligand, P1-P2 and P2-P3 >= "
@@ -320,6 +345,82 @@ def select_apo_receptor_anchor_atoms(
     )
 
 
+def resolve_receptor_anchor_atoms(
+    u_prot: mda.Universe,
+    u_lig: mda.Universe,
+    lig_sdf: Optional[str | Path],
+    anchor_atoms: Sequence[str] | None = None,
+    *,
+    protein_dssp: Any = None,
+    apo_ligand: bool = False,
+) -> List[str]:
+    """Resolve optional user input to three unambiguous receptor selections.
+
+    A valid three-selection input is preserved by atom identity. Incomplete or
+    invalid input falls back to automatic selection, retaining the first entry
+    as a preferred P1 when it resolves to an eligible receptor atom. With two
+    entries, the second is ignored because P2/P3 must be chosen as one stable
+    frame. When more than three are supplied, only the first three are used.
+    """
+    supplied = [
+        str(selection).strip()
+        for selection in (anchor_atoms or ())
+        if selection is not None and str(selection).strip()
+    ]
+
+    if len(supplied) >= 3:
+        triplet = supplied[:3]
+        if len(supplied) > 3:
+            logger.warning(
+                "create.anchor_atoms contains {} entries; using the first three.",
+                len(supplied),
+            )
+        selected_groups = []
+        selection_error: Exception | None = None
+        for selection in triplet:
+            try:
+                selected_groups.append(u_prot.select_atoms(selection))
+            except Exception as exc:
+                selection_error = exc
+                break
+        if selection_error is None and all(group.n_atoms == 1 for group in selected_groups):
+            indices = [int(group[0].index) for group in selected_groups]
+            if len(set(indices)) == 3:
+                return [_atom_selection(group[0], u_prot) for group in selected_groups]
+
+        counts = [group.n_atoms for group in selected_groups]
+        detail = str(selection_error) if selection_error is not None else f"match counts={counts}"
+        logger.warning(
+            "Explicit receptor anchor triplet is invalid or ambiguous ({}); "
+            "falling back to automatic selection.",
+            detail,
+        )
+        preferred_p1 = triplet[0]
+    elif supplied:
+        preferred_p1 = supplied[0]
+        if len(supplied) == 2:
+            logger.warning(
+                "create.anchor_atoms contains two entries; preserving the first as "
+                "P1 and auto-selecting P2/P3."
+            )
+    else:
+        preferred_p1 = None
+
+    if apo_ligand:
+        return select_apo_receptor_anchor_atoms(
+            u_prot,
+            protein_dssp=protein_dssp,
+            preferred_p1_selection=preferred_p1,
+        )
+    return select_receptor_anchor_atoms(
+        u_prot,
+        u_lig,
+        lig_sdf,
+        protein_dssp=protein_dssp,
+        preferred_p1_selection=preferred_p1,
+    )
+
+
 def _protein_backbone_anchor_candidates(u_prot: mda.Universe) -> mda.AtomGroup:
     name_clause = " ".join(_BACKBONE_ANCHOR_NAMES)
     candidates = u_prot.select_atoms(
@@ -419,19 +520,35 @@ def _resolve_preferred_p1_atom(
     selection = str(preferred_p1_selection or "").strip()
     if not selection:
         return None
-    atom_group = u_prot.select_atoms(selection)
-    if atom_group.n_atoms != 1:
-        raise ValueError(
-            f"Preferred {label} P1 selection must match exactly one atom; "
-            f"{selection!r} matched {atom_group.n_atoms}."
+    try:
+        atom_group = u_prot.select_atoms(selection)
+    except Exception as exc:
+        logger.warning(
+            "Preferred {} P1 selection {!r} is invalid ({}); selecting P1 automatically.",
+            label,
+            selection,
+            exc,
         )
+        return None
+    if atom_group.n_atoms != 1:
+        logger.warning(
+            "Preferred {} P1 selection {!r} matched {} atoms instead of one; "
+            "selecting P1 automatically.",
+            label,
+            selection,
+            atom_group.n_atoms,
+        )
+        return None
     atom = atom_group[0]
     candidate_indices = {int(candidate.index) for candidate in base_candidates}
     if int(atom.index) not in candidate_indices:
-        raise ValueError(
-            f"Preferred {label} P1 selection {selection!r} must select a receptor "
-            "C-alpha atom eligible for auto-anchor selection."
+        logger.warning(
+            "Preferred {} P1 selection {!r} is not an eligible receptor C-alpha; "
+            "selecting P1 automatically.",
+            label,
+            selection,
         )
+        return None
     return atom
 
 
@@ -492,6 +609,8 @@ def _score_apo_anchor_triplets(
                 angle = _angle_degrees(p1.position, p2.position, p3.position)
                 if angle is None:
                     continue
+                if min(angle, 180.0 - angle) < 15.0:
+                    continue
                 distance_shortfall = max(0.0, min_anchor_distance - d12) + max(
                     0.0,
                     min_anchor_distance - d23,
@@ -523,7 +642,17 @@ def _score_apo_anchor_triplets(
 
 def _valid_ligand_indices(u_lig: mda.Universe, indices: Sequence[int]) -> list[int]:
     n_atoms = u_lig.atoms.n_atoms
-    return [int(idx) for idx in indices if 0 <= int(idx) < n_atoms]
+    valid: list[int] = []
+    seen: set[int] = set()
+    for raw_index in indices:
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < n_atoms and index not in seen:
+            seen.add(index)
+            valid.append(index)
+    return valid
 
 
 def _ligand_reference_atoms(
@@ -738,6 +867,7 @@ def _score_anchor_triplets(
     max_p1_candidates: int,
     fixed_p1_atom: Any | None = None,
     p1_candidates: mda.AtomGroup | None = None,
+    enforce_min_anchor_distance: bool = True,
 ) -> list[Any] | None:
     ligand_center = ligand_reference.center_of_geometry()
 
@@ -796,7 +926,7 @@ def _score_anchor_triplets(
             if p2.index == p1.index or p2.residue.ix == p1.residue.ix:
                 continue
             d12 = float(np.linalg.norm(p1.position - p2.position))
-            if d12 < min_anchor_distance:
+            if enforce_min_anchor_distance and d12 < min_anchor_distance:
                 continue
             for p3_record in limited_records:
                 p3 = p3_record["atom"]
@@ -806,11 +936,16 @@ def _score_anchor_triplets(
                 ):
                     continue
                 d23 = float(np.linalg.norm(p2.position - p3.position))
-                if d23 < min_anchor_distance:
+                if enforce_min_anchor_distance and d23 < min_anchor_distance:
                     continue
                 angle = _angle_degrees(p1.position, p2.position, p3.position)
                 if angle is None:
                     continue
+                if min(angle, 180.0 - angle) < 15.0:
+                    continue
+                distance_shortfall = max(0.0, min_anchor_distance - d12) + max(
+                    0.0, min_anchor_distance - d23
+                )
                 score = (
                     abs(angle - target_angle) / target_angle
                     + 5.0 * p1_record["interaction_rank"]
@@ -821,6 +956,7 @@ def _score_anchor_triplets(
                         abs(d12 - min_anchor_distance)
                         + abs(d23 - min_anchor_distance)
                     )
+                    + 0.10 * distance_shortfall
                     + (0.0 if p1.name == "CA" else 0.05)
                     + (0.0 if p2.name == "CA" else 0.05)
                     + (0.0 if p3.name == "CA" else 0.05)
@@ -989,11 +1125,10 @@ def find_anchor_atoms(
     """
     Identify Boresch-style anchor atoms and pocket geometry.
 
-    ``anchor_atoms`` may be an empty sequence, a single P1 selection, or three
-    explicit selections. Empty means BATTER selects a receptor anchor triplet
-    with :func:`select_receptor_anchor_atoms`; one selection pins P1 and
-    auto-selects P2/P3. The orchestration layer resolves apo-only MD anchors
-    earlier with :func:`select_apo_receptor_anchor_atoms`.
+    ``anchor_atoms`` may be omitted, contain a P1 hint, or contain three explicit
+    selections. Missing, incomplete, or invalid input is normalized by
+    :func:`resolve_receptor_anchor_atoms`. The orchestration layer resolves
+    apo-only MD anchors earlier with :func:`select_apo_receptor_anchor_atoms`.
 
     Parameters
     ----------
@@ -1005,9 +1140,10 @@ def find_anchor_atoms(
     lig_sdf
         Optional SDF path for ligand candidate and interaction-atom detection.
     anchor_atoms
-        Zero, one, or three MDAnalysis selection strings. Empty means
-        auto-select receptor anchors; one string fixes P1 while P2/P3 are
-        auto-selected; three strings are used as explicit P1/P2/P3.
+        MDAnalysis selection strings. Empty input auto-selects receptor anchors;
+        one string fixes P1 while P2/P3 are auto-selected; a valid triplet is
+        used explicitly. Incomplete or invalid input falls back to automatic
+        selection, retaining the first entry as a P1 preference when it is valid.
     ligand_anchor_atom
         Optional ligand atom selection used for the ligand COM calculation.
     unbound_threshold
@@ -1031,39 +1167,16 @@ def find_anchor_atoms(
         ligand atom and the three anchor atoms is greater than or equal to the
         threshold.
     """
-    if len(anchor_atoms) == 0:
-        if apo_ligand:
-            anchor_atoms = select_apo_receptor_anchor_atoms(
-                u_prot,
-                protein_dssp=protein_dssp,
-            )
-        else:
-            anchor_atoms = select_receptor_anchor_atoms(
-                u_prot,
-                u_lig,
-                lig_sdf,
-                protein_dssp=protein_dssp,
-            )
-    elif len(anchor_atoms) == 1:
-        if apo_ligand:
-            anchor_atoms = select_apo_receptor_anchor_atoms(
-                u_prot,
-                protein_dssp=protein_dssp,
-                preferred_p1_selection=anchor_atoms[0],
-            )
-        else:
-            anchor_atoms = select_receptor_anchor_atoms(
-                u_prot,
-                u_lig,
-                lig_sdf,
-                protein_dssp=protein_dssp,
-                preferred_p1_selection=anchor_atoms[0],
-            )
-    elif len(anchor_atoms) != 3:
-        raise ValueError(
-            "anchor_atoms must contain 0, 1, or 3 selection strings. "
-            "Use one string to pin P1 and let BATTER auto-select P2/P3."
-        )
+    if u_lig.atoms.n_atoms == 0:
+        raise ValueError("Cannot select anchors for an empty ligand structure.")
+    anchor_atoms = resolve_receptor_anchor_atoms(
+        u_prot,
+        u_lig,
+        lig_sdf,
+        anchor_atoms,
+        protein_dssp=protein_dssp,
+        apo_ligand=apo_ligand,
+    )
 
     u_merge = mda.Merge(u_prot.atoms, u_lig.atoms)
 
@@ -1113,20 +1226,42 @@ def find_anchor_atoms(
             )
 
     if ligand_anchor_atom:
-        lig_sel = u_merge.select_atoms(ligand_anchor_atom)
+        selection_error: Exception | None = None
+        try:
+            lig_sel = u_lig.select_atoms(ligand_anchor_atom)
+        except Exception as exc:
+            selection_error = exc
+            lig_sel = u_lig.atoms[[]]
         if lig_sel.n_atoms == 0:
-            logger.warning(
-                "Provided ligand anchor atom '{}' not found; using all ligand atoms instead.",
-                ligand_anchor_atom,
-            )
+            try:
+                merged_selection = u_merge.select_atoms(ligand_anchor_atom)
+                merged_ligand = u_merge.atoms[u_prot.atoms.n_atoms :]
+                lig_sel = merged_selection.intersection(merged_ligand)
+            except Exception as exc:
+                selection_error = selection_error or exc
+        if lig_sel.n_atoms == 0:
+            if selection_error is not None:
+                logger.warning(
+                    "Provided ligand anchor selection {!r} is invalid ({}); using "
+                    "all ligand atoms instead.",
+                    ligand_anchor_atom,
+                    selection_error,
+                )
+            else:
+                logger.warning(
+                    "Provided ligand anchor selection {!r} did not select a ligand "
+                    "atom; using all ligand atoms instead.",
+                    ligand_anchor_atom,
+                )
             lig_sel = u_lig.atoms
     else:
         lig_sel = u_lig.atoms
         if lig_sdf:
             try:
                 candidates = get_ligand_candidates(lig_sdf)
-                if candidates:
-                    lig_sel = u_lig.atoms[candidates]
+                valid_candidates = _valid_ligand_indices(u_lig, candidates)
+                if valid_candidates:
+                    lig_sel = u_lig.atoms[valid_candidates]
             except Exception as e:  # pragma: no cover - RDKit optional
                 logger.warning(
                     "Could not derive ligand candidates from SDF '{}': {}. Using all ligand atoms.",
@@ -1151,7 +1286,16 @@ def find_anchor_atoms(
             distance,
         )
     else:
-        r_vect = lig_sel.center_of_mass() - P1_atom.positions  # shape (1,3)
+        try:
+            ligand_center = np.asarray(lig_sel.center_of_mass(), dtype=float)
+        except Exception:
+            ligand_center = np.full(3, np.nan)
+        if ligand_center.shape != (3,) or not np.all(np.isfinite(ligand_center)):
+            ligand_center = np.asarray(lig_sel.center_of_geometry(), dtype=float)
+            logger.warning(
+                "Ligand center of mass is unavailable; using center of geometry for L1."
+            )
+        r_vect = ligand_center - P1_atom.positions  # shape (1,3)
     l1_x, l1_y, l1_z = float(r_vect[0][0]), float(r_vect[0][1]), float(r_vect[0][2])
     logger.debug("l1_x={:.2f}; l1_y={:.2f}; l1_z={:.2f}", l1_x, l1_y, l1_z)
 

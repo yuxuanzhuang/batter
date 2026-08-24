@@ -38,6 +38,7 @@ ABFE_DIFF_POSE_LIGAND_ATOMS = 6
 _ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
 BORESCH_MIN_ANGLE_MARGIN_DEG = 30.0
 BORESCH_MIN_TORSION_MARGIN_DEG = 15.0
+BORESCH_PREFERRED_TORSION_MARGIN_DEG = 30.0
 SEPTOP_COMMON_CORE_BORESCH_MIN_MAPPED_ATOMS = 4
 LIGAND_DIHEDRAL_DEFAULT_FORCE = 10.0
 BoreschCandidate = tuple[
@@ -1082,8 +1083,15 @@ def _write_group_colvar_block(
     group_atoms: Sequence[str],
     anchors: Sequence[float],
     strengths: Sequence[float],
-) -> None:
+) -> bool:
     """Write a DISTANCE/COM_DISTANCE &colvar block for one anchor atom."""
+    if not group_atoms:
+        logger.warning(
+            "[restraints] Skipping collective-variable restraint for anchor {}: "
+            "the atom group is empty.",
+            anchor_atom,
+        )
+        return False
     handle.write("&colvar\n")
     if len(group_atoms) == 1:
         handle.write(" cv_type = 'DISTANCE'\n")
@@ -1101,6 +1109,7 @@ def _write_group_colvar_block(
         " anchor_strength = %10.4f, %10.4f,\n" % (strengths[0], strengths[1])
     )
     handle.write("/\n")
+    return True
 
 
 def _colvar_block_to_rst(block: str) -> str | None:
@@ -1889,9 +1898,37 @@ def _lambda_weight_for_window(ctx: BuildContext) -> float:
 
 def _ligand_atom_masks_from_vac_pdb(vac_pdb: Path, mol: str, lig_res: str) -> list[str]:
     universe = mda.Universe(vac_pdb.as_posix())
-    ligand_atoms = universe.select_atoms(f"resname {mol} and resid {int(lig_res)}")
+    try:
+        target_resid = int(lig_res)
+    except (TypeError, ValueError):
+        target_resid = None
+    if target_resid is None:
+        ligand_atoms = universe.atoms[[]]
+    else:
+        ligand_atoms = universe.select_atoms(
+            f"resname {mol} and resid {target_resid}"
+        )
     if ligand_atoms.n_atoms == 0:
-        ligand_atoms = universe.select_atoms(f"resname {mol}").residues[0].atoms
+        by_name = universe.select_atoms(f"resname {mol}")
+        if by_name.n_atoms:
+            ligand_atoms = by_name.residues[0].atoms
+        elif target_resid is not None:
+            ligand_atoms = universe.select_atoms(
+                f"resid {target_resid} and not protein and not water"
+            )
+            if ligand_atoms.n_atoms:
+                logger.warning(
+                    "[restraints:l] ligand resname {!r} was not found in {}; "
+                    "recovering atom masks from non-protein residue {}.",
+                    mol,
+                    vac_pdb,
+                    target_resid,
+                )
+    if ligand_atoms.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:l] no ligand atoms found for resname {mol!r} or resid {lig_res} "
+            f"in {vac_pdb}"
+        )
     masks = ["0"]
     for atom in ligand_atoms:
         masks.append(f":{int(atom.resid)}@{atom.name}")
@@ -2956,6 +2993,9 @@ def _best_preferred_l1_triplet_for_receptor_frame(
         score = float(candidate["score"]) + endpoint_score
         scored = {
             "preferred_rank": int(candidate["preferred_rank"]),
+            "torsion_safety_rank": int(
+                torsion_margin < BORESCH_PREFERRED_TORSION_MARGIN_DEG
+            ),
             "names": list(candidate["names"]),
             "values": values,
             "margins": (angle_margin, torsion_margin),
@@ -2971,11 +3011,13 @@ def _best_preferred_l1_triplet_for_receptor_frame(
         }
         if best is None or (
             int(scored["preferred_rank"]),
+            int(scored["torsion_safety_rank"]),
             int(scored["l2_l3_priority_rank"]),
             -float(scored["score"]),
             scored["names"],
         ) < (
             int(best["preferred_rank"]),
+            int(best.get("torsion_safety_rank", 0)),
             int(best.get("l2_l3_priority_rank", 0)),
             -float(best["score"]),
             best["names"],

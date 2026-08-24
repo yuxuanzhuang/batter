@@ -167,11 +167,11 @@ class CreateArgs(BaseModel):
         default_factory=list,
         description=(
             "Optional list of receptor anchor atom selections used for restraint "
-            "placement and binding-site geometry. Provide three selections for "
-            "explicit P1/P2/P3, one selection to pin P1 and let BATTER "
-            "auto-select P2/P3, or omit the field for full auto-selection from "
-            "the first real ligand pose when available, or from protein-only "
-            "geometry for apo MD."
+            "placement and binding-site geometry. Three distinct, unambiguous "
+            "selections define explicit P1/P2/P3; one selection pins P1 while "
+            "BATTER chooses P2/P3. Missing, incomplete, or invalid input falls "
+            "back to automatic selection from the first real ligand pose when "
+            "available, or from protein-only geometry for apo MD."
         ),
     )
     lipid_mol: list[str] = Field(
@@ -271,6 +271,15 @@ class CreateArgs(BaseModel):
         7.0,
         description="Maximum anchor-atom distance used during pose selection (Å).",
     )
+
+    @field_validator("anchor_atoms", mode="before")
+    @classmethod
+    def _coerce_anchor_atoms(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
 
     @field_validator(
         "protein_input",

@@ -28,8 +28,7 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import (
     find_anchor_atoms,
-    select_apo_receptor_anchor_atoms,
-    select_receptor_anchor_atoms,
+    resolve_receptor_anchor_atoms,
 )
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
@@ -1232,34 +1231,14 @@ class _SystemPrepRunner:
             is_apo=anchor_ligand_is_apo,
         )
         resolved_anchor_atoms = list(anchor_atoms or [])
-        if not resolved_anchor_atoms:
-            if anchor_ligand_is_apo:
-                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
-                    u_prot,
-                    protein_dssp=dssp_result.get("results"),
-                )
-            else:
-                resolved_anchor_atoms = select_receptor_anchor_atoms(
-                    u_prot,
-                    u_lig,
-                    lig_sdf,
-                    protein_dssp=dssp_result.get("results"),
-                )
-        elif len(resolved_anchor_atoms) == 1:
-            if anchor_ligand_is_apo:
-                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
-                    u_prot,
-                    protein_dssp=dssp_result.get("results"),
-                    preferred_p1_selection=resolved_anchor_atoms[0],
-                )
-            else:
-                resolved_anchor_atoms = select_receptor_anchor_atoms(
-                    u_prot,
-                    u_lig,
-                    lig_sdf,
-                    protein_dssp=dssp_result.get("results"),
-                    preferred_p1_selection=resolved_anchor_atoms[0],
-                )
+        resolved_anchor_atoms = resolve_receptor_anchor_atoms(
+            u_prot,
+            u_lig,
+            lig_sdf,
+            resolved_anchor_atoms,
+            protein_dssp=dssp_result.get("results"),
+            apo_ligand=anchor_ligand_is_apo,
+        )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot,

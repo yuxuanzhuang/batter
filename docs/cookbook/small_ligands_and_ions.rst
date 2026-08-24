@@ -79,6 +79,13 @@ For a two-heavy-atom ligand, BATTER uses five ligand terms:
 The missing sixth Boresch torsion is rotation around the ligand bond axis; a
 two-atom ligand has no third ligand atom to define that rotation.
 
+Ligands with at least three heavy atoms still use a complete L1/L2/L3 frame.
+For compact ligands, BATTER first applies ``min_adis``/``max_adis`` and then,
+when that window rejects every triplet, warns and chooses the best distinct,
+non-collinear triplet without the distance cutoff. A truly empty ligand or a
+larger ligand with no non-collinear triplet remains an error because no stable
+full frame can be defined.
+
 In ``Results.dat`` the analytical line is labeled according to the number of
 restraint terms found in ``disang.rest``:
 

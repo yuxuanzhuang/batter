@@ -71,6 +71,7 @@ def _boresch_guard_helpers():
         from batter._internal.ops.restraints import (
             BORESCH_MIN_ANGLE_MARGIN_DEG,
             BORESCH_MIN_TORSION_MARGIN_DEG,
+            BORESCH_PREFERRED_TORSION_MARGIN_DEG,
             _boresch_frame_margins,
             _boresch_frame_values,
             _frame_safe_boresch_atom_names_from_residue,
@@ -79,6 +80,7 @@ def _boresch_guard_helpers():
         _BORESCH_GUARD_HELPERS = (
             BORESCH_MIN_ANGLE_MARGIN_DEG,
             BORESCH_MIN_TORSION_MARGIN_DEG,
+            BORESCH_PREFERRED_TORSION_MARGIN_DEG,
             _boresch_frame_margins,
             _boresch_frame_values,
             _frame_safe_boresch_atom_names_from_residue,
@@ -756,6 +758,7 @@ def _boresch_values_for_masks(
     (
         _min_angle_margin,
         _min_torsion_margin,
+        _preferred_torsion_margin,
         _boresch_frame_margins,
         _boresch_frame_values,
         _,
@@ -1060,6 +1063,7 @@ def _best_preferred_l1_triplet_for_receptor_frame(
     (
         BORESCH_MIN_ANGLE_MARGIN_DEG,
         BORESCH_MIN_TORSION_MARGIN_DEG,
+        BORESCH_PREFERRED_TORSION_MARGIN_DEG,
         _boresch_frame_margins,
         _,
         _,
@@ -1098,6 +1102,9 @@ def _best_preferred_l1_triplet_for_receptor_frame(
         names = list(candidate["names"])
         scored_candidate = {
             "preferred_rank": int(candidate["preferred_rank"]),
+            "torsion_safety_rank": int(
+                torsion_margin < BORESCH_PREFERRED_TORSION_MARGIN_DEG
+            ),
             "names": names,
             "values": values,
             "margins": (angle_margin, torsion_margin),
@@ -1113,11 +1120,13 @@ def _best_preferred_l1_triplet_for_receptor_frame(
         }
         if best is None or (
             int(scored_candidate["preferred_rank"]),
+            int(scored_candidate["torsion_safety_rank"]),
             int(scored_candidate["l2_l3_priority_rank"]),
             -float(scored_candidate["score"]),
             names,
         ) < (
             int(best["preferred_rank"]),
+            int(best.get("torsion_safety_rank", 0)),
             int(best.get("l2_l3_priority_rank", 0)),
             -float(best["score"]),
             best["names"],
@@ -1330,6 +1339,7 @@ def _guard_abfe_boresch_anchor_frame(
         (
             _min_angle_margin,
             _min_torsion_margin,
+            _preferred_torsion_margin,
             _boresch_frame_margins,
             _boresch_frame_values,
             _frame_safe_boresch_atom_names_from_residue,
@@ -1557,6 +1567,7 @@ def _pick_ligand_anchor_names(
         name: rank for rank, name in enumerate(_dedupe_names([str(x) for x in ligand_names]))
     }
 
+    all_candidates: dict[str, np.ndarray] = {}
     candidates: dict[str, np.ndarray] = {}
     for name in ligand_names:
         atoms = _ligand_atom_by_name(u, mol, str(name))
@@ -1565,6 +1576,7 @@ def _pick_ligand_anchor_names(
         if all(_atom_is_hydrogen(atom) for atom in atoms):
             continue
         center = _center_of_atoms(atoms)
+        all_candidates[str(name)] = center
         dist = float(np.linalg.norm(center - target))
         if dist >= float(l1_range):
             continue
@@ -1655,9 +1667,101 @@ def _pick_ligand_anchor_names(
                 if best_score is None or score < best_score:
                     best_score = score
                     best_triplet = (aa1, aa2, aa3)
-    if best_triplet is None:
-        raise RuntimeError("anchor not found")
-    return list(best_triplet)
+    if best_triplet is not None:
+        return list(best_triplet)
+
+    relaxed_preferred_l1 = _dedupe_names(
+        str(name).strip()
+        for name in preferred_l1_names
+        if str(name).strip() in all_candidates
+    )
+    relaxed_preferred_rank = {
+        name: rank for rank, name in enumerate(relaxed_preferred_l1)
+    }
+    relaxed_best: tuple[str, str, str] | None = None
+    relaxed_score: tuple[float, ...] | None = None
+
+    def _distance_window_penalty(distance: float) -> float:
+        return max(0.0, float(min_adis) - distance) + max(
+            0.0, distance - float(max_adis)
+        )
+
+    for aa1, aa1_center in all_candidates.items():
+        angle1 = _angle_degrees(p2_center, p1_center, aa1_center)
+        if not np.isfinite(angle1):
+            continue
+        preferred_penalty = 0
+        preferred_rank = ligand_name_rank.get(aa1, len(ligand_name_rank))
+        if relaxed_preferred_l1:
+            preferred_penalty = 0 if aa1 in relaxed_preferred_rank else 1
+            preferred_rank = relaxed_preferred_rank.get(
+                aa1, len(relaxed_preferred_rank)
+            )
+        for aa2, aa2_center in all_candidates.items():
+            if aa2 == aa1:
+                continue
+            d12 = float(np.linalg.norm(aa2_center - aa1_center))
+            if d12 < 0.4:
+                continue
+            angle2 = _angle_degrees(p1_center, aa1_center, aa2_center)
+            if not np.isfinite(angle2):
+                continue
+            for aa3, aa3_center in all_candidates.items():
+                if aa3 in {aa1, aa2}:
+                    continue
+                d23 = float(np.linalg.norm(aa3_center - aa2_center))
+                if d23 < 0.4:
+                    continue
+                angle3 = _angle_degrees(aa1_center, aa2_center, aa3_center)
+                if not np.isfinite(angle3):
+                    continue
+                angle_margin = min(
+                    angle1,
+                    180.0 - angle1,
+                    angle2,
+                    180.0 - angle2,
+                    angle3,
+                    180.0 - angle3,
+                )
+                if angle_margin < 10.0:
+                    continue
+                l2_l3_priority_rank = _ligand_anchor_pair_priority_rank(
+                    aa2,
+                    aa3,
+                    heavy_neighbors_by_name=heavy_neighbors_by_name,
+                    ring_by_name=ring_by_name,
+                )
+                score = (
+                    float(preferred_penalty),
+                    float(l2_l3_priority_rank),
+                    -float(angle_margin),
+                    _distance_window_penalty(d12)
+                    + _distance_window_penalty(d23),
+                    abs(angle1 - 90.0)
+                    + abs(angle2 - 90.0)
+                    + abs(angle3 - 90.0),
+                    float(np.linalg.norm(aa1_center - target)),
+                    float(preferred_rank),
+                    float(ligand_name_rank.get(aa1, len(ligand_name_rank))),
+                    float(ligand_name_rank.get(aa2, len(ligand_name_rank))),
+                    float(ligand_name_rank.get(aa3, len(ligand_name_rank))),
+                )
+                if relaxed_score is None or score < relaxed_score:
+                    relaxed_score = score
+                    relaxed_best = (aa1, aa2, aa3)
+
+    if relaxed_best is None:
+        raise RuntimeError(
+            "Could not find three distinct, non-collinear ligand anchor atoms."
+        )
+    logger.warning(
+        "Strict ligand-anchor distance criteria ({:.2f}-{:.2f} A) rejected all "
+        "triplets; using compact non-collinear anchors {}.",
+        float(min_adis),
+        float(max_adis),
+        " ".join(relaxed_best),
+    )
+    return list(relaxed_best)
 
 
 def _dedupe_names(names: Sequence[str]) -> list[str]:
@@ -1756,6 +1860,11 @@ def _python_prep_complex(
     ]
     if not available_ligand_names:
         available_ligand_names = lig_heavy_names
+    elif lig_noh.n_atoms >= 3 and len(available_ligand_names) < 3:
+        available_ligand_names = _order_ligand_names_with_priority(
+            [*available_ligand_names, *lig_heavy_names],
+            preferred_l1_names,
+        )
     if lig_noh.n_atoms < 3 or len(available_ligand_names) < 3:
         anchors = available_ligand_names[: max(1, min(3, len(available_ligand_names)))]
     else:
@@ -2150,6 +2259,13 @@ def _user_anchor_triplet_was_provided(extra: dict | None) -> bool:
     return sum(1 for anchor in anchors if str(anchor).strip()) >= 3
 
 
+def _user_p1_was_provided(extra: dict | None) -> bool:
+    if not extra:
+        return False
+    anchors = extra.get("user_anchor_atoms") or ()
+    return any(str(anchor).strip() for anchor in anchors)
+
+
 def _load_stable_boresch_distance(equil_dir: Path) -> dict | None:
     path = equil_dir / _STABLE_BORESCH_DISTANCE_JSON
     if not path.exists():
@@ -2218,6 +2334,21 @@ def _renumber_stable_protein_residue(
 ) -> int:
     if renum_data is None:
         return int(stable_resid)
+
+    # Current stable-distance records are normally measured from the Amber
+    # equilibration topology. Its protein residue IDs are already
+    # protein_renum.txt new_resid + 1 because the leading dummy is residue 1.
+    # Recognize that frame before considering the record an original PDB ID;
+    # otherwise a valid prepared-system ID can be renumbered a second time.
+    prepared_matches = renum_data.query("new_resid == @stable_resid - 1")
+    stable_resname_clean = str(stable_resname).strip()
+    if stable_resname_clean and not prepared_matches.empty:
+        named_prepared_matches = prepared_matches.query(
+            "old_resname == @stable_resname_clean or "
+            "new_resname == @stable_resname_clean"
+        )
+        if not named_prepared_matches.empty:
+            return int(stable_resid)
 
     matches = renum_data.query("old_resid == @stable_resid")
     if matches.empty:
@@ -2448,6 +2579,7 @@ def _select_stable_boresch_distance_preference(
     l1_z: float,
     l1_range: float,
     renum_data: pd.DataFrame | None = None,
+    required_P1: str | None = None,
 ) -> dict | None:
     candidates = _stable_boresch_distance_candidates(stable_record)
     for rank, candidate in enumerate(candidates, start=1):
@@ -2466,6 +2598,14 @@ def _select_stable_boresch_distance_preference(
             renum_data=renum_data,
         )
         if preference is None:
+            continue
+        if required_P1 is not None and preference["P1"] != required_P1:
+            logger.debug(
+                "[build_complex_z] Skipping stable pair P1={} because the user "
+                "pinned receptor P1={}.",
+                preference["P1"],
+                required_P1,
+            )
             continue
         if not _stable_preference_has_safe_boresch_frame(
             u=u,
@@ -3354,12 +3494,20 @@ def build_complex_z(ctx) -> bool:
                 ligand,
                 " ".join(salt_bridge_lig_names),
             )
-    if _user_anchor_triplet_was_provided(extra):
+    user_anchor_triplet = _user_anchor_triplet_was_provided(extra)
+    user_p1_pinned = _user_p1_was_provided(extra)
+    if user_anchor_triplet:
         logger.debug(
             "[build_complex_z] Explicit create.anchor_atoms triplet was provided; "
             "stable equilibration distance will not modify receptor anchors."
         )
     else:
+        if user_p1_pinned:
+            logger.debug(
+                "[build_complex_z] Explicit create.anchor_atoms P1 was provided; "
+                "stable equilibration candidates are constrained to P1={}.",
+                P1,
+            )
         if stable_record is not None:
             stable_preference = _select_stable_boresch_distance_preference(
                 u=u,
@@ -3374,6 +3522,7 @@ def build_complex_z(ctx) -> bool:
                 l1_z=float(l1_z),
                 l1_range=float(l1_range),
                 renum_data=renum_data,
+                required_P1=P1 if user_p1_pinned else None,
             )
             if stable_preference is not None:
                 P1 = stable_preference["P1"]
@@ -3550,7 +3699,6 @@ def build_complex_z(ctx) -> bool:
                 ),
             ]
         )
-        user_anchor_triplet = _user_anchor_triplet_was_provided(extra)
         P1, P2, P3, a = _guard_abfe_boresch_anchor_frame(
             fe_pdb=fe_pdb,
             mol=mol,

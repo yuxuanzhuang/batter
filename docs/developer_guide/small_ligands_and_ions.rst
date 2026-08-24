@@ -80,6 +80,13 @@ prepared ``anchors*.txt/json`` files via ``_partial_ligand_anchors_are_expected`
 This keeps ABFE preparation from failing when a genuinely small ligand can only
 define one or two ligand anchors.
 
+For ligands with at least three heavy atoms, ``_pick_ligand_anchor_names`` first
+uses the configured anchor-distance window. If no triplet survives, it searches
+all heavy-atom candidates for a distinct frame with finite angles and at least a
+10-degree endpoint margin. It preserves the preferred L1 and L2/L3 topology
+ranking, logs the relaxed choice, and only raises when no non-collinear triplet
+exists.
+
 For normal ligands with an automatically chosen L1, charged protein-ligand
 contacts can promote a salt-bridge atom to L1. L2/L3 are then ranked to avoid
 terminal atoms: valid ring atoms with at least two heavy neighbours are preferred

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from io import StringIO
 import json
 from pathlib import Path
 import sys
@@ -86,6 +87,41 @@ def test_load_common_core_indices_supports_scmask_format(tmp_path: Path) -> None
 
     assert ref_indices == [3, 5, 9]
     assert alt_indices == [2, 8]
+
+
+def test_write_group_colvar_block_skips_empty_group() -> None:
+    handle = StringIO()
+
+    written = restraints._write_group_colvar_block(
+        handle,
+        anchor_atom="12",
+        group_atoms=[],
+        anchors=[0.0, 0.0, 3.0, 3.5],
+        strengths=[5.0, 5.0],
+    )
+
+    assert written is False
+    assert handle.getvalue() == ""
+
+
+def test_ligand_atom_masks_recovers_from_resname_mismatch(tmp_path: Path) -> None:
+    vac_pdb = tmp_path / "vac.pdb"
+    vac_pdb.write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "HETATM    2  NA  SOD A   4       1.000   1.000   0.000  1.00  0.00          NA\n",
+                "END\n",
+            ]
+        )
+    )
+
+    masks = restraints._ligand_atom_masks_from_vac_pdb(vac_pdb, "LIG", "4")
+
+    assert masks == ["0", ":4@NA"]
+    assert restraints._ligand_atom_masks_from_vac_pdb(
+        vac_pdb, "SOD", "invalid-resid"
+    ) == ["0", ":4@NA"]
 
 
 def test_common_core_boresch_preference_requires_more_than_three_atoms() -> None:
@@ -357,6 +393,57 @@ def test_preferred_l1_triplet_prioritizes_nonterminal_l2_l3() -> None:
     assert selected["names"][1] not in {"C1", "O1", "O2", "O3"}
     assert selected["names"][2] not in {"C1", "O1", "O2", "O3"}
     assert selected["low_degree_l2_l3_count"] == 0
+
+
+def test_preferred_l1_triplet_prioritizes_comfortable_torsion_margin(
+    monkeypatch,
+) -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, 0.0, 0.0)),
+        _FakeAtom("P2", (0.0, 1.0, 0.0)),
+        _FakeAtom("P3", (1.0, 1.0, 0.0)),
+    ]
+    near_endpoint = {
+        "preferred_rank": 0,
+        "names": ["N1", "R1", "R2"],
+        "positions": (
+            np.asarray((0.0, 0.0, 1.0)),
+            np.asarray((1.0, 0.0, 1.0)),
+            np.asarray((1.0, 1.0, 1.0)),
+        ),
+        "score": 10.0,
+        "l2_l3_priority_rank": 0,
+    }
+    comfortable = {
+        "preferred_rank": 0,
+        "names": ["N1", "C1", "C2"],
+        "positions": (
+            np.asarray((0.0, 0.0, 1.0)),
+            np.asarray((2.0, 0.0, 1.0)),
+            np.asarray((2.0, 1.0, 1.0)),
+        ),
+        "score": 0.0,
+        "l2_l3_priority_rank": 1,
+    }
+
+    def _fake_values(_p1, _p2, _p3, _l1, l2, _l3):
+        torsion = 20.0 if float(l2[0]) == 1.0 else 60.0
+        return (90.0, torsion, 90.0, 60.0, 60.0)
+
+    monkeypatch.setattr(
+        restraints,
+        "_boresch_frame_values_from_positions",
+        _fake_values,
+    )
+
+    selected = restraints._best_preferred_l1_triplet_for_receptor_frame(
+        receptor_atoms,
+        [near_endpoint, comfortable],
+    )
+
+    assert selected is not None
+    assert selected["names"] == comfortable["names"]
+    assert selected["margins"][1] >= restraints.BORESCH_PREFERRED_TORSION_MARGIN_DEG
 
 
 def test_preferred_l1_triplet_prioritizes_ring_l2_l3() -> None:

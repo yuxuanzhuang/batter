@@ -49,17 +49,19 @@ receptor anchors heuristically during system preparation:
   real ligand pose as the binding-site reference. It prefers stable non-loop
   receptor Cα atoms near the ligand, keeps P1-P2 and P2-P3 separated by the
   usual BATTER distance guideline, and scores P1 using nearby ligand interaction
-  atoms. With zero or one receptor override, a detected salt bridge can define
-  P1/L1; L2/L3 then prefer ring atoms connected to at least two heavy atoms,
-  followed by other highly connected nonterminal heavy atoms.
+  atoms. During automatic selection, a detected salt bridge can define P1/L1;
+  L2/L3 then prefer ring atoms connected to at least two heavy atoms, atoms with
+  more than two heavy-atom connections, and other nonterminal heavy atoms.
 * For apo-only MD runs, BATTER uses a protein-only heuristic that chooses a
   stable, non-degenerate receptor-anchor triplet without relying on dummy
   ligand coordinates.
 
-If you provide one selection, BATTER treats that atom as P1 and chooses P2/P3
-automatically. Provide three selections only when you need fully manual
-P1/P2/P3 geometry. Resolved
-global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
+One selection is a P1 hint. Two selections are treated as incomplete and only
+the first is retained while BATTER chooses P2/P3 together. Three distinct,
+unambiguous selections define fully manual P1/P2/P3 geometry; invalid or
+ambiguous input warns and falls back to automatic selection. If no triplet meets
+the preferred spacing, compact systems use the best non-collinear frame. The
+resolved global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
 under ``anchors`` and ``anchor_atom_selections``. Prepared-system anchor masks
 used later by equilibration and FE setup are written to each ligand's
 ``equil/anchors.json``.

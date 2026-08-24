@@ -123,19 +123,30 @@ triplet during ``system_prep`` and stores the resolved global selections in
 used by later equilibration/FE setup are also written per ligand to
 ``equil/anchors.json``.
 
+Both an omitted field and ``anchor_atoms: null`` request full automatic
+selection. A scalar selection string is normalized to a one-entry P1 hint, but
+the list form is preferred for clarity.
+
 * For runs with real ligands, the first available real ligand pose drives a
   ligand-guided receptor-anchor heuristic.
 * For apo-only MD, BATTER switches to a protein-only heuristic so dummy ligand
   coordinates do not determine the anchor geometry.
 
-Provide three selections only when you need fully manual P1/P2/P3 geometry. If
-you provide one selection, BATTER treats that atom as P1 and chooses P2/P3
-automatically. When zero or one receptor selection is provided and a charged
-protein-ligand contact is detected, BATTER prefers that salt bridge for P1/L1.
-For L2/L3 it first prefers valid ring atoms connected to at least two heavy
-atoms, then heavier-connected non-ring atoms, and then other nonterminal heavy
-atoms. Receptor P1/P2/P3 candidates are chosen from stable non-loop Cα atoms and
-screened to avoid near-planar Boresch frames.
+Provide three distinct, unambiguous selections only when you need fully manual
+P1/P2/P3 geometry. One selection is a P1 hint and BATTER chooses P2/P3. Two
+entries are treated as incomplete: BATTER keeps the first as the P1 hint and
+chooses P2/P3 together. Invalid or ambiguous selections produce a warning and
+fall back to automatic selection; if more than three are supplied, only the
+first three are considered.
+
+When automatic selection is active and a charged protein-ligand contact is
+detected, BATTER prefers that salt bridge for P1/L1. For L2/L3 it first prefers
+valid ring atoms connected to at least two heavy atoms, then atoms connected to
+more than two heavy atoms, and then other nonterminal heavy atoms. Receptor
+P1/P2/P3 candidates come from stable non-loop Cα atoms and are screened to avoid
+near-linear frames. If the preferred receptor spacing or ligand-anchor distance
+window has no solution, BATTER warns and uses the best compact, non-collinear
+frame instead.
 
 Component-Specific Inputs
 -------------------------
@@ -178,8 +189,9 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
    * - ``anchor_atoms``
      - ``system_prep`` / restraint ops
      - Optional receptor-anchor override. Empty means BATTER selects anchors
-       heuristically; one selection pins P1 and auto-selects P2/P3; three
-       selections provide explicit P1/P2/P3 geometry.
+       heuristically; one selection pins P1 and auto-selects P2/P3; three valid,
+       distinct selections provide explicit P1/P2/P3 geometry. Incomplete or
+       invalid input warns and falls back to automatic selection.
    * - ``lipid_mol``
      - Build/ops helpers
      - Identifies membrane residues when trimming waters.
