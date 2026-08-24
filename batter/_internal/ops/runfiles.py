@@ -9,6 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
+from batter._internal.ops.fe_defaults import DEFAULT_FE_SEED_LAMBDA_STATES
 from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
@@ -103,12 +104,9 @@ def write_fe_run_file(
     hmr = str(ctx.sim.hmr).lower() == "yes"
     n_windows = len(lambdas)
     lambda_string = ' '.join([f"{l:.4f}" for l in lambdas])
-    if comp == "l" or (
-        comp == "d" and getattr(ctx.sim, "fe_type", None) == "uno_rest_diff"
-    ):
-        eq_sim_lambdas = np.asarray(lambdas, dtype=float)
-    else:
-        eq_sim_lambdas = np.linspace(0.0, 1.0, num=5)
+    eq_sim_lambdas = np.linspace(
+        0.0, 1.0, num=DEFAULT_FE_SEED_LAMBDA_STATES
+    )
     lambda_sim_string = ' '.join([f"{l:.4f}" for l in eq_sim_lambdas])
 
     # templates (fail clearly if missing)

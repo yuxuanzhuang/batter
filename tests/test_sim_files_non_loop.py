@@ -33,6 +33,38 @@ sim_files = _load_internal_module("batter._internal.ops.sim_files")
 runfiles = importlib.import_module("batter._internal.ops.runfiles")
 
 
+def test_default_fe_seed_schedule_uses_ten_states(tmp_path: Path) -> None:
+    steps_per_state, n_states, dynlmb, total_steps = (
+        sim_files.build_dyna_steps_run_per_lambda()
+    )
+
+    assert steps_per_state == 10_000
+    assert n_states == 10
+    assert dynlmb == pytest.approx(1.0 / 9.0)
+    assert total_steps == 100_000
+
+    window_dir = tmp_path / "z-1"
+    ctx = SimpleNamespace(
+        window_dir=window_dir,
+        ligand="lig",
+        comp="z",
+        win=-1,
+        sim=SimpleNamespace(hmr="yes", system_name="sys"),
+    )
+    runfiles.write_fe_run_file(ctx, [0.0, 0.5, 1.0])
+
+    run_local = (window_dir / "run-local.bash").read_text()
+    assert (
+        "lambda_eq_list=(0.0000 0.1111 0.2222 0.3333 0.4444 "
+        "0.5556 0.6667 0.7778 0.8889 1.0000)"
+    ) in run_local
+
+
+def test_fe_window_equilibration_defaults_to_fifty_ps() -> None:
+    assert sim_files.fe_window_equil_steps(0.002) == 25_000
+    assert sim_files.fe_window_equil_steps(0.001) == 50_000
+
+
 def test_eqnpt0_uno_template_uses_short_z_seed_equilibration() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     template = repo_root / "batter" / "_internal" / "templates" / "amber_files_orig" / "eqnpt0-uno.in"
@@ -574,6 +606,7 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
         "&cntrl\n"
         "  ntx = 5,\n"
         "  irest = 1,\n"
+        "  nstlim = _num-steps_,\n"
         "  dt = _step_,\n"
         "  nmropt = 1,\n"
         "  restraintmask = ':1',\n"
@@ -598,6 +631,7 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert ":LIG" in mini_text
     assert "@2" not in mini_text
     assert "nmropt = 1" in eq_text
+    assert "nstlim = 50000" in eq_text
     assert "restraintmask = '(@CA | :LIG | :1) & !@H='" in eq_text
     assert "@2" not in eq_text
     assert "restraintmask = '(:1 | @2) & !@H='" in template_text
@@ -684,6 +718,8 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
 
     assert "restraintmask = '((@CA & :1) | :LIG | :1-2 ) & !@H='" in eq_text
     assert "@3" not in eq_text
+    assert "nstlim = 25000" in eq_text
+    assert "ntwx = 25000" in eq_text
 
     assert "restraintmask = ':1-2'," in template_text
     assert "@3" not in template_text
@@ -855,12 +891,12 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
     assert "scmask2=''" in eqnpt_text
     assert "crgmask = ':20'" in eqnpt_text
     assert "gti_bat_sc      = 1" in eqnpt_text
-    assert "nstlim = 30000" in eq_text
-    assert "dynlmb = 0.5" in eq_text
+    assert "nstlim = 100000" in eq_text
+    assert "dynlmb = 0.1111111111111111" in eq_text
     assert "mbar_states = 03" in eq_text
 
 
-def test_abfe_diff_d_run_file_uses_dense_seed_lambda_list(tmp_path: Path) -> None:
+def test_abfe_diff_d_run_file_uses_ten_seed_lambda_states(tmp_path: Path) -> None:
     window_dir = tmp_path / "d-1"
     ctx = SimpleNamespace(
         window_dir=window_dir,
@@ -873,7 +909,10 @@ def test_abfe_diff_d_run_file_uses_dense_seed_lambda_list(tmp_path: Path) -> Non
     runfiles.write_fe_run_file(ctx, [0.0, 0.5, 1.0])
 
     run_local = (window_dir / "run-local.bash").read_text()
-    assert "lambda_eq_list=(0.0000 0.5000 1.0000)" in run_local
+    assert (
+        "lambda_eq_list=(0.0000 0.1111 0.2222 0.3333 0.4444 "
+        "0.5556 0.6667 0.7778 0.8889 1.0000)"
+    ) in run_local
     assert "lambda_set_list=(0.0000 0.5000 1.0000)" in run_local
     assert "RBFE minimization seed" in run_local
     assert "eq_init.rst7" in run_local

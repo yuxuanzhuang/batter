@@ -18,6 +18,11 @@ import shutil
 from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
+from batter._internal.ops.fe_defaults import (
+    DEFAULT_FE_SEED_LAMBDA_STATES,
+    DEFAULT_FE_SEED_STEPS_PER_STATE,
+    fe_window_equil_steps,
+)
 from batter._internal.ops.helpers import format_ranges
 from batter._internal.ops.remd import patch_mdin_file
 
@@ -536,8 +541,11 @@ def _fe_ntwprt_atom_count(window_dir: Path, all_atoms: str) -> int:
     return vac_atoms
 
 
-def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 10000, n_lambdas = 5):
-    dynlmb = 1 / (n_lambdas-1)
+def build_dyna_steps_run_per_lambda(
+    n_steps_run_per_lambda: int = DEFAULT_FE_SEED_STEPS_PER_STATE,
+    n_lambdas: int = DEFAULT_FE_SEED_LAMBDA_STATES,
+):
+    dynlmb = 1 / (n_lambdas - 1)
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
@@ -971,13 +979,11 @@ def _sim_files_d_sdr_charge_transfer(
         )
 
     n_steps_run_per_lambda, _n_lambdas, dynlmb, n_steps_run = (
-        build_dyna_steps_run_per_lambda(
-            n_lambdas=len(lambdas) if len(lambdas) > 1 else 5
-        )
+        build_dyna_steps_run_per_lambda()
     )
     if win != -1:
-        n_steps_run = 10000
-        n_steps_run_per_lambda = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     eq_path = windows_dir / "eq.in"
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
@@ -1249,8 +1255,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # it will gradually increase lambda value
         n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
         if win != -1:
-            n_steps_run = 10000
-            n_steps_run_per_lambda = 10000
+            n_steps_run = fe_window_equil_steps(0.002)
+            n_steps_run_per_lambda = n_steps_run
         out_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -1400,7 +1406,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        n_steps_run = 20000
+        n_steps_run = fe_window_equil_steps(0.002)
         eq_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
@@ -1724,13 +1730,12 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         },
     )
 
-    n_lambdas = max(2, len(lambdas))
-    n_steps_run_per_lambda, _, _, n_steps_run = build_dyna_steps_run_per_lambda(
-        n_lambdas=n_lambdas
+    n_steps_run_per_lambda, _, _, n_steps_run = (
+        build_dyna_steps_run_per_lambda()
     )
     if win != -1:
-        n_steps_run_per_lambda = 10000
-        n_steps_run = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     _write_l_mdin_from_equil_template(
         src=amber_dir / "mdin-equil",
@@ -1929,8 +1934,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     eq_path = windows_dir / "eq.in"
     n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
     if win != -1:
-        n_steps_run = 10000
-        n_steps_run_per_lambda = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -2219,7 +2224,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", "5000")
+                .replace("_num-steps_", str(fe_window_equil_steps(0.001)))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2355,7 +2360,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", "5000")
+                .replace("_num-steps_", str(fe_window_equil_steps(0.001)))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
