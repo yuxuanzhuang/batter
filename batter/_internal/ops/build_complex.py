@@ -2259,7 +2259,7 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
 
 
 _STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 9
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 10
 
 
 def _user_anchor_triplet_was_provided(extra: dict | None) -> bool:

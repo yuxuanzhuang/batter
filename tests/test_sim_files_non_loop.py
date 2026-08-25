@@ -63,6 +63,42 @@ def test_default_fe_seed_schedule_uses_ten_states(tmp_path: Path) -> None:
 def test_fe_window_equilibration_defaults_to_fifty_ps() -> None:
     assert sim_files.fe_window_equil_steps(0.002) == 25_000
     assert sim_files.fe_window_equil_steps(0.001) == 50_000
+    assert sim_files.DEFAULT_FE_HANDOFF_RESTRAINT_START == pytest.approx(1.0)
+    assert sim_files.DEFAULT_FE_HANDOFF_RESTRAINT_END == pytest.approx(0.0)
+    assert sim_files.DEFAULT_FE_HANDOFF_STAGES == 5
+
+
+def _assert_fe_handoff(window_dir: Path, *, steps: int, dum_weight: float) -> None:
+    paths = sorted(window_dir.glob("eq-handoff-[0-9][0-9].in")) + [
+        window_dir / "eq.in"
+    ]
+    assert len(paths) == 5
+    expected_weights = [1.0, 0.75, 0.5, 0.25, 0.0]
+    observed_steps = 0
+    for index, (path, weight) in enumerate(zip(paths, expected_weights)):
+        text = path.read_text()
+        assert f"FE target-window handoff stage {index + 1}/5" in text
+        assert "  ntr = 1," in text
+        assert "  nmropt = 1," in text
+        assert "restraintmask" not in text
+        assert "type='REST'" not in text
+        assert "FE constant DUM positional restraint" in text
+        assert f"\n{dum_weight:g}\nATOM 1 2\nEND\n" in text
+        if weight > 0:
+            assert "FE ligand anchor/common-core handoff positional restraint" in text
+        else:
+            assert "FE ligand anchor/common-core handoff positional restraint" not in text
+        nstlim = re.search(r"\bnstlim\s*=\s*(\d+)", text)
+        assert nstlim is not None
+        observed_steps += int(nstlim.group(1))
+    assert observed_steps == steps
+
+    metadata = json.loads((window_dir / "eq-handoff.json").read_text())
+    assert metadata["total_steps"] == steps
+    assert metadata["dum_atom_indices"] == [1, 2]
+    assert [stage["ligand_weight"] for stage in metadata["stages"]] == pytest.approx(
+        expected_weights
+    )
 
 
 def test_eqnpt0_uno_template_uses_short_z_seed_equilibration() -> None:
@@ -335,6 +371,151 @@ def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
     )
 
 
+def test_apply_fe_handoff_replaces_existing_restraint_schedule(
+    tmp_path: Path,
+) -> None:
+    mdin = tmp_path / "eq.in"
+    (tmp_path / "vac.pdb").write_text(
+        "HETATM    1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    3  N1  LIG A   3       2.000   0.000   0.000  1.00  0.00           N\n"
+        "HETATM    4  C2  LIG A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    5  C3  LIG A   3       4.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    mdin.write_text(
+        "&cntrl\n"
+        "  nmropt = 0,\n"
+        "  ntr = 0,\n"
+        "  restraint_wt = 50,\n"
+        "  restraintmask = ':1-2',\n"
+        "/\n"
+        " &wt type='REST', istep1=0, istep2=100, value1=50, value2=5, /\n"
+        " &wt type='DUMPFREQ', istep1=250, /\n"
+        " &wt type='END', /\n"
+        "DISANG=disang.rest\n"
+    )
+
+    sim_files._apply_fe_handoff_restraint(
+        mdin,
+        restraint_mask="(:3@N1 | :3@C2 | :3@C3) & !@H=",
+        total_steps=25_000,
+    )
+
+    text = mdin.read_text()
+    _assert_fe_handoff(tmp_path, steps=25_000, dum_weight=50.0)
+    assert "restraintmask" not in text
+    assert "value1=50" not in text
+    assert "type='REST'" not in text
+
+
+def test_fe_handoff_schedule_survives_legacy_group_conversion(
+    tmp_path: Path,
+) -> None:
+    topology = tmp_path / "vac.pdb"
+    topology.write_text(
+        "HETATM    1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    mdin = tmp_path / "eq.in"
+    mdin.write_text("&cntrl\n/\n &wt type='END', /\n")
+
+    sim_files._apply_fe_handoff_restraint(
+        mdin,
+        restraint_mask="@3",
+        total_steps=25_000,
+    )
+    before = mdin.read_text()
+    sim_files._apply_restraintmask_length_limit(mdin, topology)
+
+    text = mdin.read_text()
+    _assert_fe_handoff(tmp_path, steps=25_000, dum_weight=10.0)
+    assert text == before
+    assert "restraintmask =" not in text
+    assert "FE constant DUM positional restraint\n10\nATOM 1 2\nEND\nEND\n" in text
+
+
+def test_ligand_handoff_prefers_persisted_boresch_anchor_names(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "disang.rest").write_text(
+        "# Anchor atoms :1@CA :2@CA :3@CA :10@N1 :10@C2 :10@C3 comp=z\n"
+    )
+
+    mask = sim_files._ligand_handoff_restraint_mask(
+        window_dir=tmp_path,
+        vac_pdb=tmp_path / "missing.pdb",
+        ligand_resids=(10, 20),
+    )
+
+    assert mask == (
+        "(:10@N1 | :10@C2 | :10@C3 | :20@N1 | :20@C2 | :20@C3) & !@H="
+    )
+
+
+def test_septop_handoff_requires_four_mapped_atoms_before_using_core(
+    tmp_path: Path,
+) -> None:
+    window_dir = tmp_path / "x00"
+    seed_dir = tmp_path / "x-1"
+    window_dir.mkdir()
+    seed_dir.mkdir()
+    guard = {
+        "endpoints": {
+            "ref": {
+                "final": {
+                    "L1": {"resolved": True, "name": "N1"},
+                    "L2": {"resolved": True, "name": "C2"},
+                    "L3": {"resolved": True, "name": "C3"},
+                }
+            },
+            "alt": {
+                "final": {
+                    "L1": {"resolved": True, "name": "N4"},
+                    "L2": {"resolved": True, "name": "C5"},
+                    "L3": {"resolved": True, "name": "C6"},
+                }
+            },
+        }
+    }
+    (seed_dir / "boresch_anchor_guard.json").write_text(json.dumps(guard))
+    low_mapping = {
+        "scmk1_cc_site_indices": [10, 11, 12],
+        "scmk1_cc_solvent_indices": [20, 21, 22],
+        "scmk2_cc_site_indices": [30, 31, 32],
+        "scmk2_cc_solvent_indices": [40, 41, 42],
+    }
+
+    anchor_mask = sim_files._rbfe_handoff_restraint_mask(
+        window_dir=window_dir,
+        vac_pdb=tmp_path / "missing.pdb",
+        scmask=low_mapping,
+        ref_resid=5,
+        septop=True,
+    )
+    core_mask = sim_files._rbfe_handoff_restraint_mask(
+        window_dir=window_dir,
+        vac_pdb=tmp_path / "missing.pdb",
+        scmask={
+            **low_mapping,
+            "scmk1_cc_site_indices": [10, 11, 12, 13],
+            "scmk1_cc_solvent_indices": [20, 21, 22, 23],
+            "scmk2_cc_site_indices": [30, 31, 32, 33],
+            "scmk2_cc_solvent_indices": [40, 41, 42, 43],
+        },
+        ref_resid=5,
+        septop=True,
+    )
+
+    assert anchor_mask == (
+        "(:5@N1 | :5@C2 | :5@C3 | :6@N1 | :6@C2 | :6@C3 | "
+        ":7@N4 | :7@C5 | :7@C6 | :8@N4 | :8@C5 | :8@C6) & !@H="
+    )
+    assert core_mask == "(@10-13,20-23,30-33,40-43) & !@H="
+
+
 def test_component_l_cmass_dumpfreq_is_capped() -> None:
     assert sim_files._component_l_cmass_dumpfreq(25000) == 1000
     assert sim_files._component_l_cmass_dumpfreq(500) == 500
@@ -588,8 +769,9 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
 
     (windows_dir / "vac.pdb").write_text(
         "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
-        "ATOM      2  C1  LIG A   2       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C2  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   3       3.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
 
@@ -631,10 +813,11 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert ":LIG" in mini_text
     assert "@2" not in mini_text
     assert "nmropt = 1" in eq_text
-    assert "nstlim = 50000" in eq_text
-    assert "restraintmask = '(@CA | :LIG | :1) & !@H='" in eq_text
-    assert "@2" not in eq_text
-    assert "restraintmask = '(:1 | @2) & !@H='" in template_text
+    assert "nstlim = 10000" in eq_text
+    assert "restraintmask" not in eq_text
+    assert "@CA" not in eq_text
+    _assert_fe_handoff(windows_dir, steps=50_000, dum_weight=10.0)
+    assert "restraintmask = '(:1 | @3) & !@H='" in template_text
     assert "nmropt = 0" in template_text
 
 
@@ -647,20 +830,24 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     amber_dir.mkdir(parents=True)
 
     (windows_dir / "vac.pdb").write_text(
-        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C1  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C1  LIG A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C2  LIG A   4       5.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
     (windows_dir / "full.pdb").write_text(
-        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C1  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      5 Na+  Na+ A   3       4.000   0.000   0.000  1.00  0.00          NA\n"
-        "ATOM      6 Cl-  Cl- A   4       5.000   0.000   0.000  1.00  0.00          CL\n"
-        "ATOM      7  O   WAT A   5       6.000   0.000   0.000  1.00  0.00           O\n"
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C1  LIG A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C2  LIG A   4       5.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      7 Na+  Na+ A   5       6.000   0.000   0.000  1.00  0.00          NA\n"
+        "ATOM      8 Cl-  Cl- A   6       7.000   0.000   0.000  1.00  0.00          CL\n"
+        "ATOM      9  O   WAT A   7       8.000   0.000   0.000  1.00  0.00           O\n"
         "END\n"
     )
     (amber_dir / "mdin-unorest").write_text(
@@ -716,24 +903,25 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     template_text = (windows_dir / "mdin-template").read_text()
     mini_text = (windows_dir / "mini.in").read_text()
 
-    assert "restraintmask = '((@CA & :1) | :LIG | :1-2 ) & !@H='" in eq_text
-    assert "@3" not in eq_text
-    assert "nstlim = 25000" in eq_text
-    assert "ntwx = 25000" in eq_text
+    assert "restraintmask" not in eq_text
+    assert "@CA" not in eq_text
+    assert "nstlim = 5000" in eq_text
+    assert "ntwx = 5000" in eq_text
+    _assert_fe_handoff(windows_dir, steps=25_000, dum_weight=10.0)
 
     assert "restraintmask = ':1-2'," in template_text
-    assert "@3" not in template_text
-    assert "ntwprt = 6" in template_text
+    assert "@5" not in template_text
+    assert "ntwprt = 8" in template_text
     assert "  mcwat = 1,\n" in template_text
     assert "  nmd = 1000,\n" in template_text
     assert "  nmc = 1000,\n" in template_text
-    assert "  mcwatmask = \":1\",\n" in template_text
+    assert "  mcwatmask = \":3\",\n" in template_text
     assert "  mcligshift = 15,\n" in template_text
     assert "  mcwatretry = 3000,\n" in template_text
     assert "  mcresstr = \"WAT\",\n" in template_text
 
     assert ":LIG" in mini_text
-    assert "@3" not in mini_text
+    assert "@5" not in mini_text
 
 
 def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
@@ -894,6 +1082,8 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
     assert "nstlim = 100000" in eq_text
     assert "dynlmb = 0.1111111111111111" in eq_text
     assert "mbar_states = 03" in eq_text
+    assert "FE target-window handoff" not in eq_text
+    assert "type='REST'" not in eq_text
 
 
 def test_abfe_diff_d_run_file_uses_ten_seed_lambda_states(tmp_path: Path) -> None:
@@ -950,35 +1140,39 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     )
     (equil_dir / "scmask.json").write_text(
         json.dumps(
-            {
-                "scmk1_all_indices": [10, 11, 12],
-                "scmk1_cc_solvent_indices": [10],
-                "scmk1_cc_site_indices": [11],
-                "scmk2_all_indices": [20, 21, 22],
-                "scmk2_cc_solvent_indices": [20],
-                "scmk2_cc_site_indices": [21],
+                {
+                    "scmk1_all_indices": [3, 4, 5],
+                    "scmk1_cc_solvent_indices": [3],
+                    "scmk1_cc_site_indices": [4],
+                    "scmk2_all_indices": [6, 7, 8],
+                    "scmk2_cc_solvent_indices": [6],
+                    "scmk2_cc_site_indices": [7],
             }
         )
     )
     (windows_dir / "vac.pdb").write_text(
-        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C2  REF A   2       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C1  ALT A   3       3.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      5  C3  ALT A   4       4.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      6  C4  ALT A   4       5.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  REF A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  REF A   4       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C2  REF A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C1  ALT A   5       5.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      7  C3  ALT A   6       6.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      8  C4  ALT A   6       7.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
     (windows_dir / "full.pdb").write_text(
-        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C2  REF A   2       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C1  ALT A   3       3.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      5  C3  ALT A   4       4.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      6  C4  ALT A   4       5.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      7 Na+  Na+ A   5       6.000   0.000   0.000  1.00  0.00          NA\n"
-        "ATOM      8 Cl-  Cl- A   6       7.000   0.000   0.000  1.00  0.00          CL\n"
-        "ATOM      9  O   WAT A   7       8.000   0.000   0.000  1.00  0.00           O\n"
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  REF A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  REF A   4       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C2  REF A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C1  ALT A   5       5.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      7  C3  ALT A   6       6.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      8  C4  ALT A   6       7.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      9 Na+  Na+ A   7       8.000   0.000   0.000  1.00  0.00          NA\n"
+        "ATOM     10 Cl-  Cl- A   8       9.000   0.000   0.000  1.00  0.00          CL\n"
+        "ATOM     11  O   WAT A   9      10.000   0.000   0.000  1.00  0.00           O\n"
         "END\n"
     )
     (amber_dir / "mdin-ex").write_text(
@@ -1026,24 +1220,25 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_text = (windows_dir / "mini.in").read_text()
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
-    assert "((@CA & :1) | (@10-11,20-21) | :1-2 ) & !@H=" in eq_text
+    assert "restraintmask" not in eq_text
+    assert "@CA" not in eq_text
     assert "nmropt = 1" in eq_text
-    assert re.search(r"\|\s*@10\s*\|", eq_text) is None
+    _assert_fe_handoff(windows_dir, steps=25_000, dum_weight=5.0)
 
-    assert "(:1-2 | @10 | @20) & !@H=" in template_text
-    assert "ntwprt = 8" in template_text
+    assert "(:1-2 | @3 | @6) & !@H=" in template_text
+    assert "ntwprt = 10" in template_text
 
     assert ":REF" in mini_text
     assert ":ALT" in mini_text
     assert "  ntf = 1," in mini_text
     assert "  ntc = 2," in mini_text
-    assert re.search(r"\|\s*@10\s*\|", mini_text) is None
+    assert re.search(r"\|\s*@3\s*\|", mini_text) is None
 
     assert ":REF" in mini_eq_text
     assert ":ALT" in mini_eq_text
     assert "  ntf = 2," in mini_eq_text
     assert "  ntc = 2," in mini_eq_text
-    assert re.search(r"\|\s*@10\s*\|", mini_eq_text) is None
+    assert re.search(r"\|\s*@3\s*\|", mini_eq_text) is None
 
 
 def test_sim_files_x_septop_enables_lambda_dependent_boresch(
@@ -1072,10 +1267,12 @@ def test_sim_files_x_septop_enables_lambda_dependent_boresch(
         )
     )
     (windows_dir / "vac.pdb").write_text(
-        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      3  C1  ALT A   3       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C1  ALT A   4       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      3  C1  REF A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  REF A   4       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C1  ALT A   5       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C1  ALT A   6       5.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
     (amber_dir / "mdin-ex").write_text(
@@ -1143,8 +1340,10 @@ def test_sim_files_x_septop_enables_lambda_dependent_boresch(
     assert "scmask2='@20-22'" in eq_text
     assert "scmask1='@10-12'" in template_text
     assert "scmask2='@20-22'" in template_text
-    assert "((@CA & :1) | (:1,2,3,4) | :1-2 ) & !@H=" in eq_text
-    assert "(:1-2 | @4 | @2) & !@H=" in template_text
+    assert "restraintmask" not in eq_text
+    assert "@CA" not in eq_text
+    _assert_fe_handoff(windows_dir, steps=25_000, dum_weight=5.0)
+    assert "(:1-2 | @6 | @4) & !@H=" in template_text
     assert (windows_dir / "lambda.sch").read_text() == (
         "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
     )

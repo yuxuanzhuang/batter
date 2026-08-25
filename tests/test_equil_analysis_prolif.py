@@ -553,6 +553,138 @@ def test_stable_boresch_distance_uses_preference_universe_for_salt_bridge(
     assert stable["salt_bridge_preference"]["protein_residue_ids"] == [86]
 
 
+def _write_dssp_tier_test_system(
+    tmp_path: Path,
+    *,
+    non_loop_candidate_in_distance_window: bool,
+):
+    protein_x = [30.0, 30.0, 0.0, 20.0, 25.0, 30.0, 30.0, 30.0]
+    if not non_loop_candidate_in_distance_window:
+        protein_x[2] = 30.0
+    pdb = tmp_path / "dssp_tier.pdb"
+    lines = [
+        _atom_line(
+            index + 1,
+            "CA",
+            "ALA",
+            "A",
+            resid,
+            protein_x[index],
+            0.0,
+            0.0,
+            "C",
+        )
+        for index, resid in enumerate(range(10, 18))
+    ]
+    lines.extend(
+        [
+            _atom_line(9, "CA", "VAL", "A", 93, 1.0, 0.0, 0.0, "C"),
+            _atom_line(10, "N3", "LIG", "L", 300, 5.0, 0.0, 0.0, "N"),
+            "TER\n",
+            "END\n",
+        ]
+    )
+    pdb.write_text("".join(lines))
+    all_ligands = tmp_path / "all-ligands"
+    all_ligands.mkdir()
+    (all_ligands / "manifest.json").write_text(
+        json.dumps({"dssp": {"results": [[*(["H"] * 8), "-"]]}}) + "\n"
+    )
+    return mda.Universe(str(pdb))
+
+
+def _loop_hbond_prolif_record() -> dict:
+    return {
+        "usable": True,
+        "occupancy_threshold": 0.3,
+        "persistent_protein_residues": [
+            {
+                "resid": 93,
+                "resname": "VAL",
+                "max_occupancy": 1.0,
+                "interactions": [
+                    {
+                        "interaction": "HBDonor",
+                        "occupancy": 1.0,
+                        "ligand_atom_names": ["N3"],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_stable_boresch_distance_filters_loop_interaction_before_all_non_loop_ca(
+    tmp_path: Path,
+) -> None:
+    universe = _write_dssp_tier_test_system(
+        tmp_path,
+        non_loop_candidate_in_distance_window=True,
+    )
+
+    stable = _write_stable_boresch_distance(
+        stable_path=tmp_path / "stable_boresch_distance.json",
+        system_root=tmp_path,
+        sim=SimpleNamespace(min_adis=3.0, max_adis=7.0),
+        sim_val=_stable_distance_validator(
+            universe=universe,
+            residue_name="LIG",
+            directory=tmp_path,
+            protein_anchor_masks=[],
+        ),
+        ligand_label="pose",
+        residue_name="LIG",
+        universe=universe,
+        tail_fraction=1.0,
+        mode="test",
+        prolif_record=_loop_hbond_prolif_record(),
+    )
+
+    assert stable["protein"]["resid"] == 12
+    preference = stable["protein_candidate_preference"]
+    assert preference["selected_tier"] == "dssp_non_loop_all_ca"
+    assert preference["loop_fallback_used"] is False
+    assert stable["prolif_preference"][
+        "excluded_from_non_loop_persistent_residue_ids"
+    ] == [93]
+    assert stable["prolif_preference"]["ligand_atom_names"] == []
+
+
+def test_stable_boresch_distance_uses_loop_interaction_only_as_fallback(
+    tmp_path: Path,
+) -> None:
+    universe = _write_dssp_tier_test_system(
+        tmp_path,
+        non_loop_candidate_in_distance_window=False,
+    )
+
+    stable = _write_stable_boresch_distance(
+        stable_path=tmp_path / "stable_boresch_distance.json",
+        system_root=tmp_path,
+        sim=SimpleNamespace(min_adis=3.0, max_adis=7.0),
+        sim_val=_stable_distance_validator(
+            universe=universe,
+            residue_name="LIG",
+            directory=tmp_path,
+            protein_anchor_masks=[],
+        ),
+        ligand_label="pose",
+        residue_name="LIG",
+        universe=universe,
+        tail_fraction=1.0,
+        mode="test",
+        prolif_record=_loop_hbond_prolif_record(),
+    )
+
+    assert stable["protein"]["resid"] == 93
+    preference = stable["protein_candidate_preference"]
+    assert preference["selected_tier"] == "loop_interactions_fallback"
+    assert preference["loop_fallback_used"] is True
+    assert preference["attempts"][1]["tier"] == "dssp_non_loop_all_ca"
+    assert preference["attempts"][1]["status"] == "failed"
+    assert stable["prolif_preference"]["ligand_atom_names"] == ["N3"]
+
+
 def test_prolif_artifact_writer_saves_timeseries_and_pngs(tmp_path: Path) -> None:
     columns = pd.MultiIndex.from_tuples(
         [

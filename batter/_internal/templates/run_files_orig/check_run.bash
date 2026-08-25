@@ -890,11 +890,19 @@ check_sim_failure() {
     }
 
     dt_reduction_template_for_failure() {
+        local handoff_input
+        if [[ "$rst_file" == eq-handoff-*.rst7 ]]; then
+            handoff_input="${rst_file%.rst7}.in"
+            if [[ -f "$handoff_input" ]]; then
+                printf '%s\n' "$handoff_input"
+                return
+            fi
+        fi
         if [[ "$rst_file" == "eq.rst7" && -f eq.in ]]; then
             printf '%s\n' "eq.in"
-        else
-            printf '%s\n' "mdin-template"
+            return
         fi
+        printf '%s\n' "mdin-template"
     }
 
     reduce_dt_for_failed_stage() {
@@ -1006,6 +1014,57 @@ check_sim_failure() {
     fi
 
     echo "[INFO] $stage completed successfully at $(date)"
+}
+
+run_fe_window_equilibration() {
+    local stage=$1
+    local initial_restart=$2
+    local topology=$3
+    local current_restart=$initial_restart
+    local input stem
+    local -a handoff_inputs=()
+    local -a handoff_trajectories=()
+
+    shopt -s nullglob
+    handoff_inputs=(eq-handoff-[0-9][0-9].in)
+    shopt -u nullglob
+
+    if (( ${#handoff_inputs[@]} == 0 )); then
+        print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $initial_restart -o eq.out -r eq.rst7 -x eq.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+        check_sim_failure "$stage" "$log_file" eq.rst7
+        return 0
+    fi
+
+    rm -f eq-handoff-[0-9][0-9].out eq-handoff-[0-9][0-9].rst7 \
+        eq-handoff-[0-9][0-9].nc eq-final.nc eq.nc eq.out
+    for input in "${handoff_inputs[@]}"; do
+        stem=${input%.in}
+        print_and_run "$PMEMD_EXEC -O -i $input -p $topology -c $current_restart -o ${stem}.out -r ${stem}.rst7 -x ${stem}.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+        check_sim_failure "$stage ($stem)" "$log_file" "${stem}.rst7"
+        current_restart="${stem}.rst7"
+        handoff_trajectories+=("${stem}.nc")
+    done
+
+    print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $current_restart -o eq.out -r eq.rst7 -x eq-final.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+    check_sim_failure "$stage (final)" "$log_file" eq.rst7
+
+    {
+        printf 'parm %s\n' "$topology"
+        for input in "${handoff_trajectories[@]}"; do
+            printf 'trajin %s\n' "$input"
+        done
+        printf 'trajin eq-final.nc\n'
+        printf 'trajout eq.nc netcdf\n'
+        printf 'run\n'
+    } > eq-trajectory-combine.cpptraj
+    print_and_run "$CPPTRAJ_EXEC -i eq-trajectory-combine.cpptraj >> \"$log_file\" 2>&1"
+    if [[ ${SIM_COMMAND_STATUS:-0} -ne 0 || ! -s eq.nc ]]; then
+        echo "[ERROR] $stage failed while assembling the staged EQ trajectory."
+        write_attempt_failed_marker
+        return 1
+    fi
+    SIM_COMMAND_STATUS=0
+    return 0
 }
 
 check_min_energy() {

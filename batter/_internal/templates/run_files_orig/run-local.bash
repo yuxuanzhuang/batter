@@ -325,8 +325,10 @@ EOF
             require_nonempty_file_or_attempt_fail "eq.in" "[ERROR] Missing eq.in; cannot run window equilibration for window $i."
             rm -f FAILED ATTEMPT_FAILED
             archive_existing_log_file "$log_file"
-            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
-            check_sim_failure "Window equilibration for window $i" "$log_file" eq.rst7
+            run_fe_window_equilibration \
+                "Window equilibration for window $i" \
+                "eq_init.rst7" \
+                "$PRMTOP_MERGED" || exit 1
             cd "$seed_dir" || exit 1
         done
     fi

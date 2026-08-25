@@ -79,8 +79,8 @@ fe_sim:
   # the ligand can drift away from the binding site.
   # if it unbounds when it exceeds UNBOUND_DIST
   eq_steps: 1000000
-  # running 4 ns for production in each window
-  z_n_steps: 1000000
+  # running 10 ns for production in each window
+  z_n_steps: 2500000
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -93,7 +93,7 @@ fe_sim:
   buffer_z: 10.0
   # simulation temperature in Kelvin
   temperature: 298.15
-  # analysis only start from 100000 steps
-  analysis_start_step: 100000
+  # analysis starts after the first 1 ns (250000 steps at 4 fs)
+  analysis_start_step: 250000
   # MBAR analysis blocks
   blocks: 5

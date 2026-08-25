@@ -825,7 +825,7 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
     assert "iat=-1,-1," in text
     assert "fxyz=" not in text
     assert "outxyz=" not in text
-    assert "r1=-999.0, r2=-3.0, r3=3.0, r4=999.0," in text
+    assert "r1=-999.0, r2=0.0, r3=0.0, r4=999.0," in text
     assert "rk2=10.0, rk3=10.0," in text
     assert "igr1=2,0," in text
     assert "igr2=4,0," in text

@@ -26,6 +26,126 @@ def _restart_time(path: Path) -> str:
     return path.read_text().splitlines()[1].split()[1]
 
 
+def test_fe_window_equilibration_chains_handoff_stages(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    (tmp_path / "check_run.bash").write_text(check_run.read_text())
+    for index in range(4):
+        (tmp_path / f"eq-handoff-{index:02d}.in").write_text("staged EQ\n")
+    (tmp_path / "eq.in").write_text("final EQ\n")
+    (tmp_path / "eq_init.rst7").write_text(_restart_text("0.0"))
+    (tmp_path / "full_merged.prmtop").write_text("topology\n")
+
+    pmemd_calls = tmp_path / "pmemd-calls.txt"
+    pmemd = tmp_path / "pmemd-stub"
+    _write_stub_exe(
+        pmemd,
+        """#!/usr/bin/env bash
+input=""
+restart=""
+output=""
+result=""
+trajectory=""
+reference=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i) shift; input="$1" ;;
+    -c) shift; restart="$1" ;;
+    -o) shift; output="$1" ;;
+    -r) shift; result="$1" ;;
+    -x) shift; trajectory="$1" ;;
+    -ref) shift; reference="$1" ;;
+  esac
+  shift
+done
+printf '%s|%s|%s|%s|%s|%s\n' \
+  "$input" "$restart" "$output" "$result" "$trajectory" "$reference" \
+  >> "$PMEMD_CALLS"
+printf 'Amber 24 PMEMD\nTotal wall time\n' > "$output"
+printf 'Stub Amber restart\n1  10.0\n  0.0  0.0  0.0\n' > "$result"
+printf 'trajectory\n' > "$trajectory"
+""",
+    )
+    cpptraj = tmp_path / "cpptraj-stub"
+    _write_stub_exe(
+        cpptraj,
+        """#!/usr/bin/env bash
+input=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i) shift; input="$1" ;;
+  esac
+  shift
+done
+output=$(awk '$1 == "trajout" { print $2; exit }' "$input")
+printf 'combined trajectory\n' > "$output"
+""",
+    )
+    runner = tmp_path / "run-handoff-test.bash"
+    runner.write_text(
+        """#!/usr/bin/env bash
+set -e
+log_file=run.log
+RETRY=0
+source ./check_run.bash
+print_and_run() {
+  eval "$@"
+  SIM_COMMAND_STATUS=$?
+  return 0
+}
+run_fe_window_equilibration \
+  "target-window EQ" eq_init.rst7 full_merged.prmtop
+"""
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "PMEMD_EXEC": str(pmemd),
+            "CPPTRAJ_EXEC": str(cpptraj),
+            "PMEMD_CALLS": str(pmemd_calls),
+        }
+    )
+    subprocess.run(
+        ["bash", runner.name],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = [line.split("|") for line in pmemd_calls.read_text().splitlines()]
+    assert [call[0] for call in calls] == [
+        "eq-handoff-00.in",
+        "eq-handoff-01.in",
+        "eq-handoff-02.in",
+        "eq-handoff-03.in",
+        "eq.in",
+    ]
+    assert [call[1] for call in calls] == [
+        "eq_init.rst7",
+        "eq-handoff-00.rst7",
+        "eq-handoff-01.rst7",
+        "eq-handoff-02.rst7",
+        "eq-handoff-03.rst7",
+    ]
+    assert {call[5] for call in calls} == {"eq_init.rst7"}
+    assert calls[-1][3:5] == ["eq.rst7", "eq-final.nc"]
+    assert (tmp_path / "eq.rst7").is_file()
+    assert (tmp_path / "eq.nc").read_text() == "combined trajectory\n"
+    combine_input = (tmp_path / "eq-trajectory-combine.cpptraj").read_text()
+    assert combine_input.count("trajin eq-handoff-") == 4
+    assert "trajin eq-final.nc" in combine_input
+
+
 def test_production_md_uses_expected_reference_restart() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     template_dir = repo_root / "batter" / "_internal" / "templates" / "run_files_orig"

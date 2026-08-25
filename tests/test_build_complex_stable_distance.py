@@ -279,6 +279,12 @@ def test_stable_boresch_loader_ignores_stale_and_unusable_records(
     assert _load_stable_boresch_distance(equil_dir) is None
 
     stable_path.write_text(
+        json.dumps({"schema_version": STABLE_BORESCH_DISTANCE_SCHEMA_VERSION - 1})
+        + "\n"
+    )
+    assert _load_stable_boresch_distance(equil_dir) is None
+
+    stable_path.write_text(
         json.dumps({"schema_version": 4, "usable": False, "reason": "no pair"})
         + "\n"
     )

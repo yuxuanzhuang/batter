@@ -49,8 +49,9 @@ def test_abfe_window_equilibration_runs_window_eq_in() -> None:
 
     assert 'init_dst="${win_folder}/eq_init.rst7"' in text
     assert 'final_dst="${win_folder}/eq.rst7"' in text
-    assert "-i eq.in -p $PRMTOP_MERGED -c eq_init.rst7" in text
-    assert "-o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7" in text
+    assert "run_fe_window_equilibration" in text
+    assert '"eq_init.rst7"' in text
+    assert '"$PRMTOP_MERGED"' in text
 
 
 def test_check_min_energy_prefers_eamber():

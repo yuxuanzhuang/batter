@@ -51,6 +51,9 @@ PROLIF_HBOND_INTERACTIONS = frozenset(
         "hbonddonor",
     }
 )
+STABLE_ANCHOR_DSSP_CODES = frozenset({"H", "E"})
+STABLE_ANCHOR_DSSP_MIN_STRUCTURE_SIZE = 6
+STABLE_ANCHOR_DSSP_TRIM_STRUCTURE_ENDS = 2
 SALT_BRIDGE_DISTANCE_CUTOFF = 4.0
 PROTEIN_POSITIVE_ATOMS = frozenset(
     {
@@ -308,6 +311,162 @@ def _dedupe_preserve_order(values: Sequence[Any]) -> list[str]:
         seen.add(item)
         out.append(item)
     return out
+
+
+def _dedupe_ints(values: Sequence[Any]) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        item = _int_or_none(value)
+        if item is None or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _load_system_prep_dssp(
+    system_root: Path,
+) -> tuple[Any | None, dict[str, Any]]:
+    """Load the nearest system-prep DSSP record for anchor candidate filtering."""
+    system_root = Path(system_root).resolve()
+    manifest_path = None
+    for root in (system_root, *system_root.parents):
+        candidate = root / "all-ligands" / "manifest.json"
+        if candidate.is_file():
+            manifest_path = candidate
+            break
+
+    metadata: dict[str, Any] = {
+        "available": False,
+        "manifest": str(manifest_path) if manifest_path is not None else None,
+        "source": None,
+        "reason": None,
+    }
+    if manifest_path is None:
+        metadata["reason"] = "No system-prep all-ligands/manifest.json was found."
+        return None, metadata
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        metadata["reason"] = f"Could not read {manifest_path}: {exc}"
+        return None, metadata
+
+    dssp_info = manifest.get("dssp") if isinstance(manifest, dict) else None
+    if not isinstance(dssp_info, dict):
+        metadata["reason"] = "System-prep manifest does not contain DSSP data."
+        return None, metadata
+
+    dssp_results = dssp_info.get("results")
+    if dssp_results is not None and np.asarray(dssp_results).size:
+        metadata.update(
+            available=True,
+            source="manifest.dssp.results",
+        )
+        return dssp_results, metadata
+
+    dssp_paths: list[Path] = []
+    configured_json = dssp_info.get("json")
+    if configured_json:
+        configured_path = Path(str(configured_json)).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = manifest_path.parent / configured_path
+        dssp_paths.append(configured_path)
+    dssp_paths.append(manifest_path.parent / "protein_input_dssp.json")
+
+    for dssp_path in dssp_paths:
+        if not dssp_path.is_file():
+            continue
+        try:
+            dssp_results = json.loads(dssp_path.read_text())
+        except Exception:
+            continue
+        if np.asarray(dssp_results).size:
+            metadata.update(
+                available=True,
+                source=str(dssp_path),
+            )
+            return dssp_results, metadata
+
+    metadata["reason"] = "System-prep DSSP results are missing or empty."
+    return None, metadata
+
+
+def _stable_dssp_residue_filter(
+    *,
+    system_root: Path,
+    universe: mda.Universe,
+) -> dict[str, Any]:
+    """Resolve the same internal helix/sheet C-alpha tier used by system prep."""
+    dssp_results, metadata = _load_system_prep_dssp(system_root)
+    record = {
+        **metadata,
+        "filter_usable": False,
+        "allowed_codes": sorted(STABLE_ANCHOR_DSSP_CODES),
+        "min_structure_size": STABLE_ANCHOR_DSSP_MIN_STRUCTURE_SIZE,
+        "trim_structure_ends": STABLE_ANCHOR_DSSP_TRIM_STRUCTURE_ENDS,
+        "protein_residue_count": 0,
+        "dssp_residue_count": 0,
+        "non_loop_residue_ids": [],
+        "fallback_residue_ids": [],
+    }
+    if dssp_results is None:
+        return record
+
+    candidates = universe.select_atoms(
+        "protein and not resname NMA ACE and name CA"
+    )
+    if candidates.n_atoms == 0:
+        candidates = universe.select_atoms("protein and name CA")
+    if candidates.n_atoms == 0:
+        record.update(
+            available=False,
+            reason="No protein C-alpha atoms were found in the analysis topology.",
+        )
+        return record
+
+    dssp_array = np.asarray(dssp_results)
+    if dssp_array.ndim > 1:
+        dssp_array = dssp_array[-1]
+    record["protein_residue_count"] = int(candidates.residues.n_residues)
+    record["dssp_residue_count"] = int(dssp_array.size)
+
+    try:
+        from batter.systemprep.helpers import _dssp_filtered_candidates
+
+        stable_candidates = _dssp_filtered_candidates(
+            candidates,
+            dssp_results,
+            min_structure_size=STABLE_ANCHOR_DSSP_MIN_STRUCTURE_SIZE,
+            trim_structure_ends=STABLE_ANCHOR_DSSP_TRIM_STRUCTURE_ENDS,
+        )
+    except Exception as exc:
+        record.update(
+            available=False,
+            reason=f"Could not map DSSP assignments onto analysis residues: {exc}",
+        )
+        return record
+
+    non_loop_residue_ids = _dedupe_ints(
+        int(atom.resid) for atom in stable_candidates
+    )
+    all_residue_ids = _dedupe_ints(int(atom.resid) for atom in candidates)
+    non_loop_set = set(non_loop_residue_ids)
+    record["non_loop_residue_ids"] = non_loop_residue_ids
+    record["fallback_residue_ids"] = [
+        resid for resid in all_residue_ids if resid not in non_loop_set
+    ]
+    if not non_loop_residue_ids:
+        record.update(
+            reason=(
+                "DSSP did not yield an internal helix/sheet C-alpha candidate "
+                "after segment-length and end trimming filters."
+            ),
+        )
+    else:
+        record["filter_usable"] = True
+    return record
 
 
 def _prolif_residue_metadata(value: Any) -> dict[str, Any]:
@@ -1556,6 +1715,67 @@ def _stable_distance_validator(
     return validator
 
 
+def _filter_ligand_anchor_preferences_by_residue(
+    preferences: Sequence[dict[str, Any]],
+    residue_ids: Sequence[int],
+) -> list[dict[str, Any]]:
+    allowed = {int(resid) for resid in residue_ids}
+    return [
+        dict(preference)
+        for preference in preferences
+        if _int_or_none(preference.get("protein_resid")) in allowed
+    ]
+
+
+def _filter_salt_bridge_preference_by_residue(
+    preference: dict[str, Any],
+    residue_ids: Sequence[int],
+) -> dict[str, Any]:
+    """Restrict a salt-bridge preference while retaining its diagnostic fields."""
+    allowed = {int(resid) for resid in residue_ids}
+    filtered_ids = [
+        int(resid)
+        for resid in preference.get("protein_residue_ids") or []
+        if _int_or_none(resid) in allowed
+    ]
+    pairs = [
+        pair
+        for pair in preference.get("pairs") or []
+        if _int_or_none((pair.get("protein") or {}).get("resid")) in allowed
+    ]
+    if pairs:
+        ligand_names = _dedupe_preserve_order(
+            (pair.get("ligand") or {}).get("name") for pair in pairs
+        )
+    elif filtered_ids:
+        # Older/mocked records can contain residue IDs without atom-level pairs.
+        ligand_names = _dedupe_preserve_order(
+            preference.get("ligand_atom_names") or []
+        )
+    else:
+        ligand_names = []
+    return {
+        **preference,
+        "ligand_atom_names": ligand_names,
+        "protein_residue_ids": _dedupe_ints(filtered_ids),
+        "pairs": pairs,
+    }
+
+
+def _merge_residue_priorities(
+    persistent_priorities: Mapping[int, int],
+    salt_bridge_residue_ids: Sequence[int],
+) -> dict[int, int]:
+    priorities = {
+        int(resid): int(priority)
+        for resid, priority in persistent_priorities.items()
+    }
+    for index, resid in enumerate(salt_bridge_residue_ids):
+        resid = int(resid)
+        priorities[resid] = min(int(priorities.get(resid, 99)), index)
+    return priorities
+
+
 def _write_stable_boresch_distance(
     *,
     stable_path: Path,
@@ -1585,91 +1805,312 @@ def _write_stable_boresch_distance(
         tail_fraction=tail_fraction,
         prolif_record=prolif_record,
     )
-    salt_bridge_ligand_names = list(
-        salt_bridge_preference.get("ligand_atom_names") or []
-    )
     prolif_ligand_anchor_preferences = _persistent_prolif_ligand_anchor_preferences(
         prolif_record
     )
-    prolif_ligand_anchor_names = [
-        str(item["name"]) for item in prolif_ligand_anchor_preferences
-    ]
-    preferred_ligand_names = _dedupe_preserve_order(
-        [*salt_bridge_ligand_names, *prolif_ligand_anchor_names]
+    salt_bridge_residue_ids = _dedupe_ints(
+        salt_bridge_preference.get("protein_residue_ids") or []
     )
-    preferred_ligand_priorities = {
-        name: idx for idx, name in enumerate(preferred_ligand_names)
-    }
-    if preferred_ligand_names:
-        ligand_candidate_names = _dedupe_preserve_order(
-            [*preferred_ligand_names, *(ligand_candidate_names or [])]
-        )
-    salt_bridge_residue_ids = []
-    for resid in salt_bridge_preference.get("protein_residue_ids") or []:
-        value = _int_or_none(resid)
-        if value is not None and value not in salt_bridge_residue_ids:
-            salt_bridge_residue_ids.append(value)
     persistent_residue_ids = _persistent_prolif_residue_ids(prolif_record)
     persistent_residue_priorities = _persistent_prolif_residue_priorities(prolif_record)
-    residue_filter_priorities = dict(persistent_residue_priorities)
-    for idx, resid in enumerate(salt_bridge_residue_ids):
-        residue_filter_priorities[int(resid)] = min(
-            int(residue_filter_priorities.get(int(resid), 99)),
-            idx,
+    all_residue_priorities = _merge_residue_priorities(
+        persistent_residue_priorities,
+        salt_bridge_residue_ids,
+    )
+    dssp_filter = _stable_dssp_residue_filter(
+        system_root=system_root,
+        universe=universe,
+    )
+    non_loop_residue_ids = _dedupe_ints(
+        dssp_filter.get("non_loop_residue_ids") or []
+    )
+    fallback_residue_ids = _dedupe_ints(
+        dssp_filter.get("fallback_residue_ids") or []
+    )
+    non_loop_set = set(non_loop_residue_ids)
+    fallback_set = set(fallback_residue_ids)
+
+    non_loop_persistent_ids = [
+        resid for resid in persistent_residue_ids if resid in non_loop_set
+    ]
+    fallback_persistent_ids = [
+        resid for resid in persistent_residue_ids if resid in fallback_set
+    ]
+    non_loop_salt_preference = _filter_salt_bridge_preference_by_residue(
+        salt_bridge_preference,
+        non_loop_residue_ids,
+    )
+    fallback_salt_preference = _filter_salt_bridge_preference_by_residue(
+        salt_bridge_preference,
+        fallback_residue_ids,
+    )
+    non_loop_salt_ids = _dedupe_ints(
+        non_loop_salt_preference.get("protein_residue_ids") or []
+    )
+    fallback_salt_ids = _dedupe_ints(
+        fallback_salt_preference.get("protein_residue_ids") or []
+    )
+    non_loop_prolif_preferences = _filter_ligand_anchor_preferences_by_residue(
+        prolif_ligand_anchor_preferences,
+        non_loop_residue_ids,
+    )
+    fallback_prolif_preferences = _filter_ligand_anchor_preferences_by_residue(
+        prolif_ligand_anchor_preferences,
+        fallback_residue_ids,
+    )
+
+    def _tier(
+        name: str,
+        *,
+        protein_residue_ids: Sequence[int] | None,
+        protein_scope: str,
+        interaction_source: str | None,
+        prolif_preferences: Sequence[dict[str, Any]],
+        salt_preference: dict[str, Any],
+        priorities: Mapping[int, int],
+        loop_fallback: bool,
+    ) -> dict[str, Any]:
+        preferred_names = _dedupe_preserve_order(
+            [
+                *(salt_preference.get("ligand_atom_names") or []),
+                *(str(item["name"]) for item in prolif_preferences),
+            ]
         )
+        candidate_names = _dedupe_preserve_order(
+            [*preferred_names, *(ligand_candidate_names or [])]
+        )
+        return {
+            "name": name,
+            "protein_residue_ids": (
+                _dedupe_ints(protein_residue_ids)
+                if protein_residue_ids is not None
+                else None
+            ),
+            "protein_scope": protein_scope,
+            "interaction_source": interaction_source,
+            "prolif_preferences": list(prolif_preferences),
+            "salt_preference": salt_preference,
+            "preferred_ligand_names": preferred_names,
+            "ligand_candidate_names": candidate_names,
+            "protein_residue_priorities": {
+                int(resid): int(priority)
+                for resid, priority in priorities.items()
+            },
+            "loop_fallback": bool(loop_fallback),
+        }
+
+    tiers: list[dict[str, Any]] = []
+    if dssp_filter.get("available") and non_loop_residue_ids:
+        non_loop_interaction_ids = (
+            non_loop_persistent_ids or non_loop_salt_ids
+        )
+        non_loop_interaction_source = (
+            "prolif"
+            if non_loop_persistent_ids
+            else "salt_bridge_geometry"
+            if non_loop_salt_ids
+            else None
+        )
+        tiers.append(
+            _tier(
+                "dssp_non_loop_interactions",
+                protein_residue_ids=non_loop_interaction_ids,
+                protein_scope="DSSP internal helix/sheet interaction residues",
+                interaction_source=non_loop_interaction_source,
+                prolif_preferences=non_loop_prolif_preferences,
+                salt_preference=non_loop_salt_preference,
+                priorities={
+                    resid: priority
+                    for resid, priority in all_residue_priorities.items()
+                    if resid in non_loop_set
+                },
+                loop_fallback=False,
+            )
+        )
+        tiers.append(
+            _tier(
+                "dssp_non_loop_all_ca",
+                protein_residue_ids=non_loop_residue_ids,
+                protein_scope="all DSSP internal helix/sheet C-alpha residues",
+                interaction_source=None,
+                prolif_preferences=non_loop_prolif_preferences,
+                salt_preference=non_loop_salt_preference,
+                priorities={
+                    resid: priority
+                    for resid, priority in all_residue_priorities.items()
+                    if resid in non_loop_set
+                },
+                loop_fallback=False,
+            )
+        )
+
+        fallback_interaction_ids = fallback_persistent_ids or fallback_salt_ids
+        fallback_interaction_source = (
+            "prolif"
+            if fallback_persistent_ids
+            else "salt_bridge_geometry"
+            if fallback_salt_ids
+            else None
+        )
+        tiers.append(
+            _tier(
+                "loop_interactions_fallback",
+                protein_residue_ids=fallback_interaction_ids,
+                protein_scope="interaction residues excluded from the DSSP non-loop tier",
+                interaction_source=fallback_interaction_source,
+                prolif_preferences=fallback_prolif_preferences,
+                salt_preference=fallback_salt_preference,
+                priorities={
+                    resid: priority
+                    for resid, priority in all_residue_priorities.items()
+                    if resid in fallback_set
+                },
+                loop_fallback=True,
+            )
+        )
+        tiers.append(
+            _tier(
+                "all_ca_fallback",
+                protein_residue_ids=None,
+                protein_scope="all protein C-alpha residues",
+                interaction_source=None,
+                prolif_preferences=prolif_ligand_anchor_preferences,
+                salt_preference=salt_bridge_preference,
+                priorities=all_residue_priorities,
+                loop_fallback=True,
+            )
+        )
+    else:
+        residue_filter_ids = persistent_residue_ids or salt_bridge_residue_ids
+        interaction_source = (
+            "prolif"
+            if persistent_residue_ids
+            else "salt_bridge_geometry"
+            if salt_bridge_residue_ids
+            else None
+        )
+        tiers.append(
+            _tier(
+                "interactions_non_loop_filter_unavailable_fallback",
+                protein_residue_ids=residue_filter_ids,
+                protein_scope="interaction residues; DSSP non-loop filter unavailable",
+                interaction_source=interaction_source,
+                prolif_preferences=prolif_ligand_anchor_preferences,
+                salt_preference=salt_bridge_preference,
+                priorities=all_residue_priorities,
+                loop_fallback=True,
+            )
+        )
+        tiers.append(
+            _tier(
+                "all_ca_dssp_unavailable",
+                protein_residue_ids=None,
+                protein_scope="all protein C-alpha residues; DSSP non-loop filter unavailable",
+                interaction_source=None,
+                prolif_preferences=prolif_ligand_anchor_preferences,
+                salt_preference=salt_bridge_preference,
+                priorities=all_residue_priorities,
+                loop_fallback=True,
+            )
+        )
+
     min_distance = float(getattr(sim, "min_adis", None) or 3.0)
     max_distance = float(getattr(sim, "max_adis", None) or 7.0)
-    used_prolif_filter = False
-    used_salt_bridge_filter = False
-    fallback_reason = None
-    residue_filter_ids = persistent_residue_ids or salt_bridge_residue_ids
-    if residue_filter_ids:
-        residue_filter_source = (
-            "ProLIF residues" if persistent_residue_ids else "salt-bridge geometry"
+    attempts: list[dict[str, Any]] = []
+    stable_record = None
+    selected_tier = None
+    seen_tier_signatures: set[tuple[Any, ...]] = set()
+    for tier in tiers:
+        tier_residue_ids = tier["protein_residue_ids"]
+        attempt = {
+            "tier": tier["name"],
+            "protein_scope": tier["protein_scope"],
+            "protein_residue_ids": tier_residue_ids or [],
+            "preferred_ligand_atom_names": tier["preferred_ligand_names"],
+            "interaction_source": tier["interaction_source"],
+            "loop_fallback": tier["loop_fallback"],
+        }
+        if tier_residue_ids == []:
+            attempt.update(status="skipped", reason="No candidate residues in this tier.")
+            attempts.append(attempt)
+            continue
+
+        signature = (
+            tuple(tier_residue_ids) if tier_residue_ids is not None else None,
+            tuple(tier["ligand_candidate_names"]),
+            tuple(sorted(tier["protein_residue_priorities"].items())),
         )
+        if signature in seen_tier_signatures:
+            attempt.update(status="skipped", reason="Equivalent tier was already attempted.")
+            attempts.append(attempt)
+            continue
+        seen_tier_signatures.add(signature)
+
         try:
             stable_record = sim_val.find_stable_boresch_distance(
                 tail_fraction=tail_fraction,
                 min_distance=min_distance,
                 max_distance=max_distance,
-                ligand_atom_names=ligand_candidate_names,
-                ligand_atom_priorities=preferred_ligand_priorities,
-                protein_residue_ids=residue_filter_ids,
-                protein_residue_priorities=residue_filter_priorities,
+                ligand_atom_names=tier["ligand_candidate_names"],
+                ligand_atom_priorities={
+                    name: index
+                    for index, name in enumerate(tier["preferred_ligand_names"])
+                },
+                protein_residue_ids=tier_residue_ids,
+                protein_residue_priorities=tier["protein_residue_priorities"],
             )
-            used_prolif_filter = bool(persistent_residue_ids)
-            used_salt_bridge_filter = bool(
-                salt_bridge_residue_ids and not persistent_residue_ids
-            )
+            attempt["status"] = "selected"
+            attempts.append(attempt)
+            selected_tier = tier
+            break
         except Exception as exc:
-            fallback_reason = str(exc)
+            attempt.update(status="failed", reason=str(exc))
+            attempts.append(attempt)
             logger.debug(
-                "[equil_check:{}] {} did not yield a "
-                "stable CA-ligand Boresch distance; falling back to all CA "
-                "candidates: {}",
+                "[equil_check:{}] Stable Boresch candidate tier {} failed: {}",
                 ligand_label,
-                residue_filter_source,
+                tier["name"],
                 exc,
             )
-            stable_record = sim_val.find_stable_boresch_distance(
-                tail_fraction=tail_fraction,
-                min_distance=min_distance,
-                max_distance=max_distance,
-                ligand_atom_names=ligand_candidate_names,
-                ligand_atom_priorities=preferred_ligand_priorities,
-                protein_residue_priorities=residue_filter_priorities,
-            )
-    else:
-        stable_record = sim_val.find_stable_boresch_distance(
-            tail_fraction=tail_fraction,
-            min_distance=min_distance,
-            max_distance=max_distance,
-            ligand_atom_names=ligand_candidate_names,
-            ligand_atom_priorities=preferred_ligand_priorities,
-            protein_residue_priorities=residue_filter_priorities,
+
+    if stable_record is None or selected_tier is None:
+        failures = "; ".join(
+            f"{attempt['tier']}: {attempt.get('reason', attempt['status'])}"
+            for attempt in attempts
         )
+        raise ValueError(
+            "No stable CA-ligand Boresch pair was found across the DSSP-aware "
+            f"candidate tiers. {failures}"
+        )
+
+    selected_preferred_ligand_names = selected_tier["preferred_ligand_names"]
+    selected_prolif_preferences = selected_tier["prolif_preferences"]
+    selected_salt_preference = {
+        **selected_tier["salt_preference"],
+        "unfiltered_ligand_atom_names": _dedupe_preserve_order(
+            salt_bridge_preference.get("ligand_atom_names") or []
+        ),
+        "unfiltered_protein_residue_ids": salt_bridge_residue_ids,
+    }
+    used_prolif_filter = selected_tier["interaction_source"] == "prolif"
+    used_salt_bridge_filter = (
+        selected_tier["interaction_source"] == "salt_bridge_geometry"
+    )
+    fallback_reasons = [
+        f"{attempt['tier']}: {attempt['reason']}"
+        for attempt in attempts
+        if attempt["status"] == "failed"
+    ]
+    fallback_reason = "; ".join(fallback_reasons) or None
     stable_record["mode"] = mode
     stable_record["usable"] = True
+    stable_record["protein_candidate_preference"] = {
+        "selected_tier": selected_tier["name"],
+        "selected_protein_scope": selected_tier["protein_scope"],
+        "loop_fallback_used": bool(selected_tier["loop_fallback"]),
+        "dssp": dssp_filter,
+        "attempts": attempts,
+    }
     stable_record["prolif_preference"] = {
         "usable": bool(isinstance(prolif_record, dict) and prolif_record.get("usable")),
         "occupancy_threshold": (
@@ -1683,14 +2124,18 @@ def _write_stable_boresch_distance(
             {"resid": int(resid), "priority": int(priority)}
             for resid, priority in sorted(persistent_residue_priorities.items())
         ],
+        "non_loop_persistent_residue_ids": non_loop_persistent_ids,
+        "excluded_from_non_loop_persistent_residue_ids": fallback_persistent_ids,
         "salt_bridge_residue_ids": [int(x) for x in salt_bridge_residue_ids],
         "used_residue_filter": used_prolif_filter,
         "used_salt_bridge_residue_filter": used_salt_bridge_filter,
         "fallback_reason": fallback_reason,
-        "ligand_atom_names": preferred_ligand_names,
-        "ligand_atom_preferences": prolif_ligand_anchor_preferences,
+        "selected_tier": selected_tier["name"],
+        "ligand_atom_names": selected_preferred_ligand_names,
+        "ligand_atom_preferences": selected_prolif_preferences,
+        "unfiltered_ligand_atom_preferences": prolif_ligand_anchor_preferences,
     }
-    stable_record["salt_bridge_preference"] = salt_bridge_preference
+    stable_record["salt_bridge_preference"] = selected_salt_preference
     stable_path.write_text(json.dumps(stable_record, indent=2) + "\n")
     logger.debug(
         "[equil_check:{}] stable Boresch pair: {} to {} "

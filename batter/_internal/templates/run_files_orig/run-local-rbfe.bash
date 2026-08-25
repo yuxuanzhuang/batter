@@ -200,8 +200,10 @@ EOF
             "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
         
         cd "$win_folder"
-        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
-        check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+        run_fe_window_equilibration \
+            "Equilibration for window $i" \
+            "eq_init.rst7" \
+            "$PRMTOP_MERGED" || exit 1
         cd ../COMPONENT-1
     done
 
