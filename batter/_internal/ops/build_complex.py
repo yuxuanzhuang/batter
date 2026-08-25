@@ -1394,55 +1394,65 @@ def _guard_abfe_boresch_anchor_frame(
 
     preferred_names = _dedupe_names(preferred_first_names)
     if preferred_names:
-        preferred_exc: Exception | None = None
-        triplet_candidates: list[dict] = []
-        try:
-            triplet_candidates = _preferred_l1_ligand_triplet_candidates(
-                residue,
-                preferred_names,
-            )
-            preferred_triplet = _best_preferred_l1_triplet_for_receptor_frame(
-                residue=residue,
-                receptor_atoms=receptor_atoms,
-                preferred_first_names=preferred_names,
-                triplet_candidates=triplet_candidates,
-            )
-        except Exception as exc:
-            preferred_triplet = None
-            preferred_exc = exc
-        if preferred_triplet is not None:
-            return P1, P2, P3, preferred_triplet["names"]
-        if allow_receptor_reselection:
-            alternate = _select_receptor_p2_p3_for_preferred_l1(
-                u=u,
-                mol=mol,
-                ligand_label=ligand_label,
-                residue=residue,
-                p1_atom=receptor_atoms[0],
-                current_p2_atom=receptor_atoms[1],
-                current_p3_atom=receptor_atoms[2],
-                preferred_first_names=preferred_names,
-                triplet_candidates=triplet_candidates,
-            )
-            if alternate is not None:
-                logger.debug(
-                    "[build_complex_z] Replacing receptor P2/P3 for {} to "
-                    "keep preferred ligand L1 {}: ({}, {}) -> ({}, {}).",
-                    ligand_label,
-                    alternate["names"][0],
-                    P2,
-                    P3,
-                    alternate["P2"],
-                    alternate["P3"],
+        # Exhaust the current and alternate receptor frames for each preferred
+        # L1 in priority order. Otherwise a lower-priority hydrogen-bond atom
+        # can win in the current frame before a salt-bridge atom is tested with
+        # an alternate P2/P3 frame.
+        for preferred_name in preferred_names:
+            preferred_exc: Exception | None = None
+            triplet_candidates: list[dict] = []
+            try:
+                triplet_candidates = _preferred_l1_ligand_triplet_candidates(
+                    residue,
+                    [preferred_name],
                 )
-                return P1, alternate["P2"], alternate["P3"], alternate["names"]
-        logger.debug(
-            "[build_complex_z] Preferred ligand L1 {} for {} did not pass "
-            "the current/alternate receptor-frame guard: {}",
-            preferred_names,
-            ligand_label,
-            preferred_exc or "no safe preferred-L1 Boresch triplet",
-        )
+                preferred_triplet = _best_preferred_l1_triplet_for_receptor_frame(
+                    residue=residue,
+                    receptor_atoms=receptor_atoms,
+                    preferred_first_names=[preferred_name],
+                    triplet_candidates=triplet_candidates,
+                )
+            except Exception as exc:
+                preferred_triplet = None
+                preferred_exc = exc
+            if preferred_triplet is not None:
+                return P1, P2, P3, preferred_triplet["names"]
+            if allow_receptor_reselection:
+                alternate = _select_receptor_p2_p3_for_preferred_l1(
+                    u=u,
+                    mol=mol,
+                    ligand_label=ligand_label,
+                    residue=residue,
+                    p1_atom=receptor_atoms[0],
+                    current_p2_atom=receptor_atoms[1],
+                    current_p3_atom=receptor_atoms[2],
+                    preferred_first_names=[preferred_name],
+                    triplet_candidates=triplet_candidates,
+                )
+                if alternate is not None:
+                    logger.debug(
+                        "[build_complex_z] Replacing receptor P2/P3 for {} to "
+                        "keep preferred ligand L1 {}: ({}, {}) -> ({}, {}).",
+                        ligand_label,
+                        alternate["names"][0],
+                        P2,
+                        P3,
+                        alternate["P2"],
+                        alternate["P3"],
+                    )
+                    return (
+                        P1,
+                        alternate["P2"],
+                        alternate["P3"],
+                        alternate["names"],
+                    )
+            logger.debug(
+                "[build_complex_z] Preferred ligand L1 {} for {} did not pass "
+                "the current/alternate receptor-frame guard: {}",
+                preferred_name,
+                ligand_label,
+                preferred_exc or "no safe preferred-L1 Boresch triplet",
+            )
 
     try:
         guarded_names = _frame_safe_boresch_atom_names_from_residue(

@@ -590,6 +590,59 @@ def test_guard_abfe_boresch_anchor_frame_reselects_p2_p3_to_keep_preferred_l1(
     )
 
 
+def test_guard_abfe_exhausts_top_l1_before_lower_priority_current_frame(
+    tmp_path: Path,
+) -> None:
+    fe_pdb = tmp_path / "fe-LIG.pdb"
+    receptor = [
+        ("ASP", 86, 41.537, 30.846, 69.419),
+        ("ASP", 52, 37.714, 29.240, 60.074),
+        ("ASN", 263, 32.912, 36.243, 60.977),
+        ("GLU", 95, 45.368, 38.053, 58.042),
+    ]
+    ligand = [
+        ("C1", 39.644, 33.848, 74.394),
+        ("N1", 39.291, 34.463, 73.040),
+        ("C2", 40.325, 35.375, 72.493),
+        ("C3", 39.770, 36.282, 71.477),
+        ("O1", 39.073, 35.613, 70.429),
+        ("C4", 40.939, 37.064, 70.918),
+        ("C5", 41.358, 36.960, 69.574),
+        ("C6", 42.574, 37.597, 69.134),
+        ("C7", 43.190, 38.541, 70.042),
+        ("O2", 44.351, 39.220, 69.551),
+        ("C8", 42.830, 38.596, 71.396),
+        ("O3", 43.427, 39.465, 72.253),
+        ("C9", 41.708, 37.852, 71.769),
+    ]
+    lines = [
+        _pdb_line("ATOM", index, "CA", resname, "A", resid, x, y, z)
+        for index, (resname, resid, x, y, z) in enumerate(receptor, start=1)
+    ]
+    lines.extend(
+        _pdb_line("HETATM", index, name, "LIG", "L", 287, x, y, z)
+        for index, (name, x, y, z) in enumerate(ligand, start=len(lines) + 1)
+    )
+    lines.append("END\n")
+    fe_pdb.write_text("".join(lines))
+
+    p1, p2, p3, names = build_complex_mod._guard_abfe_boresch_anchor_frame(
+        fe_pdb=fe_pdb,
+        mol="LIG",
+        ligand_label="adrenaline-like",
+        P1=":86@CA",
+        P2=":52@CA",
+        P3=":263@CA",
+        lig_resid="287",
+        selected_names=["O3", "C4", "C7"],
+        preferred_first_names=["N1", "O1", "O3", "O2"],
+        allow_receptor_reselection=True,
+    )
+
+    assert (p1, p2, p3) == (":86@CA", ":52@CA", ":95@CA")
+    assert names == ["N1", "C4", "C8"]
+
+
 def test_guard_abfe_boresch_anchor_frame_avoids_terminal_l2_l3(
     tmp_path: Path,
 ) -> None:
