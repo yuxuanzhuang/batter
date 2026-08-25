@@ -80,6 +80,8 @@ def _assert_fe_handoff(window_dir: Path, *, steps: int, dum_weight: float) -> No
         assert f"FE target-window handoff stage {index + 1}/5" in text
         assert "  ntr = 1," in text
         assert "  nmropt = 1," in text
+        assert "  ntwx = 0," in text
+        assert "  ntwv = 0," in text
         assert "restraintmask" not in text
         assert "type='REST'" not in text
         assert "FE constant DUM positional restraint" in text
@@ -906,7 +908,7 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     assert "restraintmask" not in eq_text
     assert "@CA" not in eq_text
     assert "nstlim = 5000" in eq_text
-    assert "ntwx = 5000" in eq_text
+    assert "ntwx = 0" in eq_text
     _assert_fe_handoff(windows_dir, steps=25_000, dum_weight=10.0)
 
     assert "restraintmask = ':1-2'," in template_text

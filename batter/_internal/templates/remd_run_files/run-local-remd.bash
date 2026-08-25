@@ -47,7 +47,7 @@ fi
 # Write a REMD mdin current file:
 # - keep nstlim fixed from mdin-remd-template
 # - update numexchg based on remaining steps
-# - set irest/ntx according to first_run
+# - always continue from restart coordinates and velocities
 cap_dumpfreq_for_remd_chunk() {
     local nstlim_value=$1
     local dumpfreq_value
@@ -78,7 +78,6 @@ write_mdin_remd_current() {
     local tmpl=$1
     local nstlim_value=$2
     local numexchg_value=$3
-    local first_run=$4
     local dumpave_file=${5:-}
     if [[ ! -f $tmpl ]]; then
         echo "[ERROR] Missing template $tmpl" >&2
@@ -86,11 +85,8 @@ write_mdin_remd_current() {
     fi
     local text
     text=$(<"$tmpl")
-    if [[ $first_run -eq 1 ]]; then
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
-    else
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
-    fi
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
     text=$(printf "%s\n" "$text" | cap_dumpfreq_for_remd_chunk "$nstlim_value")
     if echo "$text" | grep -Eq "^[[:space:]]*numexchg[[:space:]]*="; then
         text=$(echo "$text" | sed -E "s/^[[:space:]]*numexchg[[:space:]]*=.*/  numexchg = ${numexchg_value},/")

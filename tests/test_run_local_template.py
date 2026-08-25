@@ -70,7 +70,9 @@ printf '%s|%s|%s|%s|%s|%s\n' \
   >> "$PMEMD_CALLS"
 printf 'Amber 24 PMEMD\nTotal wall time\n' > "$output"
 printf 'Stub Amber restart\n1  10.0\n  0.0  0.0  0.0\n' > "$result"
-printf 'trajectory\n' > "$trajectory"
+if [[ -n $trajectory ]]; then
+  printf 'trajectory\n' > "$trajectory"
+fi
 """,
     )
     cpptraj = tmp_path / "cpptraj-stub"
@@ -138,12 +140,155 @@ run_fe_window_equilibration \
         "eq-handoff-03.rst7",
     ]
     assert {call[5] for call in calls} == {"eq_init.rst7"}
-    assert calls[-1][3:5] == ["eq.rst7", "eq-final.nc"]
+    assert calls[-1][3:5] == ["eq.rst7", ""]
+    assert {call[4] for call in calls} == {""}
     assert (tmp_path / "eq.rst7").is_file()
-    assert (tmp_path / "eq.nc").read_text() == "combined trajectory\n"
-    combine_input = (tmp_path / "eq-trajectory-combine.cpptraj").read_text()
-    assert combine_input.count("trajin eq-handoff-") == 4
-    assert "trajin eq-final.nc" in combine_input
+    assert not (tmp_path / "eq.nc").exists()
+    assert not (tmp_path / "eq-final.nc").exists()
+    assert not (tmp_path / "eq-trajectory-combine.cpptraj").exists()
+
+
+def test_fe_equil_cleanup_removes_only_transient_artifacts(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    seed_dir = tmp_path / "z" / "z-1"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "check_run.bash").write_text(check_run.read_text())
+    (seed_dir / "eq.nc").write_text("seed trajectory\n")
+    (seed_dir / "eq.rst7.1").write_text(_restart_text("10.0"))
+    (seed_dir / "eq.rst7.2").write_text(_restart_text("20.0"))
+
+    for index in range(2):
+        window_dir = seed_dir.parent / f"z{index:02d}"
+        window_dir.mkdir()
+        (window_dir / "eq-handoff.json").write_text("{}\n")
+        (window_dir / "eq.rst7").write_text(_restart_text("50.0"))
+        (window_dir / "eq.out").write_text("final output\n")
+        (window_dir / "eq.in").write_text("final input\n")
+        (window_dir / "cmass.txt").write_text("restraint diagnostics\n")
+        (window_dir / "full_merged.prmtop").write_text("topology\n")
+        (window_dir / "eq_init.rst7").write_text(_restart_text("0.0"))
+        (window_dir / "eq.nc").write_text("combined trajectory\n")
+        (window_dir / "eq-final.nc").write_text("final trajectory\n")
+        (window_dir / "eq-trajectory-combine.cpptraj").write_text("run\n")
+        for stage in range(4):
+            stem = window_dir / f"eq-handoff-{stage:02d}"
+            stem.with_suffix(".in").write_text("stage input\n")
+            stem.with_suffix(".out").write_text("stage output\n")
+            stem.with_suffix(".rst7").write_text(_restart_text("10.0"))
+            stem.with_suffix(".nc").write_text("stage trajectory\n")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "cleanup_fe_equilibration_artifacts z 2 \"$PWD\"",
+        ],
+        cwd=seed_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Removed transient FE equilibration artifacts from 2 target window(s)" in result.stdout
+    assert not (seed_dir / "eq.nc").exists()
+    assert not list(seed_dir.glob("eq.rst7.[0-9]*"))
+    for index in range(2):
+        window_dir = seed_dir.parent / f"z{index:02d}"
+        assert not list(window_dir.glob("eq-handoff-*.*"))
+        assert not (window_dir / "eq_init.rst7").exists()
+        assert not (window_dir / "eq.nc").exists()
+        assert not (window_dir / "eq-final.nc").exists()
+        assert not (window_dir / "eq-trajectory-combine.cpptraj").exists()
+        assert (window_dir / "eq-handoff.json").is_file()
+        assert (window_dir / "eq.rst7").is_file()
+        assert not (window_dir / "eq.out").exists()
+        assert not (window_dir / "eq.in").exists()
+        assert not (window_dir / "cmass.txt").exists()
+        assert (window_dir / "full_merged.prmtop").is_file()
+
+
+def test_fe_equil_cleanup_is_transactional_when_final_restart_is_missing(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    seed_dir = tmp_path / "x" / "x-1"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "check_run.bash").write_text(check_run.read_text())
+    for index in range(2):
+        window_dir = seed_dir.parent / f"x{index:02d}"
+        window_dir.mkdir()
+        (window_dir / "eq-handoff.json").write_text("{}\n")
+        (window_dir / "eq-handoff-00.nc").write_text("trajectory\n")
+    (seed_dir.parent / "x00" / "eq.rst7").write_text(_restart_text("50.0"))
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "cleanup_fe_equilibration_artifacts x 2 \"$PWD\"",
+        ],
+        cwd=seed_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "final restart is missing" in result.stdout
+    assert (seed_dir.parent / "x00" / "eq-handoff-00.nc").is_file()
+    assert (seed_dir.parent / "x01" / "eq-handoff-00.nc").is_file()
+
+
+def test_fe_window_equilibration_refuses_cleaned_stage_inputs(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    (tmp_path / "check_run.bash").write_text(check_run.read_text())
+    (tmp_path / "eq-handoff.json").write_text("{}\n")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "if run_fe_window_equilibration target eq_init.rst7 full_merged.prmtop; "
+            "then exit 99; else exit 0; fi",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Staged EQ inputs were cleaned" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").is_file()
 
 
 def test_production_md_uses_expected_reference_restart() -> None:

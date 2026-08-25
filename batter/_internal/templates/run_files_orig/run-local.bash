@@ -342,6 +342,9 @@ EOF"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
+        if ! cleanup_fe_equilibration_artifacts "COMPONENT" "NWINDOWS" "$(pwd)"; then
+            echo "[WARN] FE equilibration completed, but transient artifact cleanup was incomplete."
+        fi
         echo "EQ_FINISHED" > EQ_FINISHED
         echo "[INFO] EQ_FINISHED marker written."
         echo "Job completed at $(date)"

@@ -704,7 +704,8 @@ def _apply_fe_handoff_restraint(
             "irest": "0" if stage_index == 0 else "1",
             "ntx": "1" if stage_index == 0 else "5",
             "nstlim": str(stage_steps),
-            "ntwx": str(stage_steps),
+            "ntwx": "0",
+            "ntwv": "0",
             "nmropt": "1",
             "ntr": "1",
             # GROUP records below carry the actual per-group force constants.

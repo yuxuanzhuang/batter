@@ -288,6 +288,8 @@ def test_remd_run_templates_write_segmented_cmass_dumpave(
 
     assert result.returncode == 0, result.stdout + result.stderr
     text = (win0 / current_name).read_text()
+    assert "irest = 1," in text
+    assert re.search(r"^\s*ntx\s*=\s*5,", text, flags=re.MULTILINE)
     assert "DUMPAVE=z00/cmass-01.txt" in text
     assert "DUMPAVE=cmass.txt" not in text
 

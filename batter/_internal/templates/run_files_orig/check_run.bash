@@ -1023,13 +1023,17 @@ run_fe_window_equilibration() {
     local current_restart=$initial_restart
     local input stem
     local -a handoff_inputs=()
-    local -a handoff_trajectories=()
 
     shopt -s nullglob
     handoff_inputs=(eq-handoff-[0-9][0-9].in)
     shopt -u nullglob
 
     if (( ${#handoff_inputs[@]} == 0 )); then
+        if [[ -s eq-handoff.json ]]; then
+            echo "[ERROR] Staged EQ inputs were cleaned after a prior successful fe_equil run. Regenerate the FE window inputs before forcing equilibration again."
+            write_attempt_failed_marker
+            return 1
+        fi
         print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $initial_restart -o eq.out -r eq.rst7 -x eq.nc -ref $initial_restart >> \"$log_file\" 2>&1"
         check_sim_failure "$stage" "$log_file" eq.rst7
         return 0
@@ -1039,32 +1043,75 @@ run_fe_window_equilibration() {
         eq-handoff-[0-9][0-9].nc eq-final.nc eq.nc eq.out
     for input in "${handoff_inputs[@]}"; do
         stem=${input%.in}
-        print_and_run "$PMEMD_EXEC -O -i $input -p $topology -c $current_restart -o ${stem}.out -r ${stem}.rst7 -x ${stem}.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i $input -p $topology -c $current_restart -o ${stem}.out -r ${stem}.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
         check_sim_failure "$stage ($stem)" "$log_file" "${stem}.rst7"
         current_restart="${stem}.rst7"
-        handoff_trajectories+=("${stem}.nc")
     done
 
-    print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $current_restart -o eq.out -r eq.rst7 -x eq-final.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $current_restart -o eq.out -r eq.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
     check_sim_failure "$stage (final)" "$log_file" eq.rst7
-
-    {
-        printf 'parm %s\n' "$topology"
-        for input in "${handoff_trajectories[@]}"; do
-            printf 'trajin %s\n' "$input"
-        done
-        printf 'trajin eq-final.nc\n'
-        printf 'trajout eq.nc netcdf\n'
-        printf 'run\n'
-    } > eq-trajectory-combine.cpptraj
-    print_and_run "$CPPTRAJ_EXEC -i eq-trajectory-combine.cpptraj >> \"$log_file\" 2>&1"
-    if [[ ${SIM_COMMAND_STATUS:-0} -ne 0 || ! -s eq.nc ]]; then
-        echo "[ERROR] $stage failed while assembling the staged EQ trajectory."
-        write_attempt_failed_marker
-        return 1
-    fi
     SIM_COMMAND_STATUS=0
     return 0
+}
+
+cleanup_fe_equilibration_artifacts() {
+    local component_prefix=$1
+    local n_windows=$2
+    local seed_dir=${3:-$PWD}
+    local window_dir
+    local staged_count=0
+    local cleanup_status=0
+    local i
+
+    if [[ ${KEEP_FE_EQUIL_ARTIFACTS:-0} == 1 ]]; then
+        echo "[INFO] KEEP_FE_EQUIL_ARTIFACTS=1; retaining staged FE equilibration artifacts."
+        return 0
+    fi
+    if [[ ! $n_windows =~ ^[0-9]+$ ]]; then
+        echo "[WARN] Cannot clean FE equilibration artifacts: invalid window count '$n_windows'."
+        return 1
+    fi
+
+    # Preflight every staged window before deleting anything. This keeps all
+    # intermediate files available when a component equilibration is partial.
+    for ((i=0; i<n_windows; i++)); do
+        window_dir=$(printf '%s/../%s%02d' "$seed_dir" "$component_prefix" "$i")
+        [[ -s "$window_dir/eq-handoff.json" ]] || continue
+        staged_count=$((staged_count + 1))
+        if [[ ! -s "$window_dir/eq.rst7" ]]; then
+            echo "[WARN] Retaining FE equilibration artifacts because the final restart is missing: $window_dir/eq.rst7"
+            return 1
+        fi
+    done
+    if (( staged_count == 0 )); then
+        return 0
+    fi
+
+    for ((i=0; i<n_windows; i++)); do
+        window_dir=$(printf '%s/../%s%02d' "$seed_dir" "$component_prefix" "$i")
+        [[ -s "$window_dir/eq-handoff.json" ]] || continue
+        if ! rm -f -- \
+            "$window_dir"/eq-handoff-*.* \
+            "$window_dir"/eq-final.nc \
+            "$window_dir"/eq-trajectory-combine.cpptraj \
+            "$window_dir"/eq_init.rst7 \
+            "$window_dir"/eq.nc \
+            "$window_dir"/eq.out \
+            "$window_dir"/eq.in \
+            "$window_dir"/cmass.txt; then
+            echo "[WARN] Could not remove every FE equilibration artifact under $window_dir."
+            cleanup_status=1
+        fi
+    done
+    if ! rm -f -- "$seed_dir"/eq.rst7.[0-9]* "$seed_dir"/eq.nc; then
+        echo "[WARN] Could not remove every seed-window FE equilibration artifact under $seed_dir."
+        cleanup_status=1
+    fi
+
+    if (( cleanup_status == 0 )); then
+        echo "[INFO] Removed transient FE equilibration artifacts from $staged_count target window(s)."
+    fi
+    return "$cleanup_status"
 }
 
 check_min_energy() {
@@ -2084,22 +2131,12 @@ write_mdin_current() {
         ')
     fi
 
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
     if [[ $first_run == 1 ]]; then
-        local temp0_value
-        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "0")
-        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "1")
         if [[ $initial_time_ps =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
             text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "t" "$initial_time_ps")
         fi
-        if ! printf "%s\n" "$text" | mdin_has_cntrl_value "tempi"; then
-            temp0_value=$(printf "%s\n" "$text" | mdin_get_cntrl_value "temp0")
-            if [[ -n $temp0_value ]]; then
-                text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "tempi" "$temp0_value")
-            fi
-        fi
-    else
-        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
-        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
     fi
 
     text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "nstlim" "$nstlim_value")

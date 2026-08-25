@@ -54,6 +54,19 @@ def test_abfe_window_equilibration_runs_window_eq_in() -> None:
     assert '"$PRMTOP_MERGED"' in text
 
 
+def test_fe_equil_templates_clean_transient_artifacts_before_finished_marker() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    template_dir = (
+        repo_root / "batter" / "_internal" / "templates" / "run_files_orig"
+    )
+
+    for name in ("run-local.bash", "run-local-rbfe.bash"):
+        text = (template_dir / name).read_text()
+        cleanup = 'cleanup_fe_equilibration_artifacts "COMPONENT" "NWINDOWS"'
+        assert cleanup in text
+        assert text.index(cleanup) < text.index('echo "EQ_FINISHED" > EQ_FINISHED')
+
+
 def test_check_min_energy_prefers_eamber():
     data_dir = Path(__file__).resolve().parent / "data" / "md_output"
     result = _run_check_min_energy(data_dir / "mini.out")
@@ -853,7 +866,7 @@ def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     assert "ntx = 5," in rendered_text
 
 
-def test_write_mdin_current_fresh_start_uses_coordinate_restart_mode(tmp_path: Path) -> None:
+def test_write_mdin_current_fresh_start_reads_restart_velocities(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     tmpl = tmp_path / "mdin-template"
@@ -883,11 +896,11 @@ def test_write_mdin_current_fresh_start_uses_coordinate_restart_mode(tmp_path: P
 
     assert result.returncode == 0, result.stdout + result.stderr
     rendered_text = rendered.read_text()
-    assert "irest = 0," in rendered_text
-    assert "ntx = 1," in rendered_text
+    assert "irest = 1," in rendered_text
+    assert "ntx = 5," in rendered_text
     assert "nstlim = 8," in rendered_text
     assert "t = 20," in rendered_text
-    assert "tempi = 298.15," in rendered_text
+    assert "tempi" not in rendered_text
 
 
 def test_write_mdin_current_rewrites_dumpave_to_segment_cmass(tmp_path: Path) -> None:
