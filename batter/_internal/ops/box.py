@@ -79,6 +79,7 @@ _PRE_RING_REPAIR_FILES = {
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+_BULK_LIGAND_BOX_Z_PADDING = 4.0
 _WATER_RESNAMES = {
     "WAT",
     "HOH",
@@ -518,27 +519,31 @@ def _pdb_atom_name_is_hydrogen(name: str) -> bool:
     )
 
 
-def _extra_ligand_heavy_coords_from_build(
+def _extra_ligand_coords_from_build(
     build_pdb: Path,
     ligand_resname: str,
+    *,
+    heavy_only: bool,
 ) -> np.ndarray:
     ligand_blocks: list[list[np.ndarray]] = []
     current_key: tuple[str, str, str] | None = None
     current_coords: list[np.ndarray] = []
+    expected_resname = ligand_resname.upper()
     for line in build_pdb.read_text().splitlines():
         if not line.startswith(("ATOM  ", "HETATM")):
             continue
-        if _pdb_line_resname(line) != ligand_resname:
+        if _pdb_line_resname(line).upper() != expected_resname:
             continue
         key = (line[21:22], line[22:26], line[26:27])
         if current_key is not None and key != current_key:
             ligand_blocks.append(current_coords)
             current_coords = []
         current_key = key
-        if not _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
-            xyz = _pdb_atom_xyz(line)
-            if xyz is not None:
-                current_coords.append(xyz)
+        if heavy_only and _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
+            continue
+        xyz = _pdb_atom_xyz(line)
+        if xyz is not None:
+            current_coords.append(xyz)
     if current_key is not None:
         ligand_blocks.append(current_coords)
     if len(ligand_blocks) <= 1:
@@ -547,6 +552,39 @@ def _extra_ligand_heavy_coords_from_build(
     if not coords:
         return np.empty((0, 3), dtype=float)
     return np.asarray(coords, dtype=float)
+
+
+def _extra_ligand_heavy_coords_from_build(
+    build_pdb: Path,
+    ligand_resname: str,
+) -> np.ndarray:
+    return _extra_ligand_coords_from_build(
+        build_pdb,
+        ligand_resname,
+        heavy_only=True,
+    )
+
+
+def _expanded_box_z_for_bulk_ligand(
+    build_pdb: Path,
+    ligand_resname: str,
+    box_z: float,
+    *,
+    padding: float = _BULK_LIGAND_BOX_Z_PADDING,
+) -> tuple[float, float | None]:
+    """Return ``Lz`` and bulk-ligand z maximum after applying top padding."""
+    bulk_coords = _extra_ligand_coords_from_build(
+        build_pdb,
+        ligand_resname,
+        heavy_only=False,
+    )
+    if bulk_coords.size == 0:
+        return float(box_z), None
+
+    bulk_z_max = float(np.max(bulk_coords[:, 2]))
+    if bulk_z_max <= float(box_z):
+        return float(box_z), bulk_z_max
+    return bulk_z_max + float(padding), bulk_z_max
 
 
 def _water_block_overlaps_coords(
@@ -2585,6 +2623,23 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z_left = _MIN_SDR_SOLVATION_BUFFER_Z
     else:
         buffer_z_left = buffer_z
+
+    if comp == "z" and sdr_abs_z is not None:
+        adjusted_box_z, bulk_z_max = _expanded_box_z_for_bulk_ligand(
+            window_dir / "build.pdb",
+            mol,
+            sdr_abs_z,
+        )
+        if adjusted_box_z > sdr_abs_z:
+            logger.debug(
+                "[create_box:z] Bulk ligand z maximum {:.3f} A exceeds Lz "
+                "{:.3f} A; increasing Lz to {:.3f} A.",
+                bulk_z_max,
+                sdr_abs_z,
+                adjusted_box_z,
+            )
+            abs_z = adjusted_box_z
+            sdr_abs_z = adjusted_box_z
 
     reference_dimensions = None
     membrane_dimensions = None

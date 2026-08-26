@@ -69,6 +69,57 @@ def test_first_atom_position_uses_first_atom_not_center_of_mass(tmp_path: Path) 
     )
 
 
+def test_bulk_ligand_box_z_expands_to_maximum_plus_four(tmp_path: Path) -> None:
+    pdb = tmp_path / "build.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.0, 0.0, 10.0, "C"),
+                "TER\n",
+                _pdb_atom(2, "C1", "LIG", "A", 2, 0.0, 0.0, 126.5, "C"),
+                _pdb_atom(3, "H1", "LIG", "A", 2, 0.0, 0.0, 126.8, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    adjusted, bulk_z_max = box._expanded_box_z_for_bulk_ligand(
+        pdb,
+        "lig",
+        125.7,
+    )
+
+    assert bulk_z_max == pytest.approx(126.8)
+    assert adjusted == pytest.approx(130.8)
+
+
+def test_bulk_ligand_box_z_stays_unchanged_when_ligand_is_below_lz(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "X", "ION", "A", 1, 0.0, 0.0, 10.0, "X"),
+                "TER\n",
+                _pdb_atom(2, "X", "ION", "A", 2, 0.0, 0.0, 124.0, "X"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    adjusted, bulk_z_max = box._expanded_box_z_for_bulk_ligand(
+        pdb,
+        "ION",
+        125.0,
+    )
+
+    assert bulk_z_max == pytest.approx(124.0)
+    assert adjusted == pytest.approx(125.0)
+
+
 def test_select_protein_com_atoms_uses_non_loop_calpha_subset(tmp_path: Path) -> None:
     system_root = tmp_path / "execution"
     manifest_dir = system_root / "all-ligands"
