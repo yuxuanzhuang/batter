@@ -13,11 +13,12 @@ from loguru import logger
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_restraints
 from batter._internal.ops.helpers import (
-    PROTEIN_COM_ATOM_SELECTION,
+    PROTEIN_COM_MAX_ATOMS,
     num_to_mask,
     load_anchors,
     is_atom_line as _is_atom_line,
     field_slice as _field,
+    select_protein_com_atoms,
 )
 from batter.utils import run_with_log, cpptraj
 
@@ -28,7 +29,8 @@ ION_GUARD_TAG = "Ion_Guard"
 BULK_LIGAND_RESTRAINT_HALF_WIDTH = 0
 BULK_LIGAND_RESTRAINT_FORCE = 10.0
 BULK_LIGAND_RESTRAINT_TAG = "Bulk_Lig"
-COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
+PROTEIN_COM_RESTRAINT_ANCHORS = (0.0, 0.0, 3.0, 999.0)
+LIGAND_COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
 ABFE_DIFF_POSE_RADIUS = 8.0
 ABFE_DIFF_POSE_MAX_ANCHORS = 8
 ABFE_DIFF_POSE_MIN_ANCHORS = 4
@@ -237,17 +239,24 @@ def _collect_calpha_and_lig(
     vac_pdb: Path,
     lig_res: str,
     offset: int = 0,
-    stride_to_max_number: int = 50,
+    stride_to_max_number: int = PROTEIN_COM_MAX_ATOMS,
+    *,
+    system_root: Path | None = None,
 ) -> Tuple[List[str], List[str]]:
-    """Return (protein_calpha_serials, ligand_heavy_atom_serials).
+    """Return (stable protein C-alpha serials, ligand heavy-atom serials).
 
-    If either list is longer than `stride_to_max_number`, it is strided so the
-    returned list length is <= `stride_to_max_number`. It is to keep better performance in simulations
+    Both groups are deterministically strided to at most
+    ``stride_to_max_number`` atoms to limit simulation overhead.
     """
     u = mda.Universe(str(vac_pdb))
 
+    protein_calpha_atoms = select_protein_com_atoms(
+        u,
+        system_root=system_root,
+        max_atoms=stride_to_max_number,
+    )
     protein_calpha_serials = (
-        (u.select_atoms(PROTEIN_COM_ATOM_SELECTION).indices + 1).astype(str).tolist()
+        (protein_calpha_atoms.indices + 1).astype(str).tolist()
     )
     ligand_heavy_atom_serials = (
         (
@@ -257,9 +266,6 @@ def _collect_calpha_and_lig(
         .tolist()
     )
 
-    protein_calpha_serials = _stride_atom_serials(
-        protein_calpha_serials, stride_to_max_number
-    )
     ligand_heavy_atom_serials = _stride_atom_serials(
         ligand_heavy_atom_serials, stride_to_max_number
     )
@@ -1569,7 +1575,11 @@ def write_equil_restraints(ctx: BuildContext) -> None:
         anchors.lig_res,
     )
 
-    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res)
+    hvy_h, _ = _collect_calpha_and_lig(
+        vac_pdb,
+        lig_res,
+        system_root=getattr(ctx, "system_root", None),
+    )
 
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
@@ -1599,7 +1609,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
             cvf,
             anchor_atom="1",
             group_atoms=hvy_h,
-            anchors=COM_RESTRAINT_ANCHORS,
+            anchors=PROTEIN_COM_RESTRAINT_ANCHORS,
             strengths=(5.0, 5.0),
         )
 
@@ -1737,7 +1747,12 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
         offset = 3
     else:
         offset = 0
-    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(
+        vac_pdb,
+        lig_res,
+        offset,
+        system_root=getattr(ctx, "system_root", None),
+    )
     ligand_heavy_count = _heavy_atom_count_from_pdb(
         vac_pdb,
         resname=mol,
@@ -1785,7 +1800,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             cvf,
             anchor_atom="1",
             group_atoms=hvy_h,
-            anchors=COM_RESTRAINT_ANCHORS,
+            anchors=PROTEIN_COM_RESTRAINT_ANCHORS,
             strengths=(rcom, rcom),
         )
         if comp not in {"v", "o", "z"}:
@@ -1793,7 +1808,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                 cvf,
                 anchor_atom="2",
                 group_atoms=hvy_lig,
-                anchors=COM_RESTRAINT_ANCHORS,
+                anchors=LIGAND_COM_RESTRAINT_ANCHORS,
                 strengths=(lcom, lcom),
             )
 
@@ -4074,7 +4089,12 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
 
-    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res, 1)
+    hvy_h, _ = _collect_calpha_and_lig(
+        vac_pdb,
+        lig_res,
+        1,
+        system_root=getattr(ctx, "system_root", None),
+    )
 
     # cv.in
     cv_in = windows_dir / "cv.in"
@@ -4084,7 +4104,7 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
             cvf,
             anchor_atom="1",
             group_atoms=hvy_h,
-            anchors=COM_RESTRAINT_ANCHORS,
+            anchors=PROTEIN_COM_RESTRAINT_ANCHORS,
             strengths=(rcom, rcom),
         )
 
@@ -4171,7 +4191,12 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
     lig_res    = anchors.lig_res
 
     offset = 3
-    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(
+        vac_pdb,
+        lig_res,
+        offset,
+        system_root=getattr(ctx, "system_root", None),
+    )
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_ref_pdb.as_posix())
 
@@ -4216,7 +4241,10 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
+        cvf.write(
+            " anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n"
+            % PROTEIN_COM_RESTRAINT_ANCHORS
+        )
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
@@ -4232,7 +4260,10 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_lig:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
+        cvf.write(
+            " anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n"
+            % LIGAND_COM_RESTRAINT_ANCHORS
+        )
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 

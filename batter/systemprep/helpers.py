@@ -19,6 +19,7 @@ except Exception as e:  # pragma: no cover - RDKit optional at runtime
 __all__ = [
     "find_anchor_atoms",
     "get_ligand_candidates",
+    "non_loop_dssp_indices",
     "resolve_receptor_anchor_atoms",
     "select_apo_receptor_anchor_atoms",
     "select_receptor_anchor_atoms",
@@ -755,6 +756,45 @@ def _site_from_ligand_atom(atom: Any) -> _LigandInteractionSite:
     )
 
 
+def non_loop_dssp_indices(
+    protein_dssp: Any,
+    *,
+    min_structure_size: int = 4,
+    trim_structure_ends: int = 0,
+) -> list[int]:
+    """Return zero-based residue positions in stable DSSP helix/sheet runs."""
+    if min_structure_size < 1:
+        raise ValueError("min_structure_size must be >= 1")
+    if trim_structure_ends < 0:
+        raise ValueError("trim_structure_ends must be >= 0")
+    if protein_dssp is None:
+        return []
+
+    dssp = np.asarray(protein_dssp)
+    if dssp.size == 0:
+        return []
+    if dssp.ndim > 1:
+        dssp = dssp[-1]
+    dssp = np.atleast_1d(dssp)
+
+    def _code(value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode(errors="replace").strip().upper()
+        return str(value).strip().upper()
+
+    selected: list[int] = []
+    indexed_codes = [(idx, _code(code)) for idx, code in enumerate(dssp)]
+    for code, group_iter in groupby(indexed_codes, key=lambda item: item[1]):
+        group = [idx for idx, _ in group_iter]
+        if code not in _STABLE_DSSP_CODES or len(group) < min_structure_size:
+            continue
+        if trim_structure_ends:
+            group = group[trim_structure_ends:-trim_structure_ends]
+        selected.extend(group)
+
+    return selected
+
+
 def _dssp_filtered_candidates(
     candidates: mda.AtomGroup,
     protein_dssp: Any,
@@ -763,31 +803,21 @@ def _dssp_filtered_candidates(
     trim_structure_ends: int = 2,
 ) -> mda.AtomGroup:
     empty = candidates.atoms[[]]
-    if protein_dssp is None:
-        return empty
-    dssp = np.asarray(protein_dssp)
-    if dssp.size == 0:
-        return empty
-    if dssp.ndim > 1:
-        dssp = dssp[-1]
-
     protein_residues = candidates.universe.select_atoms(
         "protein and not resname NMA ACE"
     ).residues
-    n_residues = min(len(protein_residues), len(dssp))
-    if n_residues == 0:
+    if len(protein_residues) == 0:
         return empty
 
-    allowed_resindices: set[int] = set()
-    indexed_codes = [(idx, str(code)) for idx, code in enumerate(dssp[:n_residues])]
-    for code, group_iter in groupby(indexed_codes, key=lambda item: item[1]):
-        group = [idx for idx, _ in group_iter]
-        if code not in _STABLE_DSSP_CODES or len(group) < min_structure_size:
-            continue
-        trimmed = group[trim_structure_ends:-trim_structure_ends]
-        allowed_resindices.update(
-            int(protein_residues[idx].resindex) for idx in trimmed
+    allowed_resindices = {
+        int(protein_residues[idx].resindex)
+        for idx in non_loop_dssp_indices(
+            protein_dssp,
+            min_structure_size=min_structure_size,
+            trim_structure_ends=trim_structure_ends,
         )
+        if idx < len(protein_residues)
+    }
 
     if not allowed_resindices:
         return empty

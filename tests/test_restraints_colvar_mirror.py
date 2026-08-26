@@ -1372,6 +1372,7 @@ def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None
     assert disang_text.count("&rst") == 1
     assert "igr1=1,0" in disang_text
     assert "igr1=2,0" not in disang_text
+    assert "r1=0.0, r2=0.0, r3=3.0, r4=999.0," in disang_text
 
 
 def test_ion_guard_uses_rbfe_scmask_site_atom(tmp_path: Path) -> None:
@@ -1493,6 +1494,7 @@ def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:
     disang_text = (windows_dir / "disang.rest").read_text()
     assert "igr1=1,0" in disang_text
     assert "igr1=2,0" not in disang_text
+    assert "r1=0.0, r2=0.0, r3=3.0, r4=999.0," in disang_text
 
 
 def test_ligand_dihedral_force_helper_uses_active_force() -> None:

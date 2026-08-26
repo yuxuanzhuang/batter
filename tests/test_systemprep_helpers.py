@@ -11,6 +11,7 @@ from batter.systemprep import helpers as systemprep_helpers
 from batter.systemprep.helpers import (
     find_anchor_atoms,
     get_ligand_candidates,
+    non_loop_dssp_indices,
     resolve_receptor_anchor_atoms,
     select_apo_receptor_anchor_atoms,
     select_receptor_anchor_atoms,
@@ -62,6 +63,17 @@ def _make_ligand(tmp_path: Path, xyz: tuple[float, float, float]) -> mda.Univers
         ],
     )
     return mda.Universe(str(pdb))
+
+
+def test_non_loop_dssp_indices_keeps_stable_runs_and_supports_no_trim() -> None:
+    assignments = ["-", "H", "H", "H", "H", "-", *(b"E" for _ in range(6))]
+
+    assert non_loop_dssp_indices(assignments) == [1, 2, 3, 4, 6, 7, 8, 9, 10, 11]
+    assert non_loop_dssp_indices(
+        assignments,
+        min_structure_size=6,
+        trim_structure_ends=2,
+    ) == [8, 9]
 
 
 def _make_auto_protein(tmp_path: Path, *, compact: bool = False) -> mda.Universe:

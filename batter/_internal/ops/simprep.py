@@ -22,7 +22,6 @@ from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.helpers import (
-    PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     save_anchors,
     Anchors,
@@ -30,6 +29,7 @@ from batter._internal.ops.helpers import (
     copy_if_exists as _copy_if_exists,
     is_atom_line as _is_atom_line,
     field_slice as _field,
+    select_protein_com_atoms,
 )
 
 from batter.utils import run_with_log
@@ -1707,7 +1707,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # update DUM protein position
     dum_p = ref_vac.select_atoms('resname DUM')[0]
-    dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
+    protein_com_atoms = select_protein_com_atoms(
+        ref_vac,
+        system_root=ctx.system_root,
+    )
+    if protein_com_atoms.n_atoms:
+        dum_p.position = protein_com_atoms.center_of_mass()
+    else:
+        logger.warning(
+            "[protein-com] Leaving the protein DUM coordinate unchanged because "
+            "the system contains no selectable protein atoms."
+        )
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
     dum_l.position = _first_atom_position(ref_res_atoms)

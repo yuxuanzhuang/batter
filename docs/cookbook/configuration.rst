@@ -168,6 +168,19 @@ near-linear frames. If the preferred receptor spacing or ligand-anchor distance
 window has no solution, BATTER warns and uses the best compact, non-collinear
 frame instead.
 
+Protein COM restraint group
+---------------------------
+
+The protein COM-to-DUM restraint uses Cα atoms from contiguous DSSP helix or
+sheet stretches of at least four residues. BATTER evenly strides this group to
+at most 50 atoms and places the protein DUM atom at the COM of that same group.
+The protein COM-to-DUM distance has a 3 Å flat-bottom region
+(``r1=0.0, r2=0.0, r3=3.0, r4=999.0``).
+If DSSP data are unavailable, cannot be mapped one-to-one onto the prepared
+protein, or contain no qualifying stretch, BATTER warns and falls back to all
+protein Cα atoms. If a structure contains no Cα atoms, available protein
+backbone atoms are used as a final fallback.
+
 Component-Specific Inputs
 -------------------------
 

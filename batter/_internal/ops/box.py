@@ -26,12 +26,12 @@ from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import (
     Anchors,
-    PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     run_parmed_hmr_if_enabled,
     merge_first_n_and_lipid_fragments_in_prmtop,
     revised_resids_for_lipid_fragments,
     save_anchors,
+    select_protein_com_atoms,
 )
 from batter._internal.ops.ring_repair import (
     repair_ring_penetrations,
@@ -2925,7 +2925,17 @@ def create_box(ctx: BuildContext) -> None:
 
         # partitions
         final_system_dum = final_system.select_atoms("resname DUM")
-        final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
+        protein_com_atoms = select_protein_com_atoms(
+            final_system,
+            system_root=ctx.system_root,
+        )
+        if protein_com_atoms.n_atoms:
+            final_system_dum[0].position = protein_com_atoms.center_of_mass()
+        else:
+            logger.warning(
+                "[protein-com] Leaving the protein DUM coordinate unchanged because "
+                "the system contains no selectable protein atoms."
+            )
         ligand_residues = final_system.select_atoms(f"resname {mol}").residues
         if comp in {"z", "d"} and len(final_system_dum) > 1 and len(ligand_residues) > 1:
             final_system_dum[1].position = _first_atom_position(ligand_residues[1].atoms)

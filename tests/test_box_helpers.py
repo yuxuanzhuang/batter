@@ -15,6 +15,7 @@ from batter._internal.ops import box
 from batter._internal.ops.helpers import (
     merge_first_n_and_lipid_fragments_in_prmtop,
     revised_resids_for_lipid_fragments,
+    select_protein_com_atoms,
 )
 
 
@@ -66,6 +67,85 @@ def test_first_atom_position_uses_first_atom_not_center_of_mass(tmp_path: Path) 
         box._first_atom_position(universe.select_atoms("resname LIG")),
         [1.0, 2.0, 3.0],
     )
+
+
+def test_select_protein_com_atoms_uses_non_loop_calpha_subset(tmp_path: Path) -> None:
+    system_root = tmp_path / "execution"
+    manifest_dir = system_root / "all-ligands"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dssp": {
+                    "results": [["-", "H", "H", "H", "H", "-", "E", "E"]]
+                }
+            }
+        )
+    )
+    pdb = tmp_path / "protein_com.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(
+                    resid,
+                    "CA",
+                    "ALA",
+                    "A",
+                    resid,
+                    float(resid),
+                    0.0,
+                    0.0,
+                    "C",
+                )
+                for resid in range(1, 9)
+            ]
+            + ["END\n"]
+        )
+    )
+    universe = mda.Universe(str(pdb))
+
+    selected = select_protein_com_atoms(universe, system_root=system_root)
+
+    assert selected.resids.tolist() == [2, 3, 4, 5]
+    np.testing.assert_allclose(selected.center_of_mass(), [3.5, 0.0, 0.0])
+
+
+def test_select_protein_com_atoms_falls_back_on_dssp_count_mismatch(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "execution"
+    manifest_dir = system_root / "all-ligands"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps({"dssp": {"results": [["H", "H", "H", "H"]]}})
+    )
+    pdb = tmp_path / "protein_com_mismatch.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(
+                    resid,
+                    "CA",
+                    "ALA",
+                    "A",
+                    resid,
+                    float(resid),
+                    0.0,
+                    0.0,
+                    "C",
+                )
+                for resid in range(1, 6)
+            ]
+            + ["END\n"]
+        )
+    )
+
+    selected = select_protein_com_atoms(
+        mda.Universe(str(pdb)),
+        system_root=system_root,
+    )
+
+    assert selected.resids.tolist() == [1, 2, 3, 4, 5]
 
 
 def _write_minimal_prmtop(

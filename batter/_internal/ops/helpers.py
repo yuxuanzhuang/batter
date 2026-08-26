@@ -17,6 +17,8 @@ import shutil
 import shlex
 import sys
 
+import MDAnalysis as mda
+import numpy as np
 from loguru import logger
 
 from batter.data import charmmlipid2amber as charmmlipid2amber_csv
@@ -25,6 +27,7 @@ from batter.systemprep import (
     get_buffer_z,
     get_ligand_candidates,
     get_sdr_dist,
+    non_loop_dssp_indices,
     select_ions_away_from_complex,
 )
 from batter.utils import run_with_log
@@ -32,6 +35,7 @@ from batter.utils import run_with_log
 __all__ = [
     "Anchors",
     "PROTEIN_COM_ATOM_SELECTION",
+    "PROTEIN_COM_MAX_ATOMS",
     "get_buffer_z",
     "get_sdr_dist",
     "get_ligand_candidates",
@@ -43,6 +47,7 @@ __all__ = [
     "rewrite_prmtop_reference",
     "run_parmed_hmr_if_enabled",
     "save_anchors",
+    "select_protein_com_atoms",
     "select_ions_away_from_complex",
     "amber_lipid_fragment_patterns",
     "merge_first_n_and_lipid_fragments_in_prmtop",
@@ -52,6 +57,143 @@ __all__ = [
 
 
 PROTEIN_COM_ATOM_SELECTION = "protein and name CA"
+PROTEIN_COM_MAX_ATOMS = 50
+
+
+def _load_system_prep_dssp_results(
+    system_root: Path | None,
+) -> tuple[object | None, str | None]:
+    """Load DSSP results from the nearest system-prep manifest or JSON file."""
+    if system_root is None:
+        return None, "no system root was provided"
+
+    manifest_path: Path | None = None
+    resolved_root = Path(system_root).expanduser().resolve()
+    for root in (resolved_root, *resolved_root.parents):
+        candidate = root / "all-ligands" / "manifest.json"
+        if candidate.is_file():
+            manifest_path = candidate
+            break
+    if manifest_path is None:
+        return None, "no all-ligands/manifest.json was found"
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        return None, f"could not read {manifest_path}: {exc}"
+
+    dssp_info = manifest.get("dssp") if isinstance(manifest, dict) else None
+    if not isinstance(dssp_info, dict):
+        return None, "the system-prep manifest does not contain DSSP data"
+
+    dssp_results = dssp_info.get("results")
+    if dssp_results is not None and np.asarray(dssp_results).size:
+        return dssp_results, None
+
+    dssp_paths: list[Path] = []
+    configured_json = dssp_info.get("json")
+    if configured_json:
+        configured_path = Path(str(configured_json)).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = manifest_path.parent / configured_path
+        dssp_paths.append(configured_path)
+    dssp_paths.append(manifest_path.parent / "protein_input_dssp.json")
+
+    for dssp_path in dssp_paths:
+        if not dssp_path.is_file():
+            continue
+        try:
+            dssp_results = json.loads(dssp_path.read_text())
+        except Exception:
+            continue
+        if np.asarray(dssp_results).size:
+            return dssp_results, None
+
+    return None, "the system-prep DSSP results are missing or empty"
+
+
+def select_protein_com_atoms(
+    universe: mda.Universe,
+    *,
+    system_root: Path | None,
+    max_atoms: int = PROTEIN_COM_MAX_ATOMS,
+) -> mda.AtomGroup:
+    """Select the stable protein C-alpha group used for COM restraints."""
+    if max_atoms <= 0:
+        raise ValueError("max_atoms must be a positive integer")
+
+    protein_atoms = universe.select_atoms("protein and not resname NMA ACE")
+    calphas = universe.select_atoms(
+        "protein and not resname NMA ACE and name CA"
+    )
+    if calphas.n_atoms == 0:
+        calphas = universe.select_atoms(PROTEIN_COM_ATOM_SELECTION)
+    if calphas.n_atoms == 0:
+        if protein_atoms.n_atoms == 0:
+            protein_atoms = universe.select_atoms("protein")
+        fallback_atoms = protein_atoms.select_atoms("name N C O")
+        if fallback_atoms.n_atoms == 0:
+            fallback_atoms = protein_atoms
+        logger.warning(
+            "[protein-com] No protein C-alpha atoms were found; using {} "
+            "available protein atom(s).",
+            fallback_atoms.n_atoms,
+        )
+        selected = fallback_atoms
+    else:
+        selected = calphas
+        dssp_results, reason = _load_system_prep_dssp_results(system_root)
+        if dssp_results is None:
+            logger.warning(
+                "[protein-com] DSSP non-loop selection is unavailable ({}); "
+                "using all {} protein C-alpha atom(s).",
+                reason,
+                calphas.n_atoms,
+            )
+        else:
+            dssp = np.asarray(dssp_results)
+            if dssp.ndim > 1:
+                dssp = dssp[-1]
+            dssp = np.atleast_1d(dssp)
+            protein_residues = protein_atoms.residues
+            if dssp.size != protein_residues.n_residues:
+                logger.warning(
+                    "[protein-com] DSSP/protein residue counts differ ({} vs {}); "
+                    "using all {} protein C-alpha atom(s).",
+                    dssp.size,
+                    protein_residues.n_residues,
+                    calphas.n_atoms,
+                )
+            else:
+                non_loop_positions = non_loop_dssp_indices(
+                    dssp,
+                    min_structure_size=4,
+                    trim_structure_ends=0,
+                )
+                allowed_resindices = {
+                    int(protein_residues[idx].resindex)
+                    for idx in non_loop_positions
+                }
+                non_loop_calphas = calphas[
+                    np.isin(calphas.resindices, list(allowed_resindices))
+                ]
+                if non_loop_calphas.n_atoms:
+                    selected = non_loop_calphas
+                else:
+                    logger.warning(
+                        "[protein-com] DSSP found no helix/sheet run of at least "
+                        "four residues; using all {} protein C-alpha atom(s).",
+                        calphas.n_atoms,
+                    )
+
+    if selected.n_atoms > max_atoms:
+        step = (selected.n_atoms + max_atoms - 1) // max_atoms
+        selected = selected[::step]
+    logger.debug(
+        "[protein-com] Selected {} atom(s) for the protein COM restraint.",
+        selected.n_atoms,
+    )
+    return selected
 
 
 @dataclass(frozen=True)

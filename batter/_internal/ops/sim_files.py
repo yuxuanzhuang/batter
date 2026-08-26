@@ -28,6 +28,7 @@ from batter._internal.ops.fe_defaults import (
 )
 from batter._internal.ops.helpers import format_ranges
 from batter._internal.ops.remd import patch_mdin_file
+from batter.systemprep import non_loop_dssp_indices
 
 pmd = import_parmed()
 from parmed.amber.mask import AmberMask
@@ -52,32 +53,17 @@ def _non_loop_mask_from_dssp_assignments(
     """
     Convert DSSP assignments to a compact AMBER residue range string.
 
-    Keeps contiguous non-loop segments (assignment != '-') with length >= min_len.
-    Default shift-based residue indices.
+    Keeps contiguous helix/sheet segments with length >= ``min_len`` and maps
+    their zero-based DSSP positions to shifted AMBER residue indices.
     """
-    if min_len < 1:
-        raise ValueError("min_len must be >= 1")
-
-    keep: list[int] = []
-    run_start: int | None = None
-    seq = [str(x).strip() for x in assignments]
-
-    for idx, ss in enumerate(seq, start=shift):
-        if ss and ss != "-":
-            if run_start is None:
-                run_start = idx
-            continue
-        if run_start is not None:
-            run_len = idx - run_start
-            if run_len >= min_len:
-                keep.extend(range(run_start, idx))
-            run_start = None
-
-    if run_start is not None:
-        run_len = len(seq) + 1 - run_start
-        if run_len >= min_len:
-            keep.extend(range(run_start, len(seq) + 1))
-
+    keep = [
+        idx + shift
+        for idx in non_loop_dssp_indices(
+            assignments,
+            min_structure_size=min_len,
+            trim_structure_ends=0,
+        )
+    ]
     return format_ranges(keep)
 
 

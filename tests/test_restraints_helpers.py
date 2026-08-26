@@ -1,6 +1,58 @@
+import json
 from pathlib import Path
 
 from batter._internal.ops import restraints
+
+
+def _pdb_atom(
+    serial: int,
+    name: str,
+    resname: str,
+    resid: int,
+    x: float,
+) -> str:
+    record = "ATOM" if resname == "ALA" else "HETATM"
+    return (
+        f"{record:<6}{serial:5d} {name:<4} {resname:>3} A{resid:4d}    "
+        f"{x:8.3f}{0.0:8.3f}{0.0:8.3f}  1.00  0.00           C\n"
+    )
+
+
+def test_collect_calpha_and_lig_uses_non_loop_protein_group(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "all-ligands"
+    manifest_dir.mkdir()
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dssp": {
+                    "results": [["-", "H", "H", "H", "H", "-", "E", "E"]]
+                }
+            }
+        )
+    )
+    vac_pdb = tmp_path / "vac.pdb"
+    vac_pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(resid, "CA", "ALA", resid, float(resid))
+                for resid in range(1, 9)
+            ]
+            + [
+                _pdb_atom(9, "C1", "LIG", 9, 9.0),
+                _pdb_atom(10, "C2", "LIG", 9, 10.0),
+                "END\n",
+            ]
+        )
+    )
+
+    protein_serials, ligand_serials = restraints._collect_calpha_and_lig(
+        vac_pdb,
+        "9",
+        system_root=tmp_path,
+    )
+
+    assert protein_serials == ["2", "3", "4", "5"]
+    assert ligand_serials == ["9", "10"]
 
 
 def test_canonicalize_restraint_expr_uses_vac_pdb_atom_case() -> None:
