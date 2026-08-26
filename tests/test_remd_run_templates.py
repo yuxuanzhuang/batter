@@ -136,6 +136,24 @@ def test_remd_run_templates_use_merged_prmtop(script_name: str) -> None:
     assert "full.hmr.prmtop" not in text
 
 
+@pytest.mark.parametrize("script_name", ["run-local-remd.bash", "run-local-batch.bash"])
+def test_remd_run_templates_use_numbered_restarts(script_name: str) -> None:
+    template = (
+        _repo_root()
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "remd_run_files"
+        / script_name
+    )
+    text = template.read_text()
+
+    assert "-r ${win}/${rst_out}" in text
+    assert 'rst_out="${out_tag}.rst7"' in text
+    assert "md-current.rst7" not in text
+    assert "md-previous.rst7" not in text
+
+
 @pytest.mark.parametrize(
     ("script_name", "template_name"),
     [
@@ -292,6 +310,55 @@ def test_remd_run_templates_write_segmented_cmass_dumpave(
     assert re.search(r"^\s*ntx\s*=\s*5,", text, flags=re.MULTILINE)
     assert "DUMPAVE=z00/cmass-01.txt" in text
     assert "DUMPAVE=cmass.txt" not in text
+    assert (win0 / "md-01.rst7").exists()
+    assert not (win0 / "md-current.rst7").exists()
+    assert not (win0 / "md-previous.rst7").exists()
+
+
+@pytest.mark.parametrize(
+    ("script_name", "template_name", "groupfile_name"),
+    [
+        ("run-local-remd.bash", "mdin-remd-template", "remd/mdin.in.remd.groupfile"),
+        ("run-local-batch.bash", "mdin-batch-template", "mdin.in.groupfile"),
+    ],
+)
+def test_remd_run_templates_resume_from_numbered_restart(
+    tmp_path: Path,
+    script_name: str,
+    template_name: str,
+    groupfile_name: str,
+) -> None:
+    comp_dir, win0, _ = _prepare_component(
+        tmp_path,
+        script_name=script_name,
+        template_name=template_name,
+        total_steps=20,
+        nstlim=10,
+    )
+    (win0 / "md-01.out").write_text("completed segment\n")
+    (win0 / "md-01.rst7").write_text(_restart_text(0.020))
+
+    pmemd_stub = tmp_path / "pmemd-success.sh"
+    _write_success_pmemd_stub(pmemd_stub)
+    env = os.environ.copy()
+    env["PMEMD_MPI_EXEC"] = str(pmemd_stub)
+    env["MPI_EXEC"] = "/bin/bash"
+    env["MPI_FLAGS"] = " "
+
+    result = subprocess.run(
+        ["bash", f"./{script_name}"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    groupfile = (comp_dir / groupfile_name).read_text()
+    assert "-c z00/md-01.rst7" in groupfile
+    assert "-r z00/md-02.rst7" in groupfile
+    assert (win0 / "md-02.rst7").exists()
 
 
 def test_run_local_remd_preserves_template_nstlim_for_short_tail(
@@ -304,7 +371,7 @@ def test_run_local_remd_preserves_template_nstlim_for_short_tail(
         total_steps=15,
         nstlim=10,
     )
-    (win0 / "md-current.rst7").write_text(_restart_text(0.020))
+    (win0 / "md-01.rst7").write_text(_restart_text(0.020))
 
     pmemd_stub = tmp_path / "pmemd-success.sh"
     _write_success_pmemd_stub(pmemd_stub)

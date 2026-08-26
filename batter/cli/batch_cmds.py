@@ -582,9 +582,17 @@ def _remd_time_from_rst(rst_path: Path) -> str | None:
 
 def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
     win0 = comp_dir / f"{comp}00"
-    return _remd_time_from_rst(win0 / "md-current.rst7") or _remd_time_from_rst(
-        win0 / "md-previous.rst7"
-    )
+    numbered_restarts: list[tuple[int, Path]] = []
+    for rst_path in win0.glob("md-*.rst7"):
+        match = re.fullmatch(r"md-(\d+)\.rst7", rst_path.name)
+        if match:
+            numbered_restarts.append((int(match.group(1)), rst_path))
+
+    for _, rst_path in sorted(numbered_restarts, reverse=True):
+        restart_time = _remd_time_from_rst(rst_path)
+        if restart_time is not None:
+            return restart_time
+    return None
 
 
 def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:

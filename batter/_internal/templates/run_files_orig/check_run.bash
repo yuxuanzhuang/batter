@@ -1244,8 +1244,7 @@ cleanup_failed_md_segment() {
               "${pfolder}/${win}/${out_tag}.rst7" \
               "${pfolder}/${win}/${out_tag}.log" \
               "${pfolder}/${win}/${out_tag}.mden" \
-              "${pfolder}/${win}/${cmass_tag}" \
-              "${pfolder}/${win}/md-current.rst7"
+              "${pfolder}/${win}/${cmass_tag}"
     done
 }
 

@@ -103,6 +103,25 @@ def test_collect_remd_tasks_skips_pre_window_failed(tmp_path, monkeypatch) -> No
     assert tasks == []
 
 
+def test_remd_finished_time_uses_latest_numbered_restart(
+    tmp_path: Path, monkeypatch
+) -> None:
+    comp_dir = tmp_path / "z"
+    win0 = comp_dir / "z00"
+    win0.mkdir(parents=True)
+    (win0 / "md-01.rst7").write_text("one\n")
+    (win0 / "md-03.rst7").write_text("three\n")
+    (win0 / "md-current.rst7").write_text("legacy\n")
+
+    monkeypatch.setattr(
+        batch_cmds,
+        "_remd_time_from_rst",
+        lambda path: path.stem,
+    )
+
+    assert batch_cmds._remd_finished_time(comp_dir, "z") == "md-03"
+
+
 def test_batch_cli_remd_renders_run_local_remd(
     tmp_path: Path, monkeypatch
 ) -> None:
