@@ -182,6 +182,11 @@ numbered ``md-*.rst7`` restart files because the window no longer needs a resume
 point. Grouped batch and REMD launchers currently retain numbered restart files
 after writing their component and per-window ``FINISHED`` markers.
 
+When a grouped batch or REMD segment fails, the launcher moves that segment's
+``md-<segment>.*`` files, matching ``cmass-<segment>.txt``, and ``mdinfo`` into
+``<window>/WRONG_FAIL/<timestamp>_job_attempt_<N>/``. This failure archive is
+separate from successful-stage storage cleanup and is retained for diagnosis.
+
 ``analyze``
 -----------
 

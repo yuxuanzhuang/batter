@@ -121,6 +121,10 @@ Key behaviours:
   Completion is tracked with ``FINISHED``/``FAILED`` sentinels, and window
   folders ``<comp>00/`` etc. provide numbered REMD restarts
   (``eq.rst7`` -> ``md-01.rst7`` -> ``md-02.rst7``).
+* If a grouped production segment fails, its ``md-<segment>.*``, matching
+  ``cmass-<segment>.txt``, and ``mdinfo`` files are moved into each window's
+  ``WRONG_FAIL/<timestamp>_job_attempt_<N>/`` directory before retry. The
+  component-level ``ATTEMPT_FAILED_ARCHIVE`` file lists those archive paths.
 * The Slurm body for REMD components is ``SLURMM-BATCH-remd`` sitting in the
   component folder. The generated remote bundled job invokes these component
   helpers and relies on the same sentinels above.

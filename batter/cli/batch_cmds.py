@@ -37,6 +37,13 @@ BATCH_RUN_TEMPLATE = (
     / "remd_run_files"
     / "run-local-batch.bash"
 )
+REMD_RUN_TEMPLATE = (
+    Path(__file__).resolve().parent.parent
+    / "_internal"
+    / "templates"
+    / "remd_run_files"
+    / "run-local-remd.bash"
+)
 BATCH_CHECK_TEMPLATE = (
     Path(__file__).resolve().parent.parent
     / "_internal"
@@ -351,11 +358,17 @@ def _component_blocked_by_pre_window_failure(comp_dir: Path, comp: str) -> bool:
     return pre_window_failed.exists()
 
 
-def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
-    from batter._internal.ops.remd import patch_batch_component_inputs
-    text = BATCH_RUN_TEMPLATE.read_text()
+def _write_grouped_run_script(
+    comp_dir: Path,
+    comp: str,
+    n_windows: int,
+    *,
+    template: Path,
+    script_name: str,
+) -> Path:
+    text = template.read_text()
     text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
-    run_script = comp_dir / "run-local-batch.bash"
+    run_script = comp_dir / script_name
     run_script.write_text(text)
     try:
         run_script.chmod(0o755)
@@ -363,16 +376,40 @@ def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
         pass
 
     check_dst = comp_dir / "check_run.bash"
-    if not check_dst.exists() and BATCH_CHECK_TEMPLATE.exists():
+    if BATCH_CHECK_TEMPLATE.exists():
         check_dst.write_text(BATCH_CHECK_TEMPLATE.read_text())
         try:
             check_dst.chmod(0o755)
         except Exception:
             pass
 
+    return run_script
+
+
+def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
+    from batter._internal.ops.remd import patch_batch_component_inputs
+
+    run_script = _write_grouped_run_script(
+        comp_dir,
+        comp,
+        n_windows,
+        template=BATCH_RUN_TEMPLATE,
+        script_name="run-local-batch.bash",
+    )
+
     patch_batch_component_inputs(comp_dir, comp)
 
     return run_script
+
+
+def _write_remd_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
+    return _write_grouped_run_script(
+        comp_dir,
+        comp,
+        n_windows,
+        template=REMD_RUN_TEMPLATE,
+        script_name="run-local-remd.bash",
+    )
 
 
 def _collect_batch_tasks(exec_path: Path) -> List[BatchTask]:
@@ -495,6 +532,15 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                 n_windows = _extract_n_windows_from_run_script(run_script)
             if n_windows is None:
                 n_windows = _count_component_windows(comp_dir, comp)
+            window_count = _count_component_windows(comp_dir, comp)
+            if window_count and n_windows != window_count:
+                logger.warning(
+                    f"[remd-batch] Window count mismatch under {comp_dir}: "
+                    f"configured={n_windows} dirs={window_count}; using dirs count."
+                )
+                n_windows = window_count
+
+            _write_remd_run_script(comp_dir, comp, n_windows)
 
             tasks.append(
                 RemdTask(

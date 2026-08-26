@@ -113,6 +113,28 @@ def _write_success_pmemd_stub(path: Path) -> None:
     )
 
 
+def _write_failure_pmemd_stub(path: Path) -> None:
+    _write_exe(
+        path,
+        "#!/usr/bin/env bash\n"
+        "groupfile=\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ $1 == -groupfile ]]; then groupfile=$2; shift 2; else shift; fi\n"
+        "done\n"
+        "[[ -f $groupfile ]] || exit 2\n"
+        "while IFS= read -r line; do\n"
+        "  set -- $line\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    case $1 in\n"
+        "      -o|-x|-l|-e|-r|-inf) mkdir -p \"$(dirname \"$2\")\"; echo failed > \"$2\"; shift 2 ;;\n"
+        "      *) shift ;;\n"
+        "    esac\n"
+        "  done\n"
+        "done < \"$groupfile\"\n"
+        "exit 1\n",
+    )
+
+
 def _remove_production_is_complete(check_run: Path) -> None:
     text = check_run.read_text()
     start = text.index("\nproduction_is_complete() {")
@@ -240,11 +262,7 @@ def test_remd_run_templates_reduce_dt_after_retry_failure(
     (win0 / "cmass-01.txt").write_text("stale\n")
 
     fail_stub = tmp_path / "pmemd-fail.sh"
-    _write_exe(
-        fail_stub,
-        "#!/usr/bin/env bash\n"
-        "exit 1\n",
-    )
+    _write_failure_pmemd_stub(fail_stub)
 
     env = os.environ.copy()
     env["PMEMD_MPI_EXEC"] = str(fail_stub)
@@ -264,6 +282,26 @@ def test_remd_run_templates_reduce_dt_after_retry_failure(
     assert result.returncode != 0
     assert _extract_dt(tmpl) == pytest.approx(0.002)
     assert not (win0 / "cmass-01.txt").exists()
+    archive_dirs = list((win0 / "WRONG_FAIL").glob("*_job_attempt_3"))
+    assert len(archive_dirs) == 1
+    archive_dir = archive_dirs[0]
+    for name in (
+        "md-01.out",
+        "md-01.nc",
+        "md-01.rst7",
+        "md-01.log",
+        "md-01.mden",
+        "cmass-01.txt",
+        "mdinfo",
+    ):
+        assert not (win0 / name).exists(), name
+        assert (archive_dir / name).exists(), name
+    marker_paths = {
+        (comp_dir / line).resolve()
+        for line in (comp_dir / "ATTEMPT_FAILED_ARCHIVE").read_text().splitlines()
+        if line
+    }
+    assert marker_paths == {archive_dir.resolve()}
 
 
 @pytest.mark.parametrize(

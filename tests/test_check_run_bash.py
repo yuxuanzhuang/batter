@@ -35,6 +35,67 @@ def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]
     )
 
 
+def test_archive_failed_md_segment_uses_separate_window_archives(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    expected_names = {
+        "md-01.out",
+        "md-01.nc",
+        "md-01.rst7",
+        "md-01.log",
+        "md-01.mden",
+        "md-01.custom",
+        "cmass-01.txt",
+        "mdinfo",
+    }
+    for win in ("z00", "z01"):
+        win_dir = tmp_path / win
+        win_dir.mkdir()
+        for name in expected_names:
+            (win_dir / name).write_text(f"{win}/{name}\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& reset_attempt_failed_archive_marker "
+        "&& archive_failed_md_segment z 1 2 . 4"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    archive_dirs = []
+    for win in ("z00", "z01"):
+        win_dir = tmp_path / win
+        matches = list((win_dir / "WRONG_FAIL").glob("*_job_attempt_4"))
+        assert len(matches) == 1
+        archive_dir = matches[0]
+        archive_dirs.append(archive_dir.resolve())
+        assert {path.name for path in archive_dir.iterdir()} == expected_names
+        for name in expected_names:
+            assert not (win_dir / name).exists(), f"{win}/{name}"
+
+    marker_paths = {
+        (tmp_path / line).resolve()
+        for line in (tmp_path / "ATTEMPT_FAILED_ARCHIVE").read_text().splitlines()
+        if line
+    }
+    assert marker_paths == set(archive_dirs)
+
+
 def test_abfe_window_equilibration_runs_window_eq_in() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     run_local = (

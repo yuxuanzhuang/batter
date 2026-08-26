@@ -237,7 +237,7 @@ if (( remaining_steps > 0 )); then
     echo "[INFO] pmemd step rc=$rc dir=${PFOLDER_ABS} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
         echo "[ERROR] pmemd failed in ${PFOLDER_ABS}; skipping post-step" | tee -a "$log_file"
-        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        archive_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER" "$retry"
         reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
         exit $rc
     fi
@@ -251,7 +251,7 @@ if (( remaining_steps > 0 )); then
         fi
     done
     if (( missing_restart )); then
-        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        archive_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER" "$retry"
         reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
         exit 1
     fi

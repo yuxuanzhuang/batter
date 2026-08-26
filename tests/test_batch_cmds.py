@@ -123,6 +123,27 @@ def test_collect_remd_tasks_skips_pre_window_failed(tmp_path, monkeypatch) -> No
     assert tasks == []
 
 
+def test_collect_remd_tasks_refreshes_grouped_runtime_helpers(
+    tmp_path, monkeypatch
+) -> None:
+    exec_path = tmp_path / "executions" / "rep1"
+    comp_dir = _setup_abfe_component(exec_path, ligand="L1", comp="z")
+    run_script = comp_dir / "run-local-remd.bash"
+    check_script = comp_dir / "check_run.bash"
+    run_script.write_text("#!/bin/bash\nN_WINDOWS=99\n# stale\n")
+    check_script.write_text("# stale\n")
+
+    monkeypatch.setattr(batch_cmds, "components_under", lambda _: ["z"])
+
+    tasks = batch_cmds._collect_remd_tasks(exec_path)
+
+    assert len(tasks) == 1
+    assert tasks[0].n_windows == 1
+    assert "N_WINDOWS=1" in run_script.read_text()
+    assert "archive_failed_md_segment" in run_script.read_text()
+    assert check_script.read_text() == batch_cmds.BATCH_CHECK_TEMPLATE.read_text()
+
+
 def test_remd_finished_time_uses_latest_numbered_restart(
     tmp_path: Path, monkeypatch
 ) -> None:
