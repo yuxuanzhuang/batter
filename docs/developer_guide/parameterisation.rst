@@ -46,6 +46,11 @@ errors and missing protonation states surface as exceptions; callers should surf
 those errors up the pipeline rather than silently skipping ligands. Validation also
 canonicalises SMILES so cache keys stay stable across input formats.
 
+Writers targeting the same content hash are serialized with a file lock under
+``<parameter-store>/.locks/``. A process that waits for another run rechecks the
+cache while holding the lock, reuses a complete entry, and rebuilds an incomplete
+entry. This prevents concurrent executions from publishing partial artifacts.
+
 Output layout
 -------------
 

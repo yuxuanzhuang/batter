@@ -69,19 +69,28 @@ Installation tips (clusters)
 - Building the environment can be storage hungry and slow. Try
   `micromamba <https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html>`_
   and/or run the install on a compute node.
-- VMD often needs X11 forwarding and its own shared libraries on clusters. Set
+- Optional VMD-based inspection often needs X11 forwarding and its own shared
+  libraries on clusters. Set
   ``LD_LIBRARY_PATH`` to include ``$CONDA_PREFIX/lib/vmd`` (or your env path) and load
   any required ``x11``/``system`` modules before launching VMD. Override the executable
   with ``BATTER_VMD`` if needed.
 
 This installs in editable mode so your code changes are immediately reflected.
 
-To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
-building docs, or running simple tests—install only the package itself:
+To use the Python package without the external AMBER/OpenFF simulation stack—for
+example, for lightweight CLI commands such as ``batter report-jobs`` or simple
+tests—install the package itself:
 
 .. code-block:: bash
 
    pip install .
+
+Documentation builds use the separate environment specification under ``docs/``::
+
+   cd docs
+   conda env create -f requirements.yaml
+   conda activate docs_batter
+   make html
 
 Quickstart
 -------------------------------
@@ -115,7 +124,8 @@ Equilibration analysis outputs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 After equilibration analysis, BATTER copies the main per-ligand reports into
-``simulations/<ligand>/equil/results/`` with a ``README.txt``. These include
+``<output_folder>/executions/<run_id>/simulations/<ligand>/equil/results/`` with
+a ``README.txt``. These include
 ``simulation_analysis.png`` with frame and simulation-time axes, the selected
 representative snapshot, ``stable_boresch_distance.json``, and ProLIF outputs:
 ``prolif_interactions.json``, ``prolif_interactions_timeseries.csv.gz``,

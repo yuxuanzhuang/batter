@@ -168,7 +168,7 @@ def test_cli_batter_run_dry(
 @pytest.mark.heavy
 def test_runs_prepare_fe(tmp_path: Path) -> None:
     """
-    test that --only-equil reuse of a pre-equilibrated folder drives only FE prep.
+    Test that a dry run can reuse a pre-equilibrated folder through FE setup.
 
     This test is **skipped by default** to avoid heavy work. Enable it by setting:
         BATTER_TEST_RUN_CLI=1

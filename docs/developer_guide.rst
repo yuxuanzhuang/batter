@@ -29,7 +29,7 @@ Code Layout
 .. code-block:: text
 
    batter/                     # Modern package (public API, pipelines, builders)
-   batter_v1/                  # Legacy BAT.py compatibility layer (frozen)
+   batter_v1/                  # Legacy BAT.py compatibility layer
    docs/                       # Sphinx sources (user + developer guides)
    examples/                   # Reference YAML workflows and restraint templates
    tests/                      # Pytest suite covering configs, pipelines, exec, etc.
@@ -89,14 +89,16 @@ the stages below:
    (``MABFEBuilder`` or ``MASFEBuilder``) to stage shared inputs under
    ``<output_folder>/executions/<run_id>/``.
 3. **Ligand staging** – Copy ligand files under ``executions/<run_id>/simulations/<LIG>/inputs``.
-4. **Parameterisation** – Run the ``param_ligands`` step once to populate
-   ``executions/<run_id>/artifacts/ligand_params``.
-5. **Pipeline construction** – Select an ABFE/ASFE pipeline using
+4. **Parameterisation** – Run the ``param_ligands`` step once to populate the
+   shared content-addressed store under ``<output_folder>/ligand_params`` and
+   write an execution-local index under ``artifacts/ligand_params``.
+5. **Pipeline construction** – Select the protocol-specific pipeline using
    :func:`~batter.orchestrate.pipeline_utils.select_pipeline`.
-6. **Execution** – Drive each pipeline phase on the chosen backend
-   (:class:`~batter.exec.local.LocalBackend` or :class:`~batter.exec.slurm.SlurmBackend`).
-   Step handlers consume typed :class:`~batter.pipeline.payloads.StepPayload` objects.
-7. **Result packaging** – Persist window outputs and summary statistics using
+6. **Execution** – Drive each pipeline phase through the active
+   :class:`~batter.exec.local.LocalBackend`. Step handlers consume typed
+   :class:`~batter.pipeline.payloads.StepPayload` objects and use
+   :class:`~batter.exec.slurm_mgr.SlurmJobManager` for simulation-job submission.
+7. **Result packaging** – Persist analysis artifacts and summary statistics using
    :class:`~batter.runtime.fe_repo.FEResultsRepository`, enabling portable analysis.
 
 Configuration Layer
@@ -117,7 +119,8 @@ Configuration Layer
   specification produced by :meth:`RunConfig.resolved_sim_config`. The
   developer-facing configuration never includes this model directly, but the
   developer guide documents available fields and the protocol-specific
-  validations (e.g., ABFE requires ``z_steps*``; ASFE requires ``y_steps*``).
+  validations (for example, ABFE requires ``z_n_steps``; ASFE requires
+  ``y_n_steps`` and ``m_n_steps``).
 
 Systems and Builders
 ====================
@@ -169,8 +172,9 @@ Parameterisation
 *Module:* ``batter.param.ligand``
 
 - :func:`~batter.param.ligand.batch_ligand_process` – Performs ligand force-field
-  assignment, producing a content-addressed store under ``artifacts/ligand_params``.
-  Used by the ``param_ligands`` handler to distribute parameter files.
+  assignment, producing a shared content-addressed parameter store. The
+  ``param_ligands`` handler records links in ``artifacts/ligand_params/index.json``
+  and copies the selected files into each ligand's ``params/`` directory.
 
 Pipelines and Payloads
 ======================
@@ -183,8 +187,9 @@ Pipelines and Payloads
   ``step.params`` remains as a compatibility alias.
 - :class:`~batter.pipeline.pipeline.Pipeline` – Topologically orders steps and invokes
   the backend through :meth:`run`.
-- :mod:`batter.pipeline.factory` – Builds canonical ABFE/ASFE pipelines. Pipelines are
-  expressed in terms of :class:`~batter.pipeline.payloads.StepPayload` and
+- :mod:`batter.pipeline.factory` – Builds the canonical ABFE, ABFE-diff, ligand
+  restraint, RBFE, RBFE-SEPTOP, ASFE, and MD pipelines. Pipelines are expressed
+  in terms of :class:`~batter.pipeline.payloads.StepPayload` and
   :class:`~batter.pipeline.payloads.SystemParams`.
 - :mod:`batter.pipeline.payloads` – Defines the typed payload and system-parameter models.
   See :doc:`developer_guide/pipeline_payloads_and_metadata` for details.
@@ -197,8 +202,11 @@ Execution Backends
 
 - :class:`~batter.exec.base.ExecBackend` – Shared protocol implemented by backends.
 - :class:`~batter.exec.local.LocalBackend` – Runs Python handlers directly (serial or joblib).
-- :class:`~batter.exec.slurm.SlurmBackend` – Submits SLURM jobs via
-  :class:`~batter.exec.slurm_mgr.SlurmJobManager`.
+- :class:`~batter.exec.slurm.SlurmBackend` – Reserved backend implementation;
+  ``backend: slurm`` is currently rejected by configuration validation. Keep
+  ``backend: local`` and use ``batter run --slurm-submit`` for a manager job.
+- :class:`~batter.exec.slurm_mgr.SlurmJobManager` – Submits and monitors the
+  simulation jobs requested by handlers.
 - Handler modules under ``batter/exec/handlers`` implement step-specific logic
   (system prep, parameterisation, equilibration, FE production, analysis). Each handler
   receives a :class:`~batter.pipeline.payloads.StepPayload` and a
@@ -216,7 +224,7 @@ Orchestration
    (MABFE-family protocols use ``MABFE``; ``asfe`` uses ``MASFE``; overrides via
    ``run.system_type`` remain for backward compatibility).
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
-4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
+4. Construct the protocol-specific pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.
 5. Execute parent-only steps (``system_prep``, ``param_ligands``, and
    ``prepare_rbfe`` for RBFE).
@@ -257,21 +265,27 @@ The structure below illustrates an ABFE execution root (``<output_folder>/execut
    executions/<run_id>/
    ├── artifacts/
    │   ├── config/
+   │   │   ├── run_config.hash
+   │   │   ├── run_config.normalized.json
    │   │   ├── sim_overrides.json
    │   │   └── sim.resolved.yaml
    │   └── ligand_params/
    │       ├── index.json
-   │       └── LIG1/
-   │           ├── lig.mol2
-   │           └── metadata.json
+   │       └── ligand_manifest.tsv
    ├── simulations/
    │   ├── LIG1/
    │   │   ├── inputs/ligand.sdf
-   │   │   └── fe/...
+   │   │   ├── params/...
+   │   │   ├── equil/...
+   │   │   └── fe/
+   │   │       └── Results/Results.dat
    │   └── LIG2/
    │       └── ...
-   ├── batter.run.log
-   └── fe/Results/Results.dat     (per-ligand directories once analysis finishes)
+   └── batter.run.log
+
+The shared parameter cache is a sibling of ``executions/`` under
+``<output_folder>/ligand_params/<content-hash>/`` unless
+``create.param_outdir`` overrides it.
 
 Refer to :mod:`batter.orchestrate.markers` for the sentinel files used to detect
 completion or failure of each phase.

@@ -20,15 +20,18 @@ Quick walkthrough
 embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlaid to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – An execution folder will be created under ``<run.output_folder>/executions/``
-   to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
-   resumed from the last successful step.
+#. **system staging and loading** – An execution folder is created under
+   ``<run.output_folder>/executions/`` for working files and logs; portable FE
+   records are written separately under ``<run.output_folder>/results/``. With
+   ``run_id: auto``, BATTER reuses the most recent compatible execution or
+   creates a timestamped ID when no compatible execution exists. An explicit
+   existing run ID resumes from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
    options to choose charges (AM1-BCC by default)
 #. **Equilibration system preparation** – builds solvated/membrane-embedded
    systems with the ligand in the binding site.
-#. **Equilibration** – Steps to run before FE production run. During this phase,
-   the ligand and protein are not restrained (unless explicitly configured).
+#. **Equilibration** – Run the generated pre-production equilibration protocol,
+   including its staged positional and anchor restraints.
    If the ligand unbinds from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
@@ -128,7 +131,7 @@ Generating Simulation Inputs
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.
    - ``create.system_name`` – label used in reports.
-   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
+   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligands_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
    - ``create.anchor_atoms`` – Optional receptor-anchor override. In most runs
      this can be omitted; BATTER will choose anchors automatically and write the
@@ -186,7 +189,7 @@ Generating Simulation Inputs
 
    Production runs take hours to days depending on system size, the number of ligands,
    and available hardware. Progress is streamed to the terminal and to
-   ``executions/<run_id>/logs/batter.log``.
+   ``executions/<run_id>/batter.run.log``.
 
 Submitting the manager job via SLURM (RECOMMENDED)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -228,11 +231,13 @@ Handy CLI Flags
 ``--clean-failures / --no-clean-failures``
     Remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning a previous execution.
 ``--only-equil / --full``
-    Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+    Stop after FE window preparation and FE equilibration, before production.
+    This is useful for validating a pre-production setup or preparing a later
+    ``batter batch`` submission.
 ``--dry-run``
     Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``
-    Override execution paths without touching ``system.*`` fields.
+    Override execution paths without editing the YAML.
 ``--slurm-submit`` / ``--slurm-manager-path``
     Switch between local execution and SLURM submission (with an optional custom header).
 
@@ -288,8 +293,8 @@ Use the CLI helpers to inspect them::
     batter fe show <run.output_folder> <run_id> --ligand <ligand>
 
 ``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
-``fe show`` dives into per-window data; use ``--ligand`` when the run produced multiple ligand
-records. CSV/JSON exports live alongside the results on disk, and convergence plots
+``fe show`` opens one saved record; use ``--ligand`` when the run produced multiple ligand
+records. ``index.csv`` and ``record.json`` live alongside the results on disk, and convergence plots
 appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`../developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing). For a file-by-file description of the portable repository written under

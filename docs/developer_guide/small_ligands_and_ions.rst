@@ -10,7 +10,7 @@ The feature spans three layers:
 * build/restraint preparation permits partial ligand anchors only when the ligand
   is physically too small for a full frame;
 * FE restraint preparation can add ion guard lower walls so bulk ions do not
-  approach the bound or solvent ligand reference atoms during alchemical windows;
+  approach the binding-site ligand reference atom during alchemical windows;
 * ABFE z-window restraint preparation adds a bulk-ligand flat-bottom distance
   restraint between the first bound ligand atom and the first bulk ligand atom;
 * analysis applies an analytical reduced external-restraint correction when
@@ -132,13 +132,14 @@ For ABFE z-windows with a bound ligand and a translated bulk-solvent ligand copy
 BATTER no longer appends the bulk ligand atom to the positional ``ATOM 1 2``
 restraint in ``mdin-template``. Instead, ``disang.rest`` receives a separate
 ``#Bulk_Lig`` flat-bottom restraint between AMBER atom 2 in the binding-site
-ligand and the first heavy atom in the bulk ligand copy:
+ligand and the literal first atom in the bulk ligand copy. The current
+flat-bottom half-width is zero, so both inner bounds are ``0.0``:
 
 .. code-block:: text
 
    &rst
      iat=-1,-1,
-     r1=-999.0, r2=-3.0, r3=3.0, r4=999.0,
+     r1=-999.0, r2=0.0, r3=0.0, r4=999.0,
      rk2=10.0, rk3=10.0,
      igr1=2,0,
      igr2=<bulk first atom>,0,

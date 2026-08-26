@@ -3,7 +3,7 @@ Analysis Toolkit
 =====================
 
 BATTER ships with an analysis package that focuses on
-post-processing ABFE/ASFE outputs with MBAR and alchemlyb, validating replica-exchange logs.
+post-processing FE outputs with MBAR and alchemlyb, validating replica-exchange logs.
 This page summarises the most common entry points so you can reuse them in notebooks or bespoke pipelines.
 
 Component Free-Energy Analysis
@@ -31,16 +31,17 @@ Minimal example::
     from batter.analysis.analysis import MBARAnalysis
 
     analysis = MBARAnalysis(
-        lig_folder="work/adrb2/simulations/LIG1",
-        component="e",
+        lig_folder="work/adrb2/executions/rep1/simulations/LIG1/fe",
+        component="z",
         windows=list(range(21)),
         temperature=310.0,
+        dt=0.004,
         energy_unit="kcal/mol",
         detect_equil=True,
     )
     analysis.run_analysis()
     print(analysis.fe, "+/-", analysis.fe_error)
-    analysis.plot_convergence(save_path="lig1_e_convergence.png")
+    analysis.plot_convergence(save_path="lig1_z_convergence.png")
 
 Config-driven trimming
 ======================
@@ -58,6 +59,8 @@ scripts, set both arguments when instantiating ``MBARAnalysis``::
         ...,
         analysis_start_step=sim_cfg.analysis_start_step,
         detect_equil=sim_cfg.detect_equil,
+        dt=sim_cfg.dt,
+        ntwx=sim_cfg.ntwx,
     )
     analysis.run_analysis()
 

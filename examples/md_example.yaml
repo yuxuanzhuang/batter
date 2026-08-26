@@ -45,8 +45,6 @@ create:
 run:
   # top-level work directory for executions/ and results/
   output_folder: adrb2_A_md
-  # stop after system setup/equilibration preparation when true
-  only_fe_preparation: false
   # prepare inputs without launching MD
   dry_run: false
   # execution directory name; auto reuses or creates a run id as needed

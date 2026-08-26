@@ -132,11 +132,13 @@ class ISystemBuilder(Protocol):
         """
         Execute the full builder lifecycle inside its working directory:
         1) _build_complex
-        2) _create_box
-        3) _restraints
-        4) _pre_sim_files
-        5) _sim_files
-        6) _run_files
+        2) _create_amber_files
+        3) _create_simulation_dir or copy the scaffold into a window
+        4) _create_box (scaffold only)
+        5) _restraints
+        6) _pre_sim_files (scaffold only)
+        7) _sim_files
+        8) _run_files
 
         Returns
         -------
@@ -151,6 +153,14 @@ class ISystemBuilder(Protocol):
         Prepare/align system files and locate anchors.
         Return False to signal the pipeline that anchors were not found.
         """
+        ...
+
+    def _create_amber_files(self) -> None:
+        """Create the component's rendered AMBER template directory."""
+        ...
+
+    def _create_simulation_dir(self) -> None:
+        """Populate the component scaffold directory."""
         ...
 
     def _create_box(self) -> None:

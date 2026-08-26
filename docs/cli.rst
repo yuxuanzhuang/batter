@@ -28,8 +28,8 @@ Options:
 ``--clean-failures / --no-clean-failures``
    Clear ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning an execution.
 ``--only-equil / --full``
-   Run only equilibration preparation steps. FE preparation is still performed (up to
-   ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.
+   For FE protocols, run through FE window preparation and FE equilibration,
+   then stop before FE production and analysis.
 ``--only-rbfe-network / --full-rbfe``
    For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
    ``rbfe_network.json`` are written so the planned ligand network can be reviewed.
@@ -141,7 +141,7 @@ To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
 
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window. By default existing analysis outputs are preserved;
-pass ``--overwrite`` to regenerate them. Analysis uses 50 MBAR bootstrap resamples by
+pass ``--overwrite`` to regenerate them. Analysis uses 10 MBAR bootstrap resamples by
 default; pass ``--n-bootstrap`` to override this. Very sparse analyses may reduce or
 disable bootstrapping for that component and log the effective count in the component
 results JSON. Analysis failures are logged and skipped by default; pass
@@ -300,7 +300,7 @@ you can optimise or analyse lambda schedules without leaving the main CLI.
        -T 310 \
        --out sched.ar.z.dat \
        --plot sched.ar.z.png \
-       ADRB2_I/rep1/fe/pose0/sdr/z
+       work/adrb2/executions/rep1/simulations/LIG1/fe/z
 
 Key options:
 

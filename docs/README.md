@@ -1,23 +1,17 @@
-# Compiling batter's Documentation
+# Building BATTER's Documentation
 
-The docs for this project are built with [Sphinx](http://www.sphinx-doc.org/en/master/).
-To compile the docs, first ensure that the necessary dependencies are installed.
+BATTER's documentation is built with [Sphinx](https://www.sphinx-doc.org/). From
+this directory, create the dedicated environment and build the HTML output:
 
-
-
-Once installed, you can use the `Makefile` in this directory to compile static HTML pages by
 ```bash
+conda env create -f requirements.yaml
+conda activate docs_batter
 make html
 ```
 
-The documentation contains default pages for "Getting Started", "User Guide", "Developer Guide" and API reference. 
-We recommend adopting these sections of documentation for your project to ensure comprehensive documentation for all aspects of your project.
+The generated site starts at `_build/html/index.html`. The source tree contains
+the getting-started guide, workflow tutorials, cookbook, CLI/API references, and
+developer guide.
 
-The compiled docs will be in the `_build` directory and can be viewed by opening `index.html` (which may itself 
-be inside a directory called `html/` depending on what version of Sphinx is installed).
-
-
-To host the docs on [Read the Docs](https://readthedocs.org/), create a ``.readthedocs.yaml``
-configuration in the repository root that points to this directory and installs
-``docs/requirements.yaml``. After connecting the repo on RTD, update the default branch
-as needed under the project settings.
+Read the Docs uses the repository's existing `.readthedocs.yaml`, which points at
+`docs/conf.py` and installs `docs/requirements.yaml`.

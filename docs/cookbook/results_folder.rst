@@ -41,6 +41,7 @@ such as:
 * ``canonical_smiles``, ``original_name``, and ``original_path`` when available
 * ``protocol``
 * ``analysis_start_step`` and requested ``n_bootstraps``
+* ``include_in_analysis`` for aggregate Cinnabar filtering
 * ``status`` and ``failure_reason``
 * ``created_at``
 

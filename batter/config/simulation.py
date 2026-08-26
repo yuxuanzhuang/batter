@@ -399,7 +399,11 @@ class SimulationConfig(BaseModel):
         description="Enable REMD execution (submission only; inputs are always prepared).",
     )
     remd_nstlim: int = Field(
-        100, description="Steps per REMD segment (applied to ``mdin-*-remd`` copies)."
+        1000,
+        description=(
+            "MD steps between REMD exchange attempts; written to "
+            "``mdin-remd-template`` as ``nstlim``."
+        ),
     )
     slurm_header_dir: Path = Field(
         default_factory=lambda: Path.home() / ".batter",
@@ -494,7 +498,7 @@ class SimulationConfig(BaseModel):
         "yes",
         description=(
             "FE-only ion guard restraints that keep configured bulk ions at least "
-            "15 Å from the bound and solvent ligand reference atoms."
+            "10 Å from the binding-site ligand reference atom."
         ),
     )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(

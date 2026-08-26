@@ -36,7 +36,8 @@ def select_pipeline(
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
-        When ``True``, truncate the pipeline after FE preparation steps.
+        For FE protocols, when ``True``, truncate the pipeline after FE
+        equilibration, before FE production and analysis.
     sys_params : SystemParams or dict, optional
         Extra parameters passed to system-level pipeline steps.
 

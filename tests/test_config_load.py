@@ -484,6 +484,11 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
     assert cfg.remd_nstlim == 1000
 
 
+def test_simulation_config_direct_remd_nstlim_default() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.remd_nstlim == 1000
+
+
 def test_fesim_remd_block():
     args = FESimArgs.model_validate({"remd": {"nstlim": 200}})
     assert args.remd.nstlim == 200
@@ -582,6 +587,32 @@ fe_sim:
     )
 
     cfg = RunConfig.load(yaml_path)
+
+    assert cfg.create.extra_conformation_restraints == conf_json.resolve()
+
+
+def test_load_run_config_resolves_relative_conformation_restraints(tmp_path: Path) -> None:
+    conf_json = tmp_path / "rest.json"
+    conf_json.write_text("[]")
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text(
+        """
+protocol: abfe
+backend: local
+create:
+  system_name: sys
+  ligand_paths:
+    LIG: lig.sdf
+  extra_conformation_restraints: rest.json
+run:
+  output_folder: out
+fe_sim:
+  lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(yaml_path)
 
     assert cfg.create.extra_conformation_restraints == conf_json.resolve()
 

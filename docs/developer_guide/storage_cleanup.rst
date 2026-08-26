@@ -177,9 +177,10 @@ Preserved during production:
 * all ``cmass*`` files;
 * ``job_attempt.txt``, ``production-start.ps``, ``run.log`` and status markers.
 
-After a production window writes ``output.pdb`` and ``FINISHED``, numbered
-``md-*.rst7`` restart files are removed because the window no longer needs a
-resume point.
+After a single-window launcher writes ``output.pdb`` and ``FINISHED``, it removes
+numbered ``md-*.rst7`` restart files because the window no longer needs a resume
+point. Grouped batch and REMD launchers currently retain numbered restart files
+after writing their component and per-window ``FINISHED`` markers.
 
 ``analyze``
 -----------

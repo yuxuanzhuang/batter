@@ -514,7 +514,7 @@ class FESimArgs(BaseModel):
         "yes",
         description=(
             "Add FE-stage ion guard flat-bottom restraints that keep configured "
-            "bulk ions at least 15 Å from the bound and solvent ligand reference atoms."
+            "bulk ions at least 10 Å from the binding-site ligand reference atom."
         ),
     )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
@@ -1109,7 +1109,10 @@ class RunSection(BaseModel):
     )
     only_fe_preparation: bool = Field(
         False,
-        description="When true, stop the workflow after FE preparation.",
+        description=(
+            "For FE protocols, stop after FE window preparation and FE "
+            "equilibration, before FE production."
+        ),
     )
     only_rbfe_network: bool = Field(
         False,
@@ -1130,21 +1133,24 @@ class RunSection(BaseModel):
     )
     batch_mode: bool = Field(
         False,
-        description="When true, run SLURM jobs inline via srun inside the manager allocation instead of submitting with sbatch.",
+        description=(
+            "Reserved legacy option; the current orchestrator rejects true. "
+            "Use the separate `batter batch` command for bundled production."
+        ),
     )
     batch_gpus: int | None = Field(
         None,
         ge=0,
-        description="GPUs available to the manager process for batch_mode; auto-detected from SLURM env when omitted.",
+        description="Reserved legacy GPU count for run.batch_mode.",
     )
     batch_gpus_per_task: int = Field(
         1,
         ge=1,
-        description="GPUs to assign per task when batch_mode is enabled.",
+        description="Reserved legacy per-task GPU count for run.batch_mode.",
     )
     batch_srun_extra: List[str] = Field(
         default_factory=list,
-        description="Extra srun flags appended when launching tasks in batch_mode.",
+        description="Reserved legacy srun flags for run.batch_mode.",
     )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
@@ -1244,7 +1250,11 @@ class RunConfig(BaseModel):
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
-        "local", description="Execution backend."
+        "local",
+        description=(
+            "Execution backend. Only 'local' is currently accepted; use "
+            "'batter run --slurm-submit' for SLURM manager submission."
+        ),
     )
 
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")

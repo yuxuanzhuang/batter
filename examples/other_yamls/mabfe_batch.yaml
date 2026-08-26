@@ -1,4 +1,8 @@
 version: 1
+# Prepare this workflow with ``batter run ... --only-equil`` (or leave
+# ``only_fe_preparation`` enabled below), then generate the production job with
+# ``batter batch -e ABFE_simulations/executions/rep_batch``. Batch production
+# uses REMD by default; pass ``--no-remd`` only for standard grouped execution.
 # workflow family: abfe, asfe, rbfe, or md
 protocol: abfe
 # execution backend; these examples use the local orchestrator
@@ -44,8 +48,8 @@ create:
 run:
   # top-level work directory for executions/ and results/
   output_folder: ABFE_simulations
-  # stop after shared prep/equilibration and FE window setup when true
-  only_fe_preparation: false
+  # stop after FE window setup/equilibration, before FE production
+  only_fe_preparation: true
   # prepare inputs without launching MD
   dry_run: false
   # execution directory name; use distinct ids for replicates
@@ -62,11 +66,6 @@ run:
     partition: owners
     # requested wall-clock time for the manager submission
     time: "12:00:00"
-
-  # enable component-level batch execution helpers
-  batch_mode: true
-  # number of GPUs to request for the generated batch run
-  batch_gpus: 4
 
 fe_sim:
   # 48 lambda windows

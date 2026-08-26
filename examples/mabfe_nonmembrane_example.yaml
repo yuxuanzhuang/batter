@@ -38,7 +38,7 @@ create:
 run:
   # top-level work directory for executions/ and results/
   output_folder: brd4_mabfe
-  # stop after shared prep/equilibration and FE window setup when true
+  # stop after FE window setup/equilibration, before FE production
   only_fe_preparation: false
   # prepare inputs without launching MD
   dry_run: false

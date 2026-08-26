@@ -11,14 +11,20 @@ Directory Conventions
 ---------------------
 
 Every builder receives a :class:`~batter._internal.builders.interfaces.BuildContext`
-that points at a per-ligand working directory::
+that points at the current stage/component working directory. For example::
 
    simulations/<LIGAND>/
-   ├── q_build_files/         # Shared build artifacts (build.pdb, anchors, dum.*)
-   ├── q_amber_files/         # Amber templates for equilibration
-   ├── q_run_files/           # Job scripts, logs
-   ├── e_build_files/         # Per-component equivalents (e, v, o, z, y, ...)
-   └── ...
+   |-- equil/                 # working_dir for component q
+   |   |-- q_build_files/    # Build artifacts (build.pdb, anchors, dum.*)
+   |   |-- q_amber_files/    # AMBER templates for equilibration
+   |   `-- q_run_files/      # Job scripts and logs
+   `-- fe/
+       `-- <COMP>/           # working_dir for one FE component
+           |-- <COMP>_build_files/
+           |-- <COMP>_amber_files/
+           |-- <COMP>_run_files/
+           |-- <COMP>-1/     # Prepared scaffold
+           `-- <COMP>00/ ... # Lambda windows
 
 The ``ctx.build_dir`` / ``ctx.amber_dir`` helpers abstract these paths so ops like
 ``create_box`` can stage files without duplicating directory logic. Always write
@@ -66,9 +72,15 @@ mdin templates. The runtime scripts (``run-local.bash``, ``run-local-vacuum.bash
 ``run-equil.bash``) call ``parse_total_steps`` in ``check_run.bash`` to read that
 marker and ``parse_nstlim`` to pick the first ``nstlim`` as the chunk length. Each
 invocation runs one segment, writes the matching numbered restart
-(``md-01.rst7``, ``md-02.rst7``, ...), and returns; rerun the script to
-continue until ``total_steps`` is reached. Avoid deleting or renaming the
-comment when hand editing templates.
+(``md-01.rst7``, ``md-02.rst7``, ...), output, and trajectory, then returns;
+rerun the script to continue until ``total_steps`` is reached. Avoid deleting
+or renaming the comment when hand editing templates.
+
+Target FE windows use a 50 ps, five-stage equilibration handoff. The generated
+``eq-handoff-*.in`` files keep DUM positional restraints fixed while reducing
+the ligand-anchor or RBFE common-core restraint from 1.0 to 0.0 kcal/mol/A².
+Successful component equilibration retains the final ``eq.rst7`` and removes
+the transient handoff inputs unless ``KEEP_FE_EQUIL_ARTIFACTS=1`` is set.
 
 Config field consumers
 ----------------------
@@ -92,17 +104,22 @@ Builder Lifecycle
 Each :class:`batter._internal.builders.base.BaseBuilder` subclass implements the hook
 methods executed by :meth:`BaseBuilder.build`:
 
-1. ``_build_complex`` – Align systems, detect anchors, and populate ``build_dir``.
-2. ``_create_box`` – Write solvated/vacuum topologies using the registered ``create_box`` op.
-3. ``_restraints`` – Generate component-specific restraints.
-4. ``_pre_sim_files`` (optional) – Any additional preprocessing before rendering inputs.
-5. ``_sim_files`` – Produce AMBER mdin/mini/eq decks.
-6. ``_run_files`` – Emit SLURM/local job scripts.
+1. ``_build_complex`` – Align systems, detect anchors, and populate ``build_dir``
+   for scaffold builds (``win == -1``).
+2. ``_create_amber_files`` – Render the component's shared AMBER templates.
+3. ``_create_simulation_dir`` – Populate the scaffold directory; regular windows
+   instead copy the prepared ``<comp>-1`` scaffold.
+4. ``_create_box`` – Write scaffold solvated/vacuum topologies using the registered
+   ``create_box`` op.
+5. ``_restraints`` – Generate component-specific restraints for the scaffold or window.
+6. ``_pre_sim_files`` (optional) – Preprocess the scaffold before rendering inputs.
+7. ``_sim_files`` – Produce AMBER mdin/mini/eq decks.
+8. ``_run_files`` – Emit SLURM/local job scripts.
 
 Builder Testing
 ---------------
 
-Builders operate strictly inside the per-ligand working directory, which keeps them
+Builders operate strictly inside the stage/component working directory, which keeps them
 easy to reason about. To test a new builder in isolation:
 
 1. Construct a :class:`BuildContext` with temporary directories for ``working_dir``,

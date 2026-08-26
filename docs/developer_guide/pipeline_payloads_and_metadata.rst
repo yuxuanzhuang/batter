@@ -48,7 +48,7 @@ System Parameters
 
 The :class:`~batter.pipeline.payloads.SystemParams` model wraps shared system-level
 inputs (paths, force-field choices, extra restraints). It behaves like a mapping but
-surface frequently accessed fields as attributes and ensures paths are converted to
+surfaces frequently accessed fields as attributes and ensures paths are converted to
 ``pathlib.Path`` instances.
 
 .. code-block:: python
