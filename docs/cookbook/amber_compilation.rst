@@ -77,10 +77,10 @@ AMBER26 MC-Water MPI/REMD Energy Patch
 
 BATTER enables MC-water moves by default during both equilibration
 (``fe_sim.enable_mcwat: "yes"``) and FE production
-(``fe_sim.mcwat_fe: "yes"``).  FE production with ``batter batch --remd``
-therefore requires a patched AMBER26 MPI build.  Stock AMBER26 does not
-correctly update the PME energy and forces for MC-water moves in this grouped
-MPI/REMD execution path.
+(``fe_sim.mcwat_fe: "yes"``).  FE production with the default
+``batter batch`` REMD mode therefore requires a patched AMBER26 MPI build.
+Stock AMBER26 does not correctly update the PME energy and forces for MC-water
+moves in this grouped MPI/REMD execution path.
 
 The reference implementation is in the AMBER source branch
 ``fix-mcwat-mpi-remd-energy`` at commit
@@ -110,8 +110,8 @@ submitting REMD production.
 
 Do not run MC-water REMD with an unpatched AMBER26 binary.  If the patched MPI
 binary is unavailable, set ``fe_sim.mcwat_fe: "no"`` before preparing the FE
-windows.  Standard ``batter batch`` execution without ``--remd`` is unaffected:
-its non-REMD batch launcher forces ``mcwat = 0`` in the transient
+windows.  Standard grouped execution selected with ``batter batch --no-remd``
+is unaffected: its non-REMD batch launcher forces ``mcwat = 0`` in the transient
 ``mdin-current`` files.
 
 AMD GPU GTI/HIP Runtime Patches

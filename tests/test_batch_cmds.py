@@ -39,6 +39,14 @@ def test_parse_slurm_time_limit_minutes() -> None:
     )
 
 
+def test_batch_cli_help_reports_remd_as_default() -> None:
+    result = CliRunner().invoke(cli, ["batch", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--remd / --no-remd" in result.output
+    assert "[default: remd]" in result.output
+
+
 @pytest.mark.parametrize("remd", [False, True])
 def test_batch_cli_rejects_signal_too_close_to_time_limit(
     tmp_path: Path, monkeypatch, remd: bool
@@ -65,8 +73,8 @@ def test_batch_cli_rejects_signal_too_close_to_time_limit(
         "--signal-mins",
         "14.5",
     ]
-    if remd:
-        args.insert(1, "--remd")
+    if not remd:
+        args.insert(1, "--no-remd")
 
     runner = CliRunner()
     result = runner.invoke(cli, args)
@@ -134,7 +142,7 @@ def test_remd_finished_time_uses_latest_numbered_restart(
     assert batch_cmds._remd_finished_time(comp_dir, "z") == "md-03"
 
 
-def test_batch_cli_remd_renders_run_local_remd(
+def test_batch_cli_defaults_to_remd_and_renders_run_local_remd(
     tmp_path: Path, monkeypatch
 ) -> None:
     exec_path = tmp_path / "executions" / "rep1"
@@ -149,12 +157,10 @@ def test_batch_cli_remd_renders_run_local_remd(
         cli,
         [
             "batch",
-            "--remd",
             "-e",
             str(exec_path),
             "--output",
             str(out),
-            "--no-auto-resubmit",
         ],
     )
 
@@ -163,10 +169,11 @@ def test_batch_cli_remd_renders_run_local_remd(
     assert "bash ./run-local-remd.bash" in text
     assert "bash ./run-local-batch.bash" not in text
     assert "#SBATCH --time=00:15:00" in text
+    assert " batch --remd " in text
     _assert_header_mpi_flags_are_authoritative(text)
 
 
-def test_batch_cli_uses_header_mpi_flags_without_appending(
+def test_batch_cli_no_remd_uses_standard_runner_and_preserves_mode_on_resubmit(
     tmp_path: Path, monkeypatch
 ) -> None:
     exec_path = tmp_path / "executions" / "rep1"
@@ -185,17 +192,18 @@ def test_batch_cli_uses_header_mpi_flags_without_appending(
         cli,
         [
             "batch",
+            "--no-remd",
             "-e",
             str(exec_path),
             "--output",
             str(out),
-            "--no-auto-resubmit",
         ],
     )
 
     assert result.exit_code == 0, result.output
     text = out.read_text()
     assert "bash ./run-local-batch.bash" in text
+    assert " batch --no-remd " in text
     _assert_header_mpi_flags_are_authoritative(text)
 
 
@@ -211,7 +219,6 @@ def test_batch_cli_remd_explains_missing_rbfe_transformations(tmp_path: Path) ->
         cli,
         [
             "batch",
-            "--remd",
             "-e",
             str(exec_path),
             "--no-auto-resubmit",

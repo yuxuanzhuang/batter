@@ -1063,9 +1063,9 @@ def _run_remd_batch(
 )
 @click.option(
     "--remd/--no-remd",
-    default=False,
+    default=True,
     show_default=True,
-    help="Run in REMD mode (uses run-local-remd.bash).",
+    help="Use REMD batch mode; --no-remd uses run-local-batch.bash.",
 )
 def batch(
     execution: tuple[Path, ...],
@@ -1189,7 +1189,7 @@ def batch(
     resubmit_cmd = None
     if auto_resubmit:
         batter_cmd = _which_batter()
-        resubmit_args = ["batch"]
+        resubmit_args = ["batch", "--no-remd"]
         for p in exec_paths:
             resubmit_args.extend(["-e", str(p)])
         resubmit_args.extend(["--output", str(output_path_abs)])

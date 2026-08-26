@@ -70,18 +70,21 @@ Use ``--ligand-resname`` when the ligand residue name cannot be inferred from
 Generate Batch Scripts
 ======================
 
-Use ``batter batch`` to emit an ``sbatch`` script that runs ``run-local-batch.bash`` (non-REMD)
-across one or more execution folders::
+Use ``batter batch`` to emit an REMD ``sbatch`` script that runs
+``run-local-remd.bash`` across one or more execution folders. REMD is the
+default batch mode::
 
    batter batch -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
 
-Use ``--remd`` to switch to REMD mode (runs ``run-local-remd.bash``)::
+Use ``--no-remd`` to select standard grouped production through
+``run-local-batch.bash``::
 
-   batter batch --remd -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
+   batter batch --no-remd -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
 
-The command writes ``run-local-batch.bash`` into each component folder using the packaged
-template and skips components that already contain ``FINISHED`` (or where all windows
-are marked ``FINISHED``).
+The command skips components that already contain ``FINISHED``. In non-REMD
+mode, it refreshes ``run-local-batch.bash`` in each component folder from the
+packaged template.
+
 Key options:
 
 ``--gpus``
@@ -93,8 +96,9 @@ Key options:
    Override the total node count in the header.
 ``--time-limit``
    Time limit for the generated sbatch script (default: 00:15:00).
-``--remd``
-   Use REMD execution mode (``run-local-remd.bash``) instead of standard batch mode.
+``--remd`` / ``--no-remd``
+   Use REMD execution mode (default, via ``run-local-remd.bash``), or explicitly
+   select standard grouped batch mode (via ``run-local-batch.bash``).
 ``--auto-resubmit`` / ``--no-auto-resubmit``
    When enabled (default), the generated sbatch traps a pre-timeout signal,
    regenerates the batch script, and resubmits it until all components finish

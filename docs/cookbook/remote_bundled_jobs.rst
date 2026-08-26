@@ -1,11 +1,11 @@
-Remote Bundled Production Jobs with optional REMD
-=================================================
+Remote Bundled Production Jobs
+==============================
 
 For large production campaigns, a useful pattern is to prepare and equilibrate
 each execution first, then launch production for many executions from one remote
 batch allocation. The same flow supports standard bundled production and REMD
-production; add ``--remd`` when each component should run through
-``run-local-remd.bash`` inside the bundled job.
+production. REMD is the default; add ``--no-remd`` when each component should
+run through ``run-local-batch.bash`` instead.
 
 Workflow
 --------
@@ -35,11 +35,11 @@ Workflow
         -e /path/to/execution2 \
         -e /path/to/execution3
 
-   For REMD production, add ``--remd``:
+   For standard non-REMD production, add ``--no-remd``:
 
    .. code-block:: console
 
-      batter batch --remd \
+      batter batch --no-remd \
         -e /path/to/execution1 \
         -e /path/to/execution2 \
         -e /path/to/execution3
@@ -63,11 +63,12 @@ Workflow
       batter fe analyze 7db6_rest_abfe rep1 --job-array --array-limit 128
 
 ``batter batch`` renders a single ``sbatch`` script that runs the production
-helpers across the supplied executions. Normal mode uses ``run-local-batch.bash``;
-``--remd`` switches component execution to ``run-local-remd.bash``. Inspect the
-generated script, especially the GPU/node/time settings, then submit it with
-``sbatch``. By default the batch script auto-resubmits before the time limit until
-all components are marked ``FINISHED`` or the resubmission limit is reached.
+helpers across the supplied executions. The default REMD mode uses
+``run-local-remd.bash``, while ``--no-remd`` switches component execution to
+``run-local-batch.bash``. Inspect the generated script, especially the
+GPU/node/time settings, then submit it with ``sbatch``. By default the batch
+script auto-resubmits before the time limit until all components are marked
+``FINISHED`` or the resubmission limit is reached.
 
 Useful options for very large batches:
 
@@ -88,17 +89,18 @@ Useful options for very large batches:
 REMD Runtime Details
 --------------------
 
-REMD input files are always prepared; ``--remd`` controls whether the bundled job
-uses them at runtime.
+REMD input files are always prepared and are used by default. ``--no-remd``
+selects the standard grouped batch inputs at runtime.
 
 .. warning::
 
    ``fe_sim.mcwat_fe`` defaults to ``"yes"``. Running those MC-water production
-   inputs with ``batter batch --remd`` requires the AMBER26 MPI/REMD energy
-   patch from branch ``fix-mcwat-mpi-remd-energy`` and a rebuilt
+   inputs with the default ``batter batch`` mode requires the AMBER26 MPI/REMD
+   energy patch from branch ``fix-mcwat-mpi-remd-energy`` and a rebuilt
    ``pmemd.cuda.MPI``. See :doc:`amber_compilation`. Set
    ``fe_sim.mcwat_fe: "no"`` if the patched binary is unavailable. Standard
-   bundled production without ``--remd`` forces ``mcwat = 0`` at runtime.
+   bundled production selected with ``--no-remd`` forces ``mcwat = 0`` at
+   runtime.
 
 Key behaviours:
 
@@ -110,15 +112,15 @@ Key behaviours:
   setup.
 * ``run-local-remd.bash`` computes the exchange count from the remaining
   ``total_steps`` and the ``nstlim`` already present in ``mdin-remd-template``,
-  runs a single REMD segment, then exits. ``batter batch --remd`` preserves that
-  template ``nstlim`` in ``mdin-remd-current`` and updates ``numexchg`` for the
-  segment length. ``mdin-remd-template`` uses ``1000`` steps for both
-  ``bar_intervall`` and ``DUMPFREQ`` by default, capped at ``nstlim`` for
-  shorter exchange blocks. The generated REMD groupfiles invoke AMBER with
-  ``-p full_merged.prmtop``.
+  runs a single REMD segment, then exits. The default ``batter batch`` mode
+  preserves that template ``nstlim`` in ``mdin-remd-current`` and updates
+  ``numexchg`` for the segment length. ``mdin-remd-template`` uses ``1000``
+  steps for both ``bar_intervall`` and ``DUMPFREQ`` by default, capped at
+  ``nstlim`` for shorter exchange blocks. The generated REMD groupfiles invoke
+  AMBER with ``-p full_merged.prmtop``.
   Completion is tracked with ``FINISHED``/``FAILED`` sentinels, and window
-  folders ``<comp>00/`` etc. provide REMD rolling restarts
-  (``eq.rst7`` -> ``md-current.rst7``/``md-previous.rst7``).
+  folders ``<comp>00/`` etc. provide numbered REMD restarts
+  (``eq.rst7`` -> ``md-01.rst7`` -> ``md-02.rst7``).
 * The Slurm body for REMD components is ``SLURMM-BATCH-remd`` sitting in the
   component folder. The generated remote bundled job invokes these component
   helpers and relies on the same sentinels above.

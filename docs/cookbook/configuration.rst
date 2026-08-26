@@ -255,7 +255,10 @@ preserve the ``nstlim`` already present in ``mdin-remd-template`` and update
 (``yes`` or ``no``); when
 ``run.remd: no`` the files are still generated but no REMD jobs are scheduled. REMD jobs
 submit one Slurm job per component via ``SLURMM-BATCH-remd`` and monitor
-``FINISHED``/``FAILED`` sentinels in the component folder. See
+``FINISHED``/``FAILED`` sentinels in the component folder. This YAML setting
+controls execution launched by ``batter run``; the separate ``batter batch``
+command defaults to REMD regardless of ``run.remd`` and requires
+``--no-remd`` to select standard grouped production. See
 :doc:`remote_bundled_jobs` for operational details.
 
 SLURM header templates
