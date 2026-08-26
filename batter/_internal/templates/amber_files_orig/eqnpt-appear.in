@@ -32,7 +32,7 @@ Equil re-appear ligand
   nmd = 1000,
   nmc = 1000,
   mcwatmask = ":_lig_name_",
-  mcligshift = 10,
+  mcligshift = 15,
   mcwatretry = 3000,
   mcresstr = "WAT",
   infe = _enable_infe_,

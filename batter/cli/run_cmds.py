@@ -135,7 +135,9 @@ def _preflight_required_packages_for_cli() -> None:
     help="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
 )
 @click.option(
-    "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
+    "--only-equil/--full",
+    default=None,
+    help="For FE protocols, stop after FE equilibration, before FE production; override YAML.",
 )
 @click.option(
     "--only-rbfe-network/--full-rbfe",
@@ -344,7 +346,9 @@ def cmd_run(
     help="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
 )
 @click.option(
-    "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
+    "--only-equil/--full",
+    default=None,
+    help="For FE protocols, stop after FE equilibration, before FE production; override YAML.",
 )
 @click.option(
     "--only-rbfe-network/--full-rbfe",

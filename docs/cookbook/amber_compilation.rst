@@ -3,7 +3,9 @@ AMBER GPU Compilation Notes
 
 These notes document the local AMBER GPU patches used for BATTER runs.  Apply
 the AMBER26 ``netfrc`` patch first because it affects both NVIDIA CUDA and AMD
-HIP GPU GTI/TI runs.  The AMD section below is limited to GTI/HIP runtime
+HIP GPU GTI/TI runs.  When MC-water moves are combined with MPI REMD, also
+apply the AMBER26 MC-water MPI/REMD energy patch and rebuild
+``pmemd.cuda.MPI``.  The AMD section below is limited to GTI/HIP runtime
 stability patches.
 
 AMBER26 ``netfrc`` Patch
@@ -69,6 +71,48 @@ files as a workaround:
    &ewald
      netfrc = 1,
    /
+
+AMBER26 MC-Water MPI/REMD Energy Patch
+--------------------------------------
+
+BATTER enables MC-water moves by default during both equilibration
+(``fe_sim.enable_mcwat: "yes"``) and FE production
+(``fe_sim.mcwat_fe: "yes"``).  FE production with the default
+``batter batch`` REMD mode therefore requires a patched AMBER26 MPI build.
+Stock AMBER26 does not correctly update the PME energy and forces for MC-water
+moves in this grouped MPI/REMD execution path.
+
+The reference implementation is in the AMBER source branch
+``fix-mcwat-mpi-remd-energy`` at commit
+``2065fad83a005c063e729974398d40f3fe2030e0``.  The local reference checkout is
+``/home/users/yuzhuang/oak/software/amber26``.  The patch updates:
+
+* ``pmemd26_src/src/pmemd/src/mcres.F90`` to perform the MC-water PME energy
+  calculations through the MPI ``pme_force`` interface and pass the local atom
+  list;
+* ``pmemd26_src/src/pmemd/src/runmd.F90`` to force the required PME
+  recalculation after an MC-water step before REMD consumes the energy.
+
+Use the reference branch directly, or cherry-pick the patch onto the AMBER26
+integration branch that contains the other required local fixes:
+
+.. code-block:: console
+
+   cd /path/to/amber26
+   git cherry-pick 2065fad83a005c063e729974398d40f3fe2030e0
+   git branch --contains 2065fad83a005c063e729974398d40f3fe2030e0
+
+After applying the patch, rebuild and reinstall the MPI CUDA target using the
+site's normal AMBER26 compilation procedure.  Merely patching the source does
+not update an existing ``pmemd.cuda.MPI`` binary.  Confirm that the runtime
+environment resolves ``pmemd.cuda.MPI`` from the rebuilt installation before
+submitting REMD production.
+
+Do not run MC-water REMD with an unpatched AMBER26 binary.  If the patched MPI
+binary is unavailable, set ``fe_sim.mcwat_fe: "no"`` before preparing the FE
+windows.  Standard grouped execution selected with ``batter batch --no-remd``
+is unaffected: its non-REMD batch launcher forces ``mcwat = 0`` in the transient
+``mdin-current`` files.
 
 AMD GPU GTI/HIP Runtime Patches
 -------------------------------

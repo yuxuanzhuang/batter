@@ -90,9 +90,9 @@ def coerce_yes_no(value: Any) -> str | None:
         text = value.strip().lower()
         if text in {"yes", "no"}:
             return text
-        if text in {"true", "t", "1"}:
+        if text in {"true", "t", "1", "on"}:
             return "yes"
-        if text in {"false", "f", "0"}:
+        if text in {"false", "f", "0", "off"}:
             return "no"
     raise ValueError(f"Expected yes/no (or boolean), got {value!r}")
 

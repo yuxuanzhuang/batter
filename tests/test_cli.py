@@ -24,6 +24,32 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def test_slurm_env_capture_prefers_invoked_batter_script(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from batter.cli import shared as cli_shared
+
+    invoked_batter = tmp_path / "dev_env" / "bin" / "batter"
+    fallback_batter = tmp_path / "base_env" / "bin" / "batter"
+    invoked_batter.parent.mkdir(parents=True)
+    fallback_batter.parent.mkdir(parents=True)
+    invoked_batter.write_text("#!/usr/bin/env python\n")
+    fallback_batter.write_text("#!/usr/bin/env python\n")
+
+    monkeypatch.setattr(sys, "argv", [str(invoked_batter), "run"])
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fallback_batter) if name == "batter" else None,
+    )
+
+    assert cli_shared._which_batter() == str(invoked_batter)
+    assert f"BATTER_ENV_BIN={invoked_batter.parent}" in (
+        cli_shared._batter_path_export_block()
+    )
+
+
 def test_cli_run_invokes_run_from_yaml(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:
@@ -467,6 +493,31 @@ def test_cli_fe_analyze_invokes_api(
     assert called["raise_on_error"] is False
 
 
+def test_cli_fe_analyze_can_disable_global_equilibration(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+
+    def fake_run(work_dir, run_id, **kwargs):
+        called.update(kwargs)
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(tmp_path),
+            "run1",
+            "--no-detect-equil",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["detect_equil"] is False
+
+
 def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:
@@ -525,6 +576,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
             "3",
             "--analysis-start-step",
             "2500",
+            "--no-detect-equil",
             "--n-bootstrap",
             "64",
             "--overwrite",
@@ -543,6 +595,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     assert "#SBATCH --job-name=fep_" in script_text
     assert "/fe_analyze/rep1" in script_text
     assert "#SBATCH --partition=gpu" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
     assert "# BATTER environment captured at submit time" in script_text
     assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
     assert "fe analyze" in script_text
@@ -551,6 +604,7 @@ def test_cli_fe_analyze_slurm_submit_uses_job_manager(
     assert "--ligand LIG1" in script_text
     assert "--workers 3" in script_text
     assert "--analysis-start-step 2500" in script_text
+    assert "--no-detect-equil" in script_text
     assert "--n-bootstrap 64" in script_text
     assert "--overwrite" in script_text
     assert "--no-raise-on-error" in script_text
@@ -632,6 +686,7 @@ def test_cli_fe_analyze_job_array_writes_script_and_tasks(
     assert tasks_path.read_text().splitlines() == ["rep1\tLIG1", "rep1\tLIG2"]
     script_text = script_path.read_text()
     assert "#SBATCH --partition=owners" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
     assert "#SBATCH --cpus-per-task=2" in script_text
     assert "#SBATCH --array=1-2%3" in script_text
     assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
@@ -703,7 +758,10 @@ def test_cli_fe_analyze_job_array_rbfe_endpoint_filter(
     assert script_path.with_suffix(".tasks.tsv").read_text().splitlines() == [
         "rep1\tA~B"
     ]
-    assert "#SBATCH --array=1-1%2" in script_path.read_text()
+    script_text = script_path.read_text()
+    assert "#SBATCH --partition=batch" in script_text
+    assert "#SBATCH --account=BIP152" in script_text
+    assert "#SBATCH --array=1-1%2" in script_text
 
 
 def test_cli_fe_analyze_job_array_rbfe_septop_uses_pairs(

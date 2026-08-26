@@ -125,11 +125,16 @@ Anchor Atoms
 * ligand-bound MD uses the first real ligand pose to select receptor anchors;
 * apo-only MD uses the protein-only heuristic.
 
-If you know the receptor interaction that should define the anchor frame, you
-can provide one selection and BATTER will treat it as P1 while choosing P2/P3
-automatically. Prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry:
+BATTER uses three distinct, unambiguous selections directly as P1/P2/P3. One
+selection is a P1 hint. Two selections are treated as incomplete: BATTER keeps
+the first as P1 and chooses P2/P3 together. Invalid or ambiguous input warns and
+falls back to automatic selection. In ligand-bound runs, a detected salt bridge
+can define P1/L1; L2/L3 then prefer ring atoms connected to at least two heavy
+atoms, followed by atoms with more than two heavy-atom connections and other
+nonterminal heavy atoms. Auto-selected receptor anchors come from stable
+non-loop Cα atoms and are screened against near-linear frames. Compact systems
+may relax the preferred spacing while retaining the non-collinearity guard.
+Provide three selections only when you need fully manual P1/P2/P3 geometry:
 
 .. code-block:: yaml
 
@@ -180,7 +185,7 @@ Useful knobs:
 ``fe_sim.hmr`` / ``fe_sim.dt``
    Hydrogen mass repartitioning and timestep settings.
 ``fe_sim.enable_mcwat``
-   Enable or disable MC water moves during equilibration.
+   Enable or disable MC water moves during equilibration; the default is enabled.
 ``run.clean_failures`` / ``--clean-failures``
    Clear failed sentinels and retry counters before rerunning an execution.
 ``run.run_id``

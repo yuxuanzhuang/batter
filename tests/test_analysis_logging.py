@@ -134,6 +134,156 @@ def test_mbar_convergence_fallback_repeats_final_estimate(tmp_path: Path) -> Non
     ]
 
 
+def _bootstrap_guard_analysis(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    n_bootstraps: int,
+    n_samples: int,
+) -> tuple[analysis_mod.MBARAnalysis, dict[str, int]]:
+    (tmp_path / "z").mkdir(exist_ok=True)
+    seen: dict[str, int] = {}
+
+    class FakeMBAR:
+        def __init__(self, n_bootstraps=0):
+            seen["n_bootstraps"] = n_bootstraps
+
+        def fit(self, _u_df):
+            self.delta_f_ = pd.DataFrame([[0.0, 1.0], [-1.0, 0.0]])
+            self.d_delta_f_ = pd.DataFrame([[0.0, 0.2], [0.2, 0.0]])
+            self.overlap_matrix = np.eye(2)
+            return self
+
+    monkeypatch.setattr(analysis_mod, "MBAR", FakeMBAR)
+    monkeypatch.setattr(analysis_mod.pickle, "dump", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        analysis_mod,
+        "forward_backward_convergence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("skip diagnostics")),
+    )
+
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=False,
+        n_bootstraps=n_bootstraps,
+        dt=0.004,
+    )
+    index = pd.MultiIndex.from_arrays(
+        [np.arange(n_samples, dtype=float), np.zeros(n_samples)],
+        names=["time", "lambdas"],
+    )
+    df0 = pd.DataFrame({0.0: np.zeros(n_samples), 1.0: np.ones(n_samples)}, index=index)
+    df1 = pd.DataFrame({0.0: np.ones(n_samples), 1.0: np.zeros(n_samples)}, index=index)
+    ana._data_list = [df0, df1]
+    ana._u_df = pd.concat([df0, df1])
+    ana._data_initialized = True
+
+    ana.run_analysis()
+    return ana, seen
+
+
+def test_mbar_bootstrap_guard_disables_sparse_data(tmp_path: Path, monkeypatch) -> None:
+    ana, seen = _bootstrap_guard_analysis(
+        tmp_path,
+        monkeypatch,
+        n_bootstraps=64,
+        n_samples=6,
+    )
+
+    assert seen["n_bootstraps"] == 0
+    assert ana.results["requested_n_bootstraps"] == 64
+    assert ana.results["effective_n_bootstraps"] == 0
+    assert ana.results["bootstrap_sample_counts"] == [6, 6]
+    assert "Disabled MBAR bootstrapping" in ana.results["bootstrap_warning"]
+
+
+def test_mbar_bootstrap_guard_caps_large_request_by_sample_count(
+    tmp_path: Path, monkeypatch
+) -> None:
+    ana, seen = _bootstrap_guard_analysis(
+        tmp_path,
+        monkeypatch,
+        n_bootstraps=64,
+        n_samples=12,
+    )
+
+    assert seen["n_bootstraps"] == 12
+    assert ana.results["requested_n_bootstraps"] == 64
+    assert ana.results["effective_n_bootstraps"] == 12
+    assert "Reduced MBAR bootstraps" in ana.results["bootstrap_warning"]
+
+
+def test_mbar_analysis_reports_endpoint_uncertainty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir(exist_ok=True)
+
+    class FakeMBAR:
+        def __init__(self, n_bootstraps=0):
+            pass
+
+        def fit(self, _u_df):
+            self.delta_f_ = pd.DataFrame(
+                [
+                    [0.0, 1.0, 2.0],
+                    [-1.0, 0.0, 1.0],
+                    [-2.0, -1.0, 0.0],
+                ]
+            )
+            self.d_delta_f_ = pd.DataFrame(
+                [
+                    [0.0, 0.1, 0.5],
+                    [0.1, 0.0, 0.1],
+                    [0.5, 0.1, 0.0],
+                ]
+            )
+            self.overlap_matrix = np.eye(3)
+            return self
+
+    monkeypatch.setattr(analysis_mod, "MBAR", FakeMBAR)
+    monkeypatch.setattr(analysis_mod.pickle, "dump", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        analysis_mod,
+        "forward_backward_convergence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("skip diagnostics")),
+    )
+
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1, 2],
+        temperature=300.0,
+        detect_equil=False,
+        n_bootstraps=0,
+        dt=0.004,
+    )
+    data_list = []
+    for state in (0.0, 1.0, 2.0):
+        index = pd.MultiIndex.from_arrays(
+            [np.arange(12, dtype=float), np.full(12, state)],
+            names=["time", "lambdas"],
+        )
+        data_list.append(
+            pd.DataFrame(
+                {0.0: np.zeros(12), 1.0: np.ones(12), 2.0: np.full(12, 2.0)},
+                index=index,
+            )
+        )
+    ana._data_list = data_list
+    ana._u_df = pd.concat(data_list)
+    ana._data_initialized = True
+
+    ana.run_analysis()
+
+    kT = 0.0019872041 * 300.0
+    adjacent_quadrature = np.sqrt(0.1**2 + 0.1**2) * kT
+    assert ana.results["fe_error"] == 0.5 * kT
+    assert ana.results["fe_error"] != adjacent_quadrature
+
+
 def test_boresch_analysis_selects_ligand_specific_tag(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -171,6 +321,34 @@ def test_boresch_analysis_selects_ligand_specific_tag(
 
     assert ana.results["fe"] == 11.0
     assert seen == [(11.0, 12.0, 13.0, 14.0, 15.0, 16.0)]
+
+
+def test_boresch_fe_int_uses_numpy_trapezoid_without_trapz(monkeypatch) -> None:
+    real_trapezoid = analysis_mod.np.trapezoid
+    calls = 0
+
+    def _trapezoid(y, x):
+        nonlocal calls
+        calls += 1
+        return real_trapezoid(y, x)
+
+    monkeypatch.setattr(analysis_mod.np, "trapezoid", _trapezoid)
+    monkeypatch.delattr(analysis_mod.np, "trapz", raising=False)
+
+    result = analysis_mod.BoreschAnalysis.fe_int(
+        5.0,
+        90.0,
+        180.0,
+        90.0,
+        180.0,
+        180.0,
+        10.0,
+        10.0,
+        298.15,
+    )
+
+    assert np.isfinite(result)
+    assert calls == 6
 
 
 def test_analyze_lig_task_writes_backward_fe_timeseries(
@@ -285,6 +463,75 @@ def test_analyze_lig_task_adds_septop_boresch_corrections(
     assert payload["fe_value"][:2] == [11.0, 11.0]
 
 
+def test_disang_restraint_tag_count_matches_exact_tag(tmp_path: Path) -> None:
+    disang = tmp_path / "disang.rest"
+    disang.write_text(
+        "&rst iat=1,2, r2=1.0, &end #Lig_TR\n"
+        "&rst iat=1,2, r2=2.0, &end #Lig_TR_REF\n"
+        "&rst iat=1,2, r2=3.0, &end #Lig_TR_ALT\n"
+    )
+
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR") == 1
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR_REF") == 1
+    assert analysis_mod._disang_restraint_tag_count(disang, "Lig_TR_ALT") == 1
+    assert not analysis_mod._disang_has_complete_boresch_block(disang, "Lig_TR")
+
+
+def test_analyze_lig_task_adds_reduced_abfe_correction(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lig_path = tmp_path / "fe"
+    z_boresch = lig_path / "z" / "z-1" / "disang.rest"
+    z_boresch.parent.mkdir(parents=True)
+    z_boresch.write_text(
+        "\n".join(
+            f"&rst iat=1,2, r2={value:.1f}, &end #Lig_TR"
+            for value in [2, 20, 21]
+        )
+    )
+
+    class FakeMBARAnalysis:
+        def __init__(self, **kwargs):
+            self.results = {}
+
+        def run_analysis(self):
+            self.results = {
+                "fe": 10.0,
+                "fe_error": 1.0,
+                "fe_timeseries": np.array([[10.0, 1.0], [10.0, 1.0]]),
+                "fe_timeseries_backward": np.array([[10.0, 1.0], [10.0, 1.0]]),
+            }
+
+        def plot_convergence(self, save_path=None, title=None):
+            if save_path:
+                Path(save_path).write_bytes(b"png")
+
+    monkeypatch.setattr(analysis_mod, "MBARAnalysis", FakeMBARAnalysis)
+    monkeypatch.setattr(
+        analysis_mod.ReducedExternalRestraintAnalysis,
+        "fe_int",
+        staticmethod(lambda values, *args: float(values[0])),
+    )
+
+    analysis_mod.analyze_lig_task(
+        lig_path=str(lig_path),
+        lig="SOD",
+        components=["z"],
+        rest=(0.0, 0.0, 5.0, 250.0, 0.0),
+        temperature=300.0,
+        water_model="TIP3P",
+        component_windows_dict={"z": [0, 1]},
+        raise_on_error=True,
+        dt=0.004,
+    )
+
+    results = (lig_path / "Results" / "Results.dat").read_text()
+    assert "Boresch" not in results
+    assert "Reduced_TR\t-2.00\t0.00" in results
+    assert "z\t-10.00\t1.00" in results
+    assert "Total\t-12.00\t1.00" in results
+
+
 def test_ligand_rest_component_direction_registered() -> None:
     assert analysis_mod.COMPONENT_DIRECTION_DICT["l"] == 1
 
@@ -371,6 +618,191 @@ def test_mbar_extract_window_skips_incomplete_mdout(tmp_path: Path, monkeypatch)
     )
 
     assert not out.empty
+
+
+def test_mbar_extract_window_skips_detect_equilibration_for_single_sample(
+    tmp_path: Path, monkeypatch
+) -> None:
+    win_dir = tmp_path / "z00"
+    win_dir.mkdir()
+    (win_dir / "md-01.out").write_text("short smoke-test amber output\n")
+
+    index = pd.MultiIndex.from_arrays(
+        [[0.0], [0.0]],
+        names=["time", "lambdas"],
+    )
+    parsed = pd.DataFrame({0.0: [0.0], 1.0: [0.5]}, index=index)
+
+    monkeypatch.setattr(analysis_mod.logger, "debug", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod.logger, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod, "extract_u_nk", lambda *a, **k: parsed)
+    monkeypatch.setattr(analysis_mod, "exclude_outliers", lambda df, iclam: df.iloc[0:0])
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("detect_equilibration should be skipped")
+        ),
+    )
+
+    out = analysis_mod.MBARAnalysis._extract_all_for_window(
+        win_i=0,
+        comp_folder=str(tmp_path),
+        component="z",
+        temperature=300.0,
+        analysis_start_step=0,
+        truncate=True,
+    )
+
+    assert len(out) == 1
+
+
+def _global_equil_window(
+    times: np.ndarray, sampled_state: int, n_states: int = 2
+) -> pd.DataFrame:
+    index = pd.MultiIndex.from_arrays(
+        [times, np.full(len(times), float(sampled_state))],
+        names=["time", "lambdas"],
+    )
+    data = {
+        float(state): np.sin(times / 7.0) + sampled_state + state * 0.25
+        for state in range(n_states)
+    }
+    return pd.DataFrame(data, index=index)
+
+
+def test_mbar_global_equilibration_uses_physical_time_with_unequal_windows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(0.0, 121.0, 1.0), 0),
+        _global_equil_window(np.arange(0.0, 101.0, 2.0), 1),
+    ]
+    seen: dict[str, np.ndarray] = {}
+
+    def _fake_detect(values, nskip=1):
+        seen["values"] = np.asarray(values)
+        assert nskip == 10
+        return 5, 2.0, 20.0
+
+    monkeypatch.setattr(analysis_mod, "detect_equilibration", _fake_detect)
+
+    filtered = ana._finalize_data_list(data)
+    attrs = json.loads((tmp_path / "Results" / "z_df_list_attrs.json").read_text())
+    equil = attrs["equilibration"]
+
+    assert len(seen["values"]) == 51
+    assert equil["common_time_step_ps"] == 2.0
+    assert equil["detected_t0_ps"] == 10.0
+    assert equil["applied_t0_ps"] == 10.0
+    assert equil["applied_g_time_ps"] == 4.0
+    assert equil["status"] == "applied"
+    assert [len(df) for df in filtered] == [28, 23]
+    for df in filtered:
+        times = df.index.get_level_values("time").to_numpy(dtype=float)
+        assert times[0] == 10.0
+        assert np.all(np.diff(times) >= 4.0)
+
+
+def test_mbar_global_equilibration_guard_preserves_minimum_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(15.0), 0),
+        _global_equil_window(np.arange(15.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod, "detect_equilibration", lambda values, nskip=1: (12, 5.0, 1.0)
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert equil["detected_t0_ps"] == 12.0
+    assert equil["applied_t0_ps"] == 5.0
+    assert equil["applied_g_time_ps"] <= 1.000001
+    assert equil["status"] == "applied_with_guard"
+    assert "equilibration_cutoff_reduced" in equil["guard_actions"]
+    assert "decorrelation_spacing_reduced" in equil["guard_actions"]
+    assert [len(df) for df in filtered] == [10, 10]
+
+
+def test_mbar_detect_equil_false_retains_all_native_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=False,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(20.0), 0),
+        _global_equil_window(np.arange(0.0, 30.0, 2.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("detect_equilibration should be disabled")
+        ),
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert [len(df) for df in filtered] == [20, 15]
+    assert equil["status"] == "disabled"
+    assert equil["retained_window_sample_counts"] == [20, 15]
+
+
+def test_mbar_global_equilibration_detection_failure_retains_all_samples(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=True,
+        dt=0.004,
+    )
+    data = [
+        _global_equil_window(np.arange(20.0), 0),
+        _global_equil_window(np.arange(20.0), 1),
+    ]
+    monkeypatch.setattr(
+        analysis_mod,
+        "detect_equilibration",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("bad trace")),
+    )
+
+    filtered, equil = ana._apply_global_equilibration(data)
+
+    assert [len(df) for df in filtered] == [20, 20]
+    assert equil["status"] == "guarded_all_samples"
+    assert equil["guard_actions"] == ["global_detection_failed"]
+    assert "bad trace" in equil["warning"]
 
 
 def test_rest_mbar_extract_window_does_not_remove_global_logger(

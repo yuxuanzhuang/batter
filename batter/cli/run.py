@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from batter.cli.root import cli
+from batter.cli import analysis_cmds as _analysis_cmds
+from batter.cli import archive_cmds as _archive_cmds
 from batter.cli import batch_cmds as _batch_cmds
 from batter.cli import exec_cmds as _exec_cmds
 from batter.cli import fe_cmds as _fe_cmds

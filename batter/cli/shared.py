@@ -8,6 +8,26 @@ import sys
 from pathlib import Path
 
 
+def _invoked_batter_executable() -> str | None:
+    """Return the current ``batter`` script path when Python was launched by one."""
+    import shutil
+
+    argv0 = sys.argv[0] if sys.argv else ""
+    if not argv0:
+        return None
+
+    path = Path(argv0)
+    if path.name != "batter":
+        return None
+    if path.is_absolute() and path.exists():
+        return str(path)
+    if len(path.parts) > 1:
+        resolved = path.resolve()
+        if resolved.exists():
+            return str(resolved)
+    return shutil.which(argv0)
+
+
 def _upsert_sbatch_option(text: str, flag: str, value: str) -> str:
     """
     Replace or insert a ``#SBATCH --<flag>=...`` line with ``value``.
@@ -36,7 +56,7 @@ def _which_batter() -> str:
     """
     import shutil
 
-    exe = shutil.which("batter")
+    exe = _invoked_batter_executable() or shutil.which("batter")
     if exe:
         return shlex.quote(exe)
     # last resort: run module (works inside editable installs)
@@ -54,7 +74,7 @@ def _batter_path_export_block() -> str:
     """
     import shutil
 
-    exe = shutil.which("batter") or sys.executable
+    exe = _invoked_batter_executable() or shutil.which("batter") or sys.executable
     env_bin = str(Path(exe).parent)
     return (
         "# BATTER environment captured at submit time\n"

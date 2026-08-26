@@ -69,19 +69,28 @@ Installation tips (clusters)
 - Building the environment can be storage hungry and slow. Try
   `micromamba <https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html>`_
   and/or run the install on a compute node.
-- VMD often needs X11 forwarding and its own shared libraries on clusters. Set
+- Optional VMD-based inspection often needs X11 forwarding and its own shared
+  libraries on clusters. Set
   ``LD_LIBRARY_PATH`` to include ``$CONDA_PREFIX/lib/vmd`` (or your env path) and load
   any required ``x11``/``system`` modules before launching VMD. Override the executable
   with ``BATTER_VMD`` if needed.
 
 This installs in editable mode so your code changes are immediately reflected.
 
-To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
-building docs, or running simple tests—install only the package itself:
+To use the Python package without the external AMBER/OpenFF simulation stack—for
+example, for lightweight CLI commands such as ``batter report-jobs`` or simple
+tests—install the package itself:
 
 .. code-block:: bash
 
    pip install .
+
+Documentation builds use the separate environment specification under ``docs/``::
+
+   cd docs
+   conda env create -f requirements.yaml
+   conda activate docs_batter
+   make html
 
 Quickstart
 -------------------------------
@@ -110,6 +119,43 @@ Use ``--help`` to see all commands:
 
    batter -h
    batter run -h
+
+Equilibration analysis outputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After equilibration analysis, BATTER copies the main per-ligand reports into
+``<output_folder>/executions/<run_id>/simulations/<ligand>/equil/results/`` with
+a ``README.txt``. These include
+``simulation_analysis.png`` with frame and simulation-time axes, the selected
+representative snapshot, ``stable_boresch_distance.json``, and ProLIF outputs:
+``prolif_interactions.json``, ``prolif_interactions_timeseries.csv.gz``,
+``prolif_interactions_barcode.png``, ``prolif_interactions_occupancy.png``,
+``prolif_interaction_diagram.png``, and ``prolif_lignetwork.html`` when ProLIF
+can generate it.
+
+To rerun equilibration analysis for an existing execution or one ligand folder:
+
+.. code-block:: bash
+
+   batter simulation-analysis work/adrb2/executions/rep1 --force
+   batter simulation-analysis work/adrb2/executions/rep1/simulations/LIG1 --force
+
+Archiving result bundles
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``batter archive`` to create a compact tar archive from one or more BATTER
+execution folders. The archive includes directories named ``results`` inside an
+execution when they exist, the sibling ``results/<run_id>`` repository for
+``executions/<run_id>`` layouts, plus reproducibility inputs such as
+``artifacts/config/``, staged ``inputs/`` and per-ligand ``inputs``/``params``
+folders. Raw simulation folders, trajectories, and FE window data outside
+``results/`` are not included. The command prints a progress bar while archive
+entries are written.
+
+.. code-block:: bash
+
+   batter archive work/adrb2/executions/rep1 work/adrb2/executions/rep2 -o adrb2_results.tar.gz
+   batter archive work/adrb2/executions --include mabfe_eq.yaml -o adrb2_results.tar.gz
 
 Examples
 ----------------

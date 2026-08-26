@@ -10,7 +10,7 @@ import MDAnalysis as mda
 from batter.analysis.sim_validation import check_universe_ring_penetration
 
 
-PRMTOP = "full.hmr.prmtop"
+PRMTOP = "full_merged.prmtop"
 MARKER = Path("RING_PENETRATION")
 REPAIRED_MARKER = Path("RING_PENETRATION_REPAIRED")
 REPAIR_FAILED_MARKER = Path("RING_PENETRATION_REPAIR_FAILED")

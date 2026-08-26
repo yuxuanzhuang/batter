@@ -10,6 +10,7 @@ fi
 RETRY_COUNT=$(cat "$ATTEMPT_FILE")
 echo "Current attempt: $RETRY_COUNT"
 MAX_ATTEMPTS=5
+ATTEMPT_FAILED_ARCHIVE_MARKER=${ATTEMPT_FAILED_ARCHIVE_MARKER:-ATTEMPT_FAILED_ARCHIVE}
 
 is_titan_xp_retry_exempt_output() {
     local out_file=$1
@@ -25,12 +26,41 @@ failure_outputs_have_titan_xp() {
     local retry_count=${1:-}
     local out_file archive_dir archive_name archive_key latest_key=""
     local latest_archive_dirs=()
-    while IFS= read -r -d '' out_file; do
-        if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
-            echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
-            return 0
+
+    scan_titan_xp_outputs_in_dir() {
+        local search_dir=$1
+        local maxdepth=${2:-3}
+        local include_archives=${3:-1}
+        local out_file
+        [[ -d "$search_dir" ]] || return 1
+
+        if [[ "$include_archives" -eq 1 ]]; then
+            while IFS= read -r -d '' out_file; do
+                if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
+                    echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+                    return 0
+                fi
+            done < <(find "$search_dir" -maxdepth "$maxdepth" -type f -name '*.out' -print0 2>/dev/null)
+        else
+            while IFS= read -r -d '' out_file; do
+                if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
+                    echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+                    return 0
+                fi
+            done < <(find "$search_dir" -maxdepth "$maxdepth" -type f -name '*.out' ! -path './WRONG_FAIL/*' ! -path '*/WRONG_FAIL/*' -print0 2>/dev/null)
         fi
-    done < <(find . -maxdepth 3 -type f -name '*.out' ! -path './WRONG_FAIL/*' ! -path '*/WRONG_FAIL/*' -print0 2>/dev/null)
+        return 1
+    }
+
+    if [[ -e "$ATTEMPT_FAILED_ARCHIVE_MARKER" ]]; then
+        while IFS= read -r archive_dir; do
+            [[ -n "$archive_dir" ]] || continue
+            if scan_titan_xp_outputs_in_dir "$archive_dir" 3 1; then
+                return 0
+            fi
+        done < "$ATTEMPT_FAILED_ARCHIVE_MARKER"
+        return 1
+    fi
 
     for archive_dir in WRONG_FAIL/*_job_attempt_${retry_count} */WRONG_FAIL/*_job_attempt_${retry_count}; do
         [[ -d "$archive_dir" ]] || continue
@@ -44,15 +74,16 @@ failure_outputs_have_titan_xp() {
         fi
     done
 
-    for archive_dir in "${latest_archive_dirs[@]}"; do
-        while IFS= read -r -d '' out_file; do
-            if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
-                echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+    if (( ${#latest_archive_dirs[@]} > 0 )); then
+        for archive_dir in "${latest_archive_dirs[@]}"; do
+            if scan_titan_xp_outputs_in_dir "$archive_dir" 3 1; then
                 return 0
             fi
-        done < <(find "$archive_dir" -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
-    done
-    return 1
+        done
+        return 1
+    fi
+
+    scan_titan_xp_outputs_in_dir "." 3 0
 }
 
 echo "Attempt $RETRY_COUNT to run simulations..."
@@ -65,18 +96,15 @@ else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
 
     if failure_outputs_have_titan_xp "$RETRY_COUNT"; then
-        echo "Requeuing the job for attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
-        sleep 60
-        scontrol requeue "$SLURM_JOB_ID"
+        echo "FAILED" > "${PFOLDER}/ATTEMPT_FAILED"
+        echo "Retrying attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
         exit 0
     fi
 
     if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        echo "FAILED" > "${PFOLDER}/ATTEMPT_FAILED"
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
-        echo "Requeuing the job for attempt $NEXT_RETRY..."
-        sleep 60
-        scontrol requeue "$SLURM_JOB_ID"
         exit 0
     else
         echo "FAILED" > "${PFOLDER}/FAILED"
@@ -85,9 +113,8 @@ else
     fi
 fi
 
-if [[ ! -f "${PFOLDER}/FAILED" ]]; then
+if [[ ! -f "${PFOLDER}/FINISHED" ]]; then
     echo "Simulation is not complete."
-    scontrol requeue $SLURM_JOB_ID
     exit 0
 fi
 echo "Job completed at $(date)"

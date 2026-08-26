@@ -6,6 +6,8 @@ import pickle
 import os
 from typing import Any, Iterable, List, Mapping, Tuple, Optional, Set, Sequence
 import shutil
+import shlex
+import sys
 import re
 import random
 
@@ -20,7 +22,6 @@ from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.helpers import (
-    PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     save_anchors,
     Anchors,
@@ -28,6 +29,7 @@ from batter._internal.ops.helpers import (
     copy_if_exists as _copy_if_exists,
     is_atom_line as _is_atom_line,
     field_slice as _field,
+    select_protein_com_atoms,
 )
 
 from batter.utils import run_with_log
@@ -41,6 +43,16 @@ ABFE_DIFF_BULK_COPY_SEPARATION = 10.0
 
 
 # ---------------------- small utils ----------------------
+def _executable_path(command: str) -> str | None:
+    path = shutil.which(command)
+    if path:
+        return path
+    env_path = Path(sys.executable).resolve().parent / command
+    if env_path.exists() and os.access(env_path, os.X_OK):
+        return str(env_path)
+    return None
+
+
 def _rel_symlink(target: Path, link_path: Path) -> None:
     """Create/replace a relative symlink at link_path → target."""
     link_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,16 +62,17 @@ def _rel_symlink(target: Path, link_path: Path) -> None:
     link_path.symlink_to(rel)
 
 
-def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path) -> None:
-    if shutil.which("pdb4amber"):
-        run_with_log(f"pdb4amber -i {input_pdb} -o {output_pdb} -y")
-        return
-    logger.warning(
-        "pdb4amber was not found; copying {} to {} without additional cleanup.",
-        input_pdb,
-        output_pdb,
+def _run_pdb4amber(input_pdb: Path, output_pdb: Path) -> None:
+    executable = _executable_path("pdb4amber")
+    if executable is None:
+        raise FileNotFoundError(
+            "pdb4amber is required but was not found in PATH. "
+            "Activate the batter_dev/AmberTools environment before building complexes."
+        )
+    run_with_log(
+        f"{shlex.quote(executable)} -i {shlex.quote(str(input_pdb))} "
+        f"-o {shlex.quote(str(output_pdb))} -y"
     )
-    shutil.copy2(input_pdb, output_pdb)
 
 
 def _read_nonblank_lines(p: Path) -> List[str]:
@@ -71,6 +84,12 @@ def _heavy_or_all_center_of_mass(atoms: mda.core.groups.AtomGroup) -> np.ndarray
     if heavy.n_atoms:
         return heavy.center_of_mass()
     return atoms.center_of_mass()
+
+
+def _first_atom_position(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    if atoms.n_atoms == 0:
+        raise ValueError("Cannot place DUM atom from an empty atom group.")
+    return np.asarray(atoms[0].position, dtype=float).copy()
 
 
 def _safe_resid(resid: int) -> int:
@@ -1294,7 +1313,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
             if len(ln) >= 22 and ln[17:20] != "WAT":
                 fout.write(ln)
 
-    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    _run_pdb4amber(rec_clean, rec_amber)
     ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
@@ -1409,7 +1428,7 @@ def create_simulation_dir_l(ctx: BuildContext) -> None:
             if len(ln) >= 22 and ln[17:20] != "WAT":
                 fout.write(ln)
 
-    _run_pdb4amber_or_copy(rec_clean, rec_amber)
+    _run_pdb4amber(rec_clean, rec_amber)
     ter_residues: List[Tuple[str, int]] = []
     with rec_amber.open() as f:
         for ln in f:
@@ -1688,14 +1707,20 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # update DUM protein position
     dum_p = ref_vac.select_atoms('resname DUM')[0]
-    dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
+    protein_com_atoms = select_protein_com_atoms(
+        ref_vac,
+        system_root=ctx.system_root,
+    )
+    if protein_com_atoms.n_atoms:
+        dum_p.position = protein_com_atoms.center_of_mass()
+    else:
+        logger.warning(
+            "[protein-com] Leaving the protein DUM coordinate unchanged because "
+            "the system contains no selectable protein atoms."
+        )
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
-    if septop:
-        dum_l.position = _heavy_or_all_center_of_mass(ref_res_atoms)
-    else:
-        mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
-        dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
+    dum_l.position = _first_atom_position(ref_res_atoms)
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
@@ -1802,15 +1827,15 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
         _copy_if_exists(p, dest_dir / p.name)
 
     # write build.pdb with dum atom + ligand
-    # the position of the DUM atom is the center of mass of the ligand
+    # the position of the DUM atom is the first ligand atom
     u_lig = mda.Universe(dest_dir / f"{mol}.pdb")
-    com = u_lig.atoms.center_of_mass()
+    dum_position = _first_atom_position(u_lig.atoms)
     u_dum = mda.Universe.empty(
         1, n_residues=1, atom_resindex=[0], residue_segindex=[0], trajectory=True
     )
     u_dum.add_TopologyAttr("name", ["Pb"])
     u_dum.add_TopologyAttr("resname", ["DUM"])
-    u_dum.atoms.positions = np.array([com])
+    u_dum.atoms.positions = np.array([dum_position])
     with mda.Writer(dest_dir / "build.pdb", n_atoms=u_lig.atoms.n_atoms + 1) as W:
         W.write(u_dum)
         W.write(u_lig)

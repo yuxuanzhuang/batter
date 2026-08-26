@@ -37,6 +37,13 @@ BATCH_RUN_TEMPLATE = (
     / "remd_run_files"
     / "run-local-batch.bash"
 )
+REMD_RUN_TEMPLATE = (
+    Path(__file__).resolve().parent.parent
+    / "_internal"
+    / "templates"
+    / "remd_run_files"
+    / "run-local-remd.bash"
+)
 BATCH_CHECK_TEMPLATE = (
     Path(__file__).resolve().parent.parent
     / "_internal"
@@ -65,6 +72,76 @@ class BatchTask(NamedTuple):
 def _hash_path_list(paths: Sequence[Path]) -> str:
     joined = "\n".join(sorted(str(p.resolve()) for p in paths))
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
+
+
+def _parse_slurm_time_limit_minutes(value: str) -> float:
+    """Parse common Slurm time-limit formats into minutes."""
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("empty time limit")
+
+    days = 0
+    rest = raw
+    has_days = "-" in raw
+    if has_days:
+        day_text, rest = raw.split("-", 1)
+        if not day_text.isdigit() or not rest:
+            raise ValueError(f"invalid Slurm time limit: {value!r}")
+        days = int(day_text)
+
+    parts = rest.split(":")
+    if not 1 <= len(parts) <= 3 or any(not item.isdigit() for item in parts):
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+    nums = [int(item) for item in parts]
+
+    hours = 0
+    minutes = 0
+    seconds = 0
+    if has_days:
+        if len(nums) == 1:
+            hours = nums[0]
+        elif len(nums) == 2:
+            hours, minutes = nums
+        else:
+            hours, minutes, seconds = nums
+    elif len(nums) == 1:
+        minutes = nums[0]
+    elif len(nums) == 2:
+        minutes, seconds = nums
+    else:
+        hours, minutes, seconds = nums
+
+    minutes_is_subfield = (has_days and len(nums) >= 2) or (
+        not has_days and len(nums) == 3
+    )
+    if (minutes_is_subfield and minutes >= 60) or seconds >= 60:
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+
+    total = days * 24 * 60 + hours * 60 + minutes + seconds / 60.0
+    if total <= 0:
+        raise ValueError(f"invalid Slurm time limit: {value!r}")
+    return total
+
+
+def _validate_signal_before_time_limit(
+    *,
+    time_limit: str | None,
+    signal_mins: float,
+) -> None:
+    if not time_limit:
+        return
+    try:
+        time_limit_mins = _parse_slurm_time_limit_minutes(time_limit)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Could not parse --time-limit {time_limit!r}; use a Slurm time "
+            "format such as 00:15:00."
+        ) from exc
+    if time_limit_mins - float(signal_mins) < 1.0:
+        raise click.ClickException(
+            "--signal-mins must be at least 1 minute shorter than --time-limit "
+            f"(got signal={signal_mins:g} min, time-limit={time_limit})."
+        )
 
 
 def _execution_root_for_path(path: Path) -> Path | None:
@@ -281,11 +358,17 @@ def _component_blocked_by_pre_window_failure(comp_dir: Path, comp: str) -> bool:
     return pre_window_failed.exists()
 
 
-def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
-    from batter._internal.ops.remd import patch_batch_component_inputs
-    text = BATCH_RUN_TEMPLATE.read_text()
+def _write_grouped_run_script(
+    comp_dir: Path,
+    comp: str,
+    n_windows: int,
+    *,
+    template: Path,
+    script_name: str,
+) -> Path:
+    text = template.read_text()
     text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
-    run_script = comp_dir / "run-local-batch.bash"
+    run_script = comp_dir / script_name
     run_script.write_text(text)
     try:
         run_script.chmod(0o755)
@@ -293,16 +376,40 @@ def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
         pass
 
     check_dst = comp_dir / "check_run.bash"
-    if not check_dst.exists() and BATCH_CHECK_TEMPLATE.exists():
+    if BATCH_CHECK_TEMPLATE.exists():
         check_dst.write_text(BATCH_CHECK_TEMPLATE.read_text())
         try:
             check_dst.chmod(0o755)
         except Exception:
             pass
 
+    return run_script
+
+
+def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
+    from batter._internal.ops.remd import patch_batch_component_inputs
+
+    run_script = _write_grouped_run_script(
+        comp_dir,
+        comp,
+        n_windows,
+        template=BATCH_RUN_TEMPLATE,
+        script_name="run-local-batch.bash",
+    )
+
     patch_batch_component_inputs(comp_dir, comp)
 
     return run_script
+
+
+def _write_remd_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
+    return _write_grouped_run_script(
+        comp_dir,
+        comp,
+        n_windows,
+        template=REMD_RUN_TEMPLATE,
+        script_name="run-local-remd.bash",
+    )
 
 
 def _collect_batch_tasks(exec_path: Path) -> List[BatchTask]:
@@ -425,6 +532,15 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                 n_windows = _extract_n_windows_from_run_script(run_script)
             if n_windows is None:
                 n_windows = _count_component_windows(comp_dir, comp)
+            window_count = _count_component_windows(comp_dir, comp)
+            if window_count and n_windows != window_count:
+                logger.warning(
+                    f"[remd-batch] Window count mismatch under {comp_dir}: "
+                    f"configured={n_windows} dirs={window_count}; using dirs count."
+                )
+                n_windows = window_count
+
+            _write_remd_run_script(comp_dir, comp, n_windows)
 
             tasks.append(
                 RemdTask(
@@ -512,9 +628,17 @@ def _remd_time_from_rst(rst_path: Path) -> str | None:
 
 def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
     win0 = comp_dir / f"{comp}00"
-    return _remd_time_from_rst(win0 / "md-current.rst7") or _remd_time_from_rst(
-        win0 / "md-previous.rst7"
-    )
+    numbered_restarts: list[tuple[int, Path]] = []
+    for rst_path in win0.glob("md-*.rst7"):
+        match = re.fullmatch(r"md-(\d+)\.rst7", rst_path.name)
+        if match:
+            numbered_restarts.append((int(match.group(1)), rst_path))
+
+    for _, rst_path in sorted(numbered_restarts, reverse=True):
+        restart_time = _remd_time_from_rst(rst_path)
+        if restart_time is not None:
+            return restart_time
+    return None
 
 
 def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:
@@ -616,6 +740,11 @@ def _run_remd_batch(
     if auto_resubmit and signal_mins <= 0:
         raise click.ClickException(
             "--signal-mins must be > 0 when auto-resubmit is enabled."
+        )
+    if auto_resubmit:
+        _validate_signal_before_time_limit(
+            time_limit=time_limit,
+            signal_mins=signal_mins,
         )
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(
@@ -774,13 +903,8 @@ def _run_remd_batch(
         '  local nodes="$4"',
         '  echo "Running ${label}${win:+ (windows=${win})} dir=${dir}"',
         '  local mpi_flags="${MPI_FLAGS:-}"',
-        '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
-        '    local extra_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1"',
-        '    if [[ -n "$mpi_flags" ]]; then',
-        '      mpi_flags="${mpi_flags} ${extra_flags}"',
-        "    else",
-        '      mpi_flags="${extra_flags}"',
-        "    fi",
+        '  if [[ "$use_srun" -eq 1 && -z "$mpi_flags" && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
+        '    mpi_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1 --gpu-bind=closest"',
         "  fi",
         "  local attempt",
         '  attempt=$(read_component_attempt "$dir")',
@@ -927,8 +1051,9 @@ def _run_remd_batch(
 @click.option(
     "--time-limit",
     type=str,
-    default=None,
-    help="Optional time limit override for the sbatch header (e.g., 08:00:00).",
+    default="00:15:00",
+    show_default=True,
+    help="Time limit for the generated sbatch script.",
 )
 @click.option(
     "--gpus",
@@ -958,7 +1083,7 @@ def _run_remd_batch(
 @click.option(
     "--signal-mins",
     type=float,
-    default=90.0,
+    default=10.0,
     show_default=True,
     help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
 )
@@ -984,9 +1109,9 @@ def _run_remd_batch(
 )
 @click.option(
     "--remd/--no-remd",
-    default=False,
+    default=True,
     show_default=True,
-    help="Run in REMD mode (uses run-local-remd.bash).",
+    help="Use REMD batch mode; --no-remd uses run-local-batch.bash.",
 )
 def batch(
     execution: tuple[Path, ...],
@@ -1056,6 +1181,11 @@ def batch(
         raise click.ClickException(
             "--signal-mins must be > 0 when auto-resubmit is enabled."
         )
+    if auto_resubmit:
+        _validate_signal_before_time_limit(
+            time_limit=time_limit,
+            signal_mins=signal_mins,
+        )
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(
             "--max-resubmit-count must be > 0 when auto-resubmit is enabled."
@@ -1105,7 +1235,7 @@ def batch(
     resubmit_cmd = None
     if auto_resubmit:
         batter_cmd = _which_batter()
-        resubmit_args = ["batch"]
+        resubmit_args = ["batch", "--no-remd"]
         for p in exec_paths:
             resubmit_args.extend(["-e", str(p)])
         resubmit_args.extend(["--output", str(output_path_abs)])
@@ -1214,13 +1344,8 @@ def batch(
         '  local nodes="$4"',
         '  echo "Running ${label}${win:+ (windows=${win})} dir=${dir}"',
         '  local mpi_flags="${MPI_FLAGS:-}"',
-        '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
-        '    local extra_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1"',
-        '    if [[ -n "$mpi_flags" ]]; then',
-        '      mpi_flags="${mpi_flags} ${extra_flags}"',
-        "    else",
-        '      mpi_flags="${extra_flags}"',
-        "    fi",
+        '  if [[ "$use_srun" -eq 1 && -z "$mpi_flags" && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
+        '    mpi_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1 --gpu-bind=closest"',
         "  fi",
         "  local attempt",
         '  attempt=$(read_component_attempt "$dir")',

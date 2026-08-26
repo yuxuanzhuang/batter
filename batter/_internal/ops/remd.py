@@ -11,7 +11,11 @@ from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
-BAR_INTERVAL_DEFAULT = 100
+# Amber gates MBAR collection with mod(nstep + 1, bar_intervall), and PMEMD
+# resets nstep at each REMD exchange block. Keep this no larger than the
+# default REMD nstlim so each block can emit MBAR samples.
+BAR_INTERVAL_DEFAULT = 1000
+REMD_DUMPFREQ_MAX = 1000
 
 
 def _prefix_path(value: str, prefix: str) -> str:
@@ -54,7 +58,9 @@ def _rewrite_path_line(line: str, key: str, prefix: str) -> tuple[str, bool]:
     return new_line, True
 
 
-def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str], bool]:
+def _inject_numexchg(
+    lines: List[str], numexchg: int | None, bar_interval: int
+) -> tuple[List[str], bool]:
     """
     Insert numexchg/bar_intervall into the &cntrl block if missing.
     """
@@ -62,7 +68,9 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
         return lines, False
     out: List[str] = []
     in_cntrl = False
-    inserted = False
+    found_numexchg = False
+    found_bar_interval = False
+    changed = False
     num_val = numexchg
 
     for line in lines:
@@ -70,18 +78,48 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
         if lower.startswith("&cntrl"):
             in_cntrl = True
         if "numexchg" in lower:
-            inserted = True
+            found_numexchg = True
+        if "bar_intervall" in lower:
+            found_bar_interval = True
 
         if in_cntrl and lower == "/":
-            if not inserted:
+            if not found_numexchg:
                 out.append(f"  numexchg = {num_val},\n")
-                out.append(f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n")
-                inserted = True
+                changed = True
+            if not found_bar_interval:
+                out.append(f"  bar_intervall = {bar_interval},\n")
+                changed = True
             in_cntrl = False
 
         out.append(line)
 
-    return out, inserted
+    return out, changed
+
+
+def _rewrite_dumpfreq_line(line: str, dumpfreq: int) -> tuple[str, bool]:
+    """
+    Rewrite a DUMPFREQ wt line to use ``dumpfreq`` as istep1.
+    """
+    if "dumpfreq" not in line.lower():
+        return line, False
+    if not re.search(r"istep1\s*=", line, flags=re.IGNORECASE):
+        return line, False
+    new_line = re.sub(
+        r"istep1\s*=\s*[^,/\s]+",
+        f"istep1={dumpfreq}",
+        line,
+        flags=re.IGNORECASE,
+    )
+    return new_line, new_line != line
+
+
+def _bounded_remd_interval(remd_nstlim: int | None, maximum: int) -> int:
+    """
+    Keep output intervals inside each REMD exchange block.
+    """
+    if remd_nstlim is None or remd_nstlim <= 0:
+        return maximum
+    return max(1, min(maximum, remd_nstlim))
 
 
 def patch_mdin_file(
@@ -91,6 +129,8 @@ def patch_mdin_file(
     add_numexchg: bool,
     remd_nstlim: int | None = None,
     remd_numexchg: int | None = None,
+    remd_bar_interval: int | None = None,
+    remd_dumpfreq: int | None = None,
 ) -> bool:
     """
     Update mdin-like files so embedded file paths are relative to ``prefix``.
@@ -121,16 +161,22 @@ def patch_mdin_file(
         elif remd_numexchg is not None and "numexchg" in lower:
             line = f"  numexchg = {remd_numexchg},\n"
             changed = True
-        elif remd_numexchg is not None and "bar_intervall" in lower:
-            line = f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n"
+        elif remd_bar_interval is not None and "bar_intervall" in lower:
+            line = f"  bar_intervall = {remd_bar_interval},\n"
             changed = True
         elif remd_nstlim is not None and "nstlim" in lower:
             line = f"  nstlim = {remd_nstlim},\n"
             changed = True
+        elif remd_dumpfreq is not None and "dumpfreq" in lower:
+            line, did_change = _rewrite_dumpfreq_line(line, remd_dumpfreq)
+            changed = changed or did_change
         new_lines.append(line)
 
     if add_numexchg:
-        new_lines, inserted = _inject_numexchg(new_lines, remd_numexchg)
+        bar_interval = remd_bar_interval or BAR_INTERVAL_DEFAULT
+        new_lines, inserted = _inject_numexchg(
+            new_lines, remd_numexchg, bar_interval
+        )
         changed = changed or inserted
 
     if changed:
@@ -203,7 +249,7 @@ def patch_component_inputs(
         nstlim_val = int(nstlim) if nstlim else None
         base_template = window_dir / "mdin-template"
         tmpl = window_dir / "mdin-remd-template"
-        if not tmpl.exists() and base_template.exists():
+        if base_template.exists():
             tmpl.write_text(base_template.read_text())
             total_steps = comp_total_steps or _extract_total_steps(
                 base_template.read_text()
@@ -217,6 +263,12 @@ def patch_component_inputs(
                 add_numexchg=add_numexchg,
                 remd_nstlim=nstlim_val,
                 remd_numexchg=remd_exchg,
+                remd_bar_interval=_bounded_remd_interval(
+                    nstlim_val, BAR_INTERVAL_DEFAULT
+                ),
+                remd_dumpfreq=_bounded_remd_interval(
+                    nstlim_val, REMD_DUMPFREQ_MAX
+                ),
             )
             if not total_steps:
                 total_steps = nstlim_val or 0
@@ -225,7 +277,7 @@ def patch_component_inputs(
                 changed = True
             if changed:
                 patched.append(tmpl)
-        elif not tmpl.exists():
+        else:
             logger.warning(
                 f"[remd] Missing mdin-template under {window_dir}; cannot write remd template."
             )
@@ -283,8 +335,7 @@ def write_remd_groupfiles(
         return []
 
     group_dir = comp_dir / "remd"
-    prmtop = "full.hmr.prmtop" if str(sim.hmr).lower() == "yes" else "full.prmtop"
-    prmtop_path = f"{comp}-1/{prmtop}"
+    prmtop_path = f"{comp}-1/full_merged.prmtop"
     eq_restart = f"{comp}-1/eqnpt04.rst7"
     allow_small_box = " -AllowSmallBox" if comp == "m" else ""
 
@@ -355,7 +406,9 @@ def write_remd_run_scripts(
         },
     )
     slurm_body.write_text(body_text)
+    slurm_body.with_suffix(slurm_body.suffix + ".body").write_text(body_text)
     slurm_body.chmod(0o755)
+    slurm_body.with_suffix(slurm_body.suffix + ".body").chmod(0o755)
     out.append(slurm_body)
 
     # copy check_run.bash alongside for failure checks

@@ -46,7 +46,7 @@ create:
 run:
   # top-level work directory for executions/ and results/
   output_folder: ABFE_simulations
-  # stop after shared prep/equilibration and FE window setup when true
+  # stop after FE window setup/equilibration, before FE production
   only_fe_preparation: false
   # prepare inputs without launching MD
   dry_run: false
@@ -75,12 +75,11 @@ fe_sim:
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
   # running 4 ns for equilibration
-  # in the equilibration phase, the system is not restrained and thus
-  # the ligand can drift away from the binding site.
-  # if it unbounds when it exceeds UNBOUND_DIST
+  # equilibration uses staged positional and anchor restraints; subsequent
+  # analysis flags a ligand as unbound when it exceeds unbound_threshold
   eq_steps: 1000000
-  # running 4 ns for production in each window
-  z_n_steps: 1000000
+  # running 10 ns for production in each window
+  z_n_steps: 2500000
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -93,7 +92,7 @@ fe_sim:
   buffer_z: 10.0
   # simulation temperature in Kelvin
   temperature: 298.15
-  # analysis only start from 100000 steps
-  analysis_start_step: 100000
+  # analysis starts after the first 1 ns (250000 steps at 4 fs)
+  analysis_start_step: 250000
   # MBAR analysis blocks
   blocks: 5

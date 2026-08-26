@@ -22,6 +22,8 @@ Header files
 * ``SLURMM-Am.header``: equilibration/FE runs
 * ``SLURMM-BATCH-remd.header``: REMD runs
 * ``job_manager.header``: manager script used by ``batter run --slurm-submit``
+* ``SLURMM-BATCH.header``: reserved legacy ``run.batch_mode`` template; the
+  current ``batter batch`` command uses ``SLURMM-BATCH-remd.header``
 
 Common environment overrides
 ----------------------------
@@ -35,6 +37,8 @@ Headers include commented examples for overriding executables:
 * ``PMEMD_CPU_MPI_EXEC`` (default: pmemd.MPI)
 * ``SANDER_EXEC`` (default: sander)
 * ``MPI_EXEC`` (default: mpirun)
+* ``MPI_FLAGS`` (default: inferred by the runner; an exported value is used as-is
+  immediately after ``MPI_EXEC``)
 
 Edit exports in the header files to point to site-specific binaries/modules. The packaged
 bodies will be appended during rendering; only the headers are meant for customization.

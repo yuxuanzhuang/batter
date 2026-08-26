@@ -11,7 +11,7 @@ MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 PRMTOP_MERGED="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
@@ -272,7 +272,7 @@ if [[ $only_eq -eq 1 ]]; then
         # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
         if [[ $overwrite -ne 0 || $seed_eq_ran -eq 1 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
             rm -f eq.rst7.[0-9]*
-            $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
+            $CPPTRAJ_EXEC -p $PRMTOP_MERGED -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
 run
@@ -325,8 +325,10 @@ EOF
             require_nonempty_file_or_attempt_fail "eq.in" "[ERROR] Missing eq.in; cannot run window equilibration for window $i."
             rm -f FAILED ATTEMPT_FAILED
             archive_existing_log_file "$log_file"
-            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
-            check_sim_failure "Window equilibration for window $i" "$log_file" eq.rst7
+            run_fe_window_equilibration \
+                "Window equilibration for window $i" \
+                "eq_init.rst7" \
+                "$PRMTOP_MERGED" || exit 1
             cd "$seed_dir" || exit 1
         done
     fi
@@ -340,6 +342,9 @@ EOF"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
+        if ! cleanup_fe_equilibration_artifacts "COMPONENT" "NWINDOWS" "$(pwd)"; then
+            echo "[WARN] FE equilibration completed, but transient artifact cleanup was incomplete."
+        fi
         echo "EQ_FINISHED" > EQ_FINISHED
         echo "[INFO] EQ_FINISHED marker written."
         echo "Job completed at $(date)"
@@ -373,20 +378,27 @@ start_ps=$(production_start_ps "$production_start_marker" "$production_initial_r
 select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry"
 rst_in="$SELECTED_MD_RESTART"
 require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
-restart_ps=$(production_restart_ps)
+restart_ps=$(production_restart_ps "$rst_in")
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
 
 echo "Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
-# Determine current segment index from existing OUT files
+# Determine current segment index from existing OUT files and the selected restart.
+restart_seg_idx=0
+if parsed_restart_seg_idx=$(md_segment_index_from_restart "$rst_in" 2>/dev/null); then
+    restart_seg_idx=$parsed_restart_seg_idx
+fi
 seg_idx=$(latest_md_index "md-*.out")
 if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
 fi
+if (( restart_seg_idx > seg_idx )); then
+    seg_idx=$restart_seg_idx
+fi
 
-last_rst="md-current.rst7"
+last_rst="$rst_in"
 win_00=../COMPONENT00
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
@@ -409,6 +421,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    rst_out="${out_tag}.rst7"
     cmass_file=$(printf "cmass-%02d.txt" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
@@ -422,28 +435,18 @@ if (( remaining_steps > 0 )); then
     }
     rm -f .write_test.$$
 
-    # Rotate md-current restart (avoid Fortran OPEN issues / keep backup)
-    if [[ -f md-current.rst7 ]]; then
-        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] md-current.rst7 exists but empty; aborting."
-        mv -f md-current.rst7 md-previous.rst7
-        if [[ "$rst_in" == "md-current.rst7" ]]; then
-            rst_in="md-previous.rst7"
-        fi
-    fi
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
-    # Run MD: always write restart to md-current.rst7
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
-
-    # Update production elapsed time from the rolling restart.
-    restart_ps=$(production_restart_ps)
+    # Update production elapsed time from the explicit segment restart.
+    restart_ps=$(production_restart_ps "$rst_out")
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
     echo "[INFO] Updated completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps)"
 
-    rst_in="md-current.rst7"
-    last_rst="md-current.rst7"
+    rst_in="$rst_out"
+    last_rst="$rst_out"
 fi
 
 if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
@@ -456,6 +459,7 @@ run
 EOF"
 
     if [[ -s output.pdb ]]; then
+        cleanup_finished_md_restarts
         echo "FINISHED" > FINISHED
         echo "[INFO] FINISHED marker written."
         exit 0

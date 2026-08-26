@@ -129,6 +129,54 @@ def test_representative_snapshot_uses_last_quarter_frames(
     assert validator.results["representative_analysis_start_frame"] == 6
 
 
+def test_representative_snapshot_reads_disang_without_assign_in(tmp_path: Path) -> None:
+    u = _make_test_universe(tmp_path)
+    coords = np.repeat(u.atoms.positions[None, :, :], 4, axis=0)
+    coords[:, 0, :] = np.array([0.0, 0.0, 0.0])
+    coords[:, 1, :] = np.array([1.0, 0.0, 0.0])
+    coords[:, 3, :] = np.array([1.0, 1.0, 0.0])
+    coords[:, 4, :] = np.array([2.0, 1.0, 1.0])
+    coords[3, 4, :] = np.array([2.0, 1.2, 0.8])
+    u.load_new(coords, order="fac")
+
+    (tmp_path / "disang.rest").write_text(
+        "&rst iat=1,2,4,5, r1=-180.0, r2=0.0, r3=0.0, "
+        "r4=180.0, rk2=0.0, rk3=0.0, &end #Lig_D\n"
+    )
+    validator = _make_validator(u, tmp_path)
+
+    rep_idx = validator.find_representative_snapshot(
+        savefig=True, output_filename="disang_dihed_hist.png"
+    )
+
+    assert rep_idx == 3
+    assert validator.results["representative_frame_index"] == 3
+    assert validator.results["ligand_dihedrals"].shape == (1, 1)
+    assert validator.results["ligand_dihedral_frame_indices"].tolist() == [3]
+    assert validator.results["ligand_dihedral_source"] == str(tmp_path / "disang.rest")
+    assert not (tmp_path / "assign.in").exists()
+    assert (tmp_path / "disang_dihed_hist.png").stat().st_size > 0
+
+
+def test_simulation_analysis_plot_records_frame_and_time_axes(tmp_path: Path) -> None:
+    u = _make_test_universe(tmp_path)
+    coords = np.repeat(u.atoms.positions[None, :, :], 3, axis=0)
+    u.load_new(coords, order="fac", dt=2000.0)
+    validator = _make_validator(u, tmp_path)
+    validator.results = {
+        "ligand_bs": np.array([3.0, 3.2, 3.1]),
+        "protein_rmsd": np.array([0.0, 0.5, 0.7]),
+        "ligand_rmsd": np.array([0.0, 0.8, 0.6]),
+        "representative_frame_index": 1,
+    }
+
+    validator.plot_analysis(savefig=True)
+
+    assert np.array_equal(validator.results["frame_indices"], np.array([0, 1, 2]))
+    assert np.allclose(validator.results["simulation_time_ns"], np.array([0.0, 2.0, 4.0]))
+    assert (tmp_path / "simulation_analysis.png").stat().st_size > 0
+
+
 def test_stable_boresch_distance_uses_tail_candidate_stability(
     tmp_path: Path,
 ) -> None:
@@ -240,6 +288,42 @@ def test_stable_boresch_distance_prioritizes_interaction_priority(
     assert record["criteria"]["protein_residue_priorities"] == [
         {"resid": 10, "priority": 0},
         {"resid": 20, "priority": 2},
+    ]
+
+
+def test_stable_boresch_distance_prioritizes_salt_bridge_ligand_atom(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "stable_ligand_priority.pdb"
+    lines = [
+        _atom_line(1, "CA", "ALA", "A", 10, 0.0, 0.0, 0.0, "C"),
+        _atom_line(2, "C1", "LIG", "A", 300, 4.0, 0.0, 0.0, "C"),
+        _atom_line(3, "N1", "LIG", "A", 300, 5.0, 0.0, 0.0, "N"),
+        "TER\n",
+        "END\n",
+    ]
+    pdb.write_text("".join(lines))
+    u = mda.Universe(str(pdb))
+    coords = np.repeat(u.atoms.positions[None, :, :], 2, axis=0)
+    coords[0, 1, :] = np.array([4.0, 0.0, 0.0])
+    coords[1, 1, :] = np.array([4.1, 0.0, 0.0])
+    coords[0, 2, :] = np.array([5.0, 0.0, 0.0])
+    coords[1, 2, :] = np.array([6.0, 0.0, 0.0])
+    u.load_new(coords, order="fac")
+    validator = _make_validator(u, tmp_path)
+
+    record = validator.find_stable_boresch_distance(
+        tail_fraction=1.0,
+        min_distance=3.0,
+        max_distance=7.0,
+        ligand_atom_names=["C1", "N1"],
+        ligand_atom_priorities={"N1": 0},
+    )
+
+    assert record["ligand"]["name"] == "N1"
+    assert record["rank_score"]["ligand_atom_priority"] == 0
+    assert record["criteria"]["ligand_atom_priorities"] == [
+        {"name": "N1", "priority": 0}
     ]
 
 

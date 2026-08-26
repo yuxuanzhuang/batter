@@ -39,13 +39,18 @@ The run YAML file is divided into three sections grouped inside
     letting runtime scripts determine the target length without regenerating inputs.
     Legacy production extend knobs (``num_fe_extends``) are rejected; set
     ``n_steps`` to total steps instead. ``analysis_range`` is likewise
-    disallowed—use ``analysis_start_step`` to skip early production frames. FE
+    disallowed—use ``analysis_start_step`` to skip early production frames. Set
+    ``detect_equil: false`` to make MBAR use all remaining samples instead of
+    applying the default global physical-time equilibration/decorrelation filter. FE
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
     ``run-local*.bash`` reads that marker plus the first ``nstlim`` it finds to choose
-    the segment length. Each invocation runs one segment, updates
-    ``md-current.rst7``/``md-previous.rst7`` plus ``md-*.out``, and returns; rerun the
-    script to continue until ``total_steps`` is reached.
+    the segment length. Each invocation runs one segment, writes an explicit
+    numbered restart such as ``md-01.rst7`` or ``md-02.rst7`` plus the matching
+    ``md-*.out`` and ``md-*.nc``, and returns; rerun the script to continue until
+    ``total_steps`` is reached. Single-window launchers remove numbered
+    ``md-*.rst7`` restart files after a production window is successfully marked
+    ``FINISHED``; grouped batch and REMD launchers retain their numbered restarts.
 
 See Quick Reference below for links to individual config classes.
 
@@ -63,6 +68,21 @@ Lambda schedules can be customized per component using ``fe_sim.component_lambda
 (or ``<comp>_lambdas`` keys). When a component is missing from that map, it
 inherits the top-level ``fe_sim.lambdas`` list. Values can be written as YAML lists
 or comma/space separated strings; validation ensures ascending order.
+
+FE-window equilibration and output cadence
+-------------------------------------------
+
+Each prepared target window receives 50 ps of FE equilibration before
+production. BATTER divides this into five restart-chained handoff stages: the
+DUM positional restraint remains fixed while the ligand-anchor or RBFE
+common-core positional restraint decreases from 1.0 to 0.0 kcal/mol/A². After
+the component finishes equilibration, transient handoff inputs are removed and
+the final ``eq.rst7`` remains as the production start.
+
+``fe_sim.ntpr`` controls AMBER energy-print cadence and defaults to ``1250``
+steps for both FE and MD protocols. ``ntwr`` and ``ntwx`` independently control
+restart and trajectory writes; their protocol-specific defaults are available
+in the generated configuration API reference below.
 
 RBFE mapping options
 --------------------
@@ -89,6 +109,8 @@ network planning and atom mapping/scoring.
   planning.
 * ``rbfe.konnektor_layout`` – optional Konnektor layout when ``mapping: konnektor``.
 * ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
+* ``rbfe.skip_duplicate_ligands`` – default ``false``; when true, omit later
+  ligands with the same molecular identity before planning the network.
 * ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
 
   - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
@@ -121,16 +143,43 @@ triplet during ``system_prep`` and stores the resolved global selections in
 used by later equilibration/FE setup are also written per ligand to
 ``equil/anchors.json``.
 
+Both an omitted field and ``anchor_atoms: null`` request full automatic
+selection. A scalar selection string is normalized to a one-entry P1 hint, but
+the list form is preferred for clarity.
+
 * For runs with real ligands, the first available real ligand pose drives a
   ligand-guided receptor-anchor heuristic.
 * For apo-only MD, BATTER switches to a protein-only heuristic so dummy ligand
   coordinates do not determine the anchor geometry.
 
-If you know the receptor interaction that should define the Boresch reference,
-provide one selection. BATTER treats that atom as P1 and chooses P2/P3
-automatically. Prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry.
+Provide three distinct, unambiguous selections only when you need fully manual
+P1/P2/P3 geometry. One selection is a P1 hint and BATTER chooses P2/P3. Two
+entries are treated as incomplete: BATTER keeps the first as the P1 hint and
+chooses P2/P3 together. Invalid or ambiguous selections produce a warning and
+fall back to automatic selection; if more than three are supplied, only the
+first three are considered.
+
+When automatic selection is active and a charged protein-ligand contact is
+detected, BATTER prefers that salt bridge for P1/L1. For L2/L3 it first prefers
+valid ring atoms connected to at least two heavy atoms, then atoms connected to
+more than two heavy atoms, and then other nonterminal heavy atoms. Receptor
+P1/P2/P3 candidates come from stable non-loop Cα atoms and are screened to avoid
+near-linear frames. If the preferred receptor spacing or ligand-anchor distance
+window has no solution, BATTER warns and uses the best compact, non-collinear
+frame instead.
+
+Protein COM restraint group
+---------------------------
+
+The protein COM-to-DUM restraint uses Cα atoms from contiguous DSSP helix or
+sheet stretches of at least four residues. BATTER evenly strides this group to
+at most 50 atoms and places the protein DUM atom at the COM of that same group.
+The protein COM-to-DUM distance has a 3 Å flat-bottom region
+(``r1=0.0, r2=0.0, r3=3.0, r4=999.0``).
+If DSSP data are unavailable, cannot be mapped one-to-one onto the prepared
+protein, or contain no qualifying stretch, BATTER warns and falls back to all
+protein Cα atoms. If a structure contains no Cα atoms, available protein
+backbone atoms are used as a final fallback.
 
 Component-Specific Inputs
 -------------------------
@@ -159,7 +208,8 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
      - Define ion names that ``addionsrand`` inserts.
    * - ``ion_conc``
      - :attr:`SimulationConfig.ion_def` → ``create_box``
-     - Drives salt concentration when ``neutralize_only = "no"``.
+     - Drives salt concentration when ``neutralize_only = "no"``; defaults to
+       ``0.05`` M (50 mM).
    * - ``neutralize_only``
      - :attr:`SimulationConfig.neut` → ``create_box``
      - Toggles between neutralisation-only or salt+neutralisation workflows.
@@ -172,8 +222,9 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
    * - ``anchor_atoms``
      - ``system_prep`` / restraint ops
      - Optional receptor-anchor override. Empty means BATTER selects anchors
-       heuristically; one selection pins P1 and auto-selects P2/P3; three
-       selections provide explicit P1/P2/P3 geometry.
+       heuristically; one selection pins P1 and auto-selects P2/P3; three valid,
+       distinct selections provide explicit P1/P2/P3 geometry. Incomplete or
+       invalid input warns and falls back to automatic selection.
    * - ``lipid_mol``
      - Build/ops helpers
      - Identifies membrane residues when trimming waters.
@@ -188,30 +239,70 @@ clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane sy
 the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
 bulk solvent above the membrane even if the YAML specifies a smaller buffer.
 
-Equilibration options
----------------------
+FE ion guard
+------------
 
-Two frequently toggled equilibration knobs live under ``fe_sim`` and flow into the
+``fe_sim.ion_guard`` defaults to ``"yes"`` for ABFE, RBFE, and RBFE-SEPTOP FE
+windows. When enabled, BATTER appends ``#Ion_Guard`` lower-wall distance
+restraints to ``disang.rest`` for ``z`` and ``x`` components. Each configured
+bulk ion (from ``create.cation`` / ``create.anion``) is restrained from coming
+within 10 Å of the ligand reference atom in the binding site. Set
+``fe_sim.ion_guard: no`` to disable this
+FE-stage guard; equilibration restraints are unchanged.
+
+HMR and MC-water options
+------------------------
+
+These frequently toggled settings live under ``fe_sim`` and flow into the
 resolved :class:`~batter.config.simulation.SimulationConfig`:
 
-* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning. The builder swaps in HMR
-  parameter files and switches equilibration/production mdins to the HMR topology
-  (``full.hmr.prmtop``).
+* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning during preparation.
+  BATTER may still generate HMR helper files, but generated local, batch, and
+  REMD launch scripts use ``full_merged.prmtop`` as the runtime topology.
 * ``enable_mcwat`` – ``"yes"`` (default) enables Monte Carlo water moves during
   equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
-  :func:`batter._internal.ops.amber.write_amber_templates`.
+  :func:`batter._internal.ops.amber.write_amber_templates`. During bulk-ligand
+  MC-water setup, the dummy coordinate is placed at the literal first bulk-ligand
+  atom rather than at the ligand center of mass.
+* ``mcwat_fe`` – ``"yes"`` (default) enables the same MC-water move block in FE
+  production input templates. Local single-window and REMD runs preserve this
+  setting. Standard grouped batch runs force ``mcwat = 0`` in their transient
+  ``mdin-current`` files because AMBER only supports MC-water moves for grouped
+  execution when REMD is enabled. Because ``enable_mcwat`` and ``mcwat_fe`` both
+  default to ``"yes"``, omitting either field enables MC-water moves for its
+  corresponding stage. MC-water REMD requires the patched AMBER26 MPI build
+  described in :doc:`amber_compilation`.
+
+ABFE bulk-ligand restraint
+--------------------------
+
+For ABFE ``z`` windows, the translated bulk-solvent ligand is not appended to the
+``ATOM 1 2`` positional-restraint mask in ``mdin-template``. BATTER instead adds a
+``#Bulk_Lig`` flat-bottom block to ``disang.rest`` between AMBER atom 2 in the
+binding-site ligand and the literal first atom of the bulk ligand copy. The block
+uses ``iat=-1,-1``, group entries ``igr1=2,0`` and ``igr2=<bulk first atom>,0``,
+zero-width inner bounds (``r2=r3=0.0``), and 10 kcal/mol/Å² force constants. It
+does not use ``fxyz`` or ``outxyz``.
 
 REMD runs
 ---------
 
 REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
-submit time whether to run them. Use ``fe_sim.remd.nstlim`` to set the exchange interval
-and segment length; the exchange count is derived from the remaining steps so total
-runtime is controlled by ``n_steps``. Control execution with ``run.remd`` (``yes`` or
-``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
-scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
-monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
-:doc:`remd_submission` for operational details.
+submit time whether to run them. Use ``fe_sim.remd.nstlim`` to set the exchange interval;
+the default is ``1000`` MD steps. The exchange count is derived from the remaining steps,
+so total runtime is controlled by ``n_steps``. Runtime REMD launchers
+preserve the ``nstlim`` already present in ``mdin-remd-template`` and update
+``numexchg`` for each segment. The MBAR ``bar_intervall`` and center-of-mass
+``DUMPFREQ`` intervals are both ``1000`` steps by default and are capped at
+``nstlim`` for shorter exchange blocks. Control execution with ``run.remd``
+(``yes`` or ``no``, default ``no``); when
+``run.remd: no`` the files are still generated but no REMD jobs are scheduled. REMD jobs
+submit one Slurm job per component via ``SLURMM-BATCH-remd`` and monitor
+``FINISHED``/``FAILED`` sentinels in the component folder. This YAML setting
+controls execution launched by ``batter run``; the separate ``batter batch``
+command defaults to REMD regardless of ``run.remd`` and requires
+``--no-remd`` to select standard grouped production. See
+:doc:`remote_bundled_jobs` for operational details.
 
 SLURM header templates
 ----------------------
@@ -239,6 +330,8 @@ executable paths). Bodies remain managed by the package. Header files:
 * ``SLURMM-Am.header`` (equil/FE runs)
 * ``SLURMM-BATCH-remd.header`` (REMD runs)
 * ``job_manager.header`` (manager script for ``batter run --slurm-submit``)
+* ``SLURMM-BATCH.header`` (reserved legacy ``run.batch_mode`` template; the
+  current ``batter batch`` command uses ``SLURMM-BATCH-remd.header``)
 
 The header lookup/seed location is controlled by ``run.slurm_header_dir``; when omitted it
 defaults to ``~/.batter``.
@@ -302,34 +395,40 @@ manager finishes normally or exits with an uncaught failure. BATTER sends that
 message through ``localhost`` SMTP and uses ``run.email_sender`` as the sender
 address (default: ``nobody@stanford.edu``).
 
-Batch mode (single allocation)
-------------------------------
+Bundled production jobs
+-----------------------
 
-If you prefer to request a multi-GPU allocation once and submit per-window jobs from a
-manager process, set ``run.batch_mode: true``. The manager will render ``SLURMM-BATCH``
-scripts into ``executions/<run_id>/batch_run`` and submit them with ``sbatch``; each script
-``cd``s into the component/window folder and runs ``run-local.bash`` (or ``run-local-remd.bash``).
-Equilibration and FE-equil run as normal per-ligand submits; FE production is bundled into a
-single batch submission per ligand when REMD is disabled.
-Set ``run.batch_gpus`` to request GPUs on the sbatch line (via ``--gres gpu:<batch_gpus>``)
-for the per-ligand FE batch submission; ``run.batch_gpus_per_task`` controls the per-task
-allocation used inside the batch helper.
+The in-manager ``run.batch_mode`` path is not implemented in the current
+orchestrator; setting it to ``true`` raises ``NotImplementedError``. Prepare and
+equilibrate the execution first, then use the separate ``batter batch`` command
+to generate one remote bundled production script:
 
-The batch wrapper header is seeded to ``~/.batter/SLURMM-BATCH.header`` (similar to other
-headers); edit it to match your cluster defaults (GPUs, partition, modules).
+.. code-block:: console
 
-Remember to request GPUs in your job manager header (``job_manager.header``) so the manager
-allocation has the resources it needs.
+   batter run run.yaml --only-equil --slurm-submit
+   batter batch -e <run.output_folder>/executions/<run_id>
+
+``batter batch`` uses REMD by default. Pass ``--no-remd`` to use standard grouped
+production through ``run-local-batch.bash``. Scheduler sizing is controlled by
+the command's ``--gpus``, ``--nodes``, ``--gpus-per-node``, ``--partition``, and
+``--time-limit`` options rather than ``run.batch_gpus*``. See
+:doc:`remote_bundled_jobs` for the full workflow.
 
 Executable resolution
 ---------------------
 
-BATTER launches external tools by name (e.g., ``pmemd.cuda``, ``pmemd.cuda.MPI``,
-``pmemd``, ``sander``, ``tleap``, ``antechamber``, ``cpptraj``, ``parmchk2``,
-``obabel``, ``vmd``). Ensure they are on ``PATH`` or exported in your SLURM headers
-if cluster modules are required. The package ships ``USalign`` internally and calls
-it via the baked-in path. For the Python-side tooling you can override executables
-via environment variables so overrides propagate into subprocesses:
+BATTER launches AMBER engines and AmberTools programs by name. Ensure the engines
+used by your jobs (for example ``pmemd.cuda``, ``pmemd.cuda.MPI``, ``pmemd``, and
+``sander``) and required preparation tools such as ``pdb4amber``, ``tleap``,
+``antechamber``, ``cpptraj``, and ``parmchk2`` are on ``PATH`` or loaded by your
+SLURM headers. ``pdb4amber`` is required and has no BATTER-specific executable
+override.
+
+Open Babel is also used during preparation. VMD is optional: current complex-build
+paths use Python split/alignment fallbacks when it is unavailable, while it remains
+useful for interactive inspection. The package ships ``USalign`` internally and
+calls it through the packaged path. For tools with configurable executable paths,
+the following environment variables propagate into subprocesses:
 
 * ``BATTER_ANTECHAMBER`` (default: ``antechamber``)
 * ``BATTER_TLEAP`` (default: ``tleap``)

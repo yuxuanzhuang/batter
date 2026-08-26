@@ -10,7 +10,7 @@ MPI_EXEC=${MPI_EXEC:-mpirun}
 MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
-PRMTOP="full.hmr.prmtop"
+PRMTOP="full_merged.prmtop"
 N_WINDOWS=NWINDOWS
 PFOLDER="."
 PFOLDER_ABS=$(cd "${PFOLDER}" 2>/dev/null && pwd -P)
@@ -45,14 +45,39 @@ production_is_complete() {
 fi
 
 # Write a REMD mdin current file:
-# - keep nstlim fixed to the REMD interval
+# - keep nstlim fixed from mdin-remd-template
 # - update numexchg based on remaining steps
-# - set irest/ntx according to first_run
+# - always continue from restart coordinates and velocities
+cap_dumpfreq_for_remd_chunk() {
+    local nstlim_value=$1
+    local dumpfreq_value
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+    dumpfreq_value=$nstlim_value
+
+    # Keep the center-of-mass print interval inside each exchange block.
+    awk -v freq="$dumpfreq_value" '
+        BEGIN { IGNORECASE = 1 }
+        {
+            line = $0
+            if (line ~ /DUMPFREQ/ && match(line, /istep1[[:space:]]*=[[:space:]]*[0-9]+/)) {
+                token = substr(line, RSTART, RLENGTH)
+                value = token
+                sub(/.*=/, "", value)
+                gsub(/[[:space:]]/, "", value)
+                if (value + 0 > freq + 0) {
+                    line = substr(line, 1, RSTART - 1) "istep1=" int(freq) substr(line, RSTART + RLENGTH)
+                }
+            }
+            print line
+        }
+    '
+}
+
 write_mdin_remd_current() {
     local tmpl=$1
     local nstlim_value=$2
     local numexchg_value=$3
-    local first_run=$4
     local dumpave_file=${5:-}
     if [[ ! -f $tmpl ]]; then
         echo "[ERROR] Missing template $tmpl" >&2
@@ -60,12 +85,9 @@ write_mdin_remd_current() {
     fi
     local text
     text=$(<"$tmpl")
-    if [[ $first_run -eq 1 ]]; then
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
-    else
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
-    fi
-    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
+    text=$(printf "%s\n" "$text" | cap_dumpfreq_for_remd_chunk "$nstlim_value")
     if echo "$text" | grep -Eq "^[[:space:]]*numexchg[[:space:]]*="; then
         text=$(echo "$text" | sed -E "s/^[[:space:]]*numexchg[[:space:]]*=.*/  numexchg = ${numexchg_value},/")
     else
@@ -96,26 +118,17 @@ write_mdin_remd_current() {
     echo "$text"
 }
 
-# Determine completed time (ps) from restart and latest md-*.out index for window 0.
-remd_progress() {
-    local win0=$1
-    local pattern=$2
-    local idx tps prev_tps
-    idx=$(highest_out_index_for_pattern "$pattern")
-    tps=$(completed_time_ps_from_rst "${win0}/md-current.rst7")
-    if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
-        prev_tps=$(completed_time_ps_from_rst "${win0}/md-previous.rst7")
-        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
-            tps="$prev_tps"
-        else
-            tps=0
-        fi
-    fi
-    if [[ $idx -lt 0 ]]; then
-        echo "$tps -1"
-        return
-    fi
-    echo "$tps $idx"
+# Select the newest valid numbered restart within one window.
+select_window_restart_name() {
+    local win_dir=$1
+    local start_ps=$2
+    local retry_count=${3:-}
+
+    (
+        cd "$win_dir" || exit 1
+        select_valid_md_restart "eq.rst7" "$start_ps" "$retry_count" >&2
+        printf "%s\n" "$SELECTED_MD_RESTART"
+    )
 }
 
 # Echo commands before executing them so the full invocation is visible
@@ -163,6 +176,7 @@ if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
 
+reset_attempt_failed_archive_marker
 archive_existing_log_file "$log_file"
 
 # Determine progress from the first window
@@ -181,15 +195,28 @@ done
 total_steps=$(parse_total_steps "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")
 target_dt_ps=$(parse_target_dt_ps "$tmpl0")
-chunk_steps=$(scaled_nstlim_for_dt "$tmpl0" "$dt_ps")
+chunk_steps=$(parse_nstlim "$tmpl0")
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-read restart_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
-[[ -z $restart_ps ]] && restart_ps=0
 production_start_marker="${PFOLDER}/${WIN0}/production-start.ps"
 start_ps=$(production_start_ps "$production_start_marker" "${PFOLDER}/${WIN0}/eq.rst7")
+restart_name=$(select_window_restart_name "${PFOLDER}/${WIN0}" "$start_ps" "$retry") || exit 1
+if [[ ! -s "${PFOLDER}/${WIN0}/${restart_name}" ]]; then
+    echo "[ERROR] Missing restart file ${WIN0}/${restart_name}; cannot continue."
+    exit 1
+fi
+restart_ps=$(completed_time_ps_from_rst "${PFOLDER}/${WIN0}/${restart_name}")
+[[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
+
+last_idx=$(latest_md_index "${PFOLDER}/${WIN0}/md-*.out")
+[[ $last_idx -lt 0 ]] && last_idx=0
+restart_seg_idx=0
+if parsed_restart_seg_idx=$(md_segment_index_from_restart "$restart_name" 2>/dev/null); then
+    restart_seg_idx=$parsed_restart_seg_idx
+fi
+(( restart_seg_idx > last_idx )) && last_idx=$restart_seg_idx
 
 echo "Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
@@ -208,12 +235,10 @@ if (( remaining_steps > 0 )); then
     run_exchg=$(( (run_steps + chunk_steps - 1) / chunk_steps ))
     (( run_exchg > 0 )) || { echo "[ERROR] Computed run_exchg=0"; exit 1; }
 
-    if (( last_idx < 0 )); then
-        seg_idx=1
-    else
-        seg_idx=$((last_idx + 1))
-    fi
-    first_run=$([[ $last_idx -lt 0 ]] && echo 1 || echo 0)
+    seg_idx=$((last_idx + 1))
+    first_run=$([[ $restart_name == "eq.rst7" ]] && echo 1 || echo 0)
+    out_tag=$(printf "md-%02d" "$seg_idx")
+    rst_out="${out_tag}.rst7"
 
     # Build per-window mdin and groupfile for this segment
     groupfile="${PFOLDER}/remd/mdin.in.remd.groupfile"
@@ -231,21 +256,27 @@ if (( remaining_steps > 0 )); then
         dumpave_file="${win}/${cmass_file}"
         write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" "$dumpave_file" > "$current_mdin"
 
-        # Determine restart input per window (prefer rolling restarts, else eq.rst7)
-        rst_in="eq.rst7"
-        if [[ -s "${win}/md-current.rst7" ]]; then
-            mv -f "${win}/md-current.rst7" "${win}/md-previous.rst7"
-            rst_in="md-previous.rst7"
-        elif [[ -s "${win}/md-previous.rst7" ]]; then
-            rst_in="md-previous.rst7"
-        fi
+        window_start_ps=$(production_start_ps "${PFOLDER}/${win}/production-start.ps" "${PFOLDER}/${win}/eq.rst7")
+        rst_in=$(select_window_restart_name "${PFOLDER}/${win}" "$window_start_ps" "$retry") || exit 1
         if [[ ! -s "${win}/${rst_in}" ]]; then
             echo "[ERROR] Missing restart file ${win}/${rst_in}; cannot continue."
             exit 1
         fi
+        window_restart_ps=$(completed_time_ps_from_rst "${win}/${rst_in}")
+        if ! awk -v got="$window_restart_ps" -v expected="$restart_ps" -v dt="$dt_ps" '
+            BEGIN {
+                delta = got - expected
+                if (delta < 0) delta = -delta
+                tol = dt * 0.5
+                if (tol < 1e-6) tol = 1e-6
+                exit !(delta <= tol)
+            }
+        '; then
+            echo "[ERROR] Restart time mismatch for ${win}/${rst_in}: ${window_restart_ps} ps; expected ${restart_ps} ps."
+            exit 1
+        fi
 
-        out_tag=$(printf "md-%02d" "$seg_idx")
-        echo "-O -i ${win}/mdin-remd-current -p ${win_00}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/md-current.rst7 -x ${win}/${out_tag}.nc -ref ${win_00}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
+        echo "-O -i ${win}/mdin-remd-current -p ${win_00}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/${rst_out} -x ${win}/${out_tag}.nc -ref ${win_00}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
     done
 
     # keep a compat copy for older tooling
@@ -257,7 +288,7 @@ if (( remaining_steps > 0 )); then
     echo "[INFO] pmemd step rc=$rc dir=${PFOLDER_ABS} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
         echo "[ERROR] pmemd failed in ${PFOLDER_ABS}; skipping post-step" | tee -a "$log_file"
-        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        archive_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER" "$retry"
         reduce_dt_for_remd_windows "REMD segment ${seg_idx}" "$retry"
         exit $rc
     fi
@@ -265,17 +296,17 @@ if (( remaining_steps > 0 )); then
     missing_restart=0
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
-        if [[ ! -s "${PFOLDER}/${win}/md-current.rst7" ]]; then
-            echo "[ERROR] Missing or empty restart after REMD segment ${seg_idx}: ${win}/md-current.rst7" | tee -a "$log_file"
+        if [[ ! -s "${PFOLDER}/${win}/${rst_out}" ]]; then
+            echo "[ERROR] Missing or empty restart after REMD segment ${seg_idx}: ${win}/${rst_out}" | tee -a "$log_file"
             missing_restart=1
         fi
     done
     if (( missing_restart )); then
-        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        archive_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER" "$retry"
         reduce_dt_for_remd_windows "REMD segment ${seg_idx}" "$retry"
         exit 1
     fi
-    read restart_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+    restart_ps=$(completed_time_ps_from_rst "${PFOLDER}/${WIN0}/${rst_out}")
     [[ -z $restart_ps ]] && restart_ps=0
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0

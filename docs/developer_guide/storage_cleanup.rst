@@ -35,7 +35,8 @@ The cleanup helpers preserve these classes of files across stages:
   ``SLURMM-BATCH-remd``, ``lambda.sch``, ``mdin-template``,
   ``mdin-batch-template`` and ``mdin-remd-template``;
 * final topology/coordinate inputs such as ``full.prmtop``, ``full.inpcrd``,
-  ``full.hmr.prmtop``, ``full_merged.prmtop`` and ``full.pdb``;
+  ``full.hmr.prmtop``, ``full_merged.prmtop`` and ``full.pdb``; generated
+  local, batch, and REMD launchers use ``full_merged.prmtop`` at runtime;
 * restraint and component metadata such as ``disang.rest``, ``cv.in``,
   ``restraints.in``, ``sdr_info.txt`` and ``anchors*.txt/json``;
 * all files whose name starts with ``md-``;
@@ -166,15 +167,25 @@ Preserved:
 -----------------
 
 No cleanup runs while FE production is active or resumable. Production continuation
-depends on rolling restart files and segment outputs, so these are left intact until
-analysis has consumed the data.
+depends on numbered segment restart files and segment outputs, so these are left
+intact until the window reaches ``FINISHED``.
 
 Preserved during production:
 
-* ``md-current.rst7`` and ``md-previous.rst7``;
+* numbered ``md-*.rst7`` segment restarts such as ``md-01.rst7``;
 * all ``md-*`` files;
 * all ``cmass*`` files;
 * ``job_attempt.txt``, ``production-start.ps``, ``run.log`` and status markers.
+
+After a single-window launcher writes ``output.pdb`` and ``FINISHED``, it removes
+numbered ``md-*.rst7`` restart files because the window no longer needs a resume
+point. Grouped batch and REMD launchers currently retain numbered restart files
+after writing their component and per-window ``FINISHED`` markers.
+
+When a grouped batch or REMD segment fails, the launcher moves that segment's
+``md-<segment>.*`` files, matching ``cmass-<segment>.txt``, and ``mdinfo`` into
+``<window>/WRONG_FAIL/<timestamp>_job_attempt_<N>/``. This failure archive is
+separate from successful-stage storage cleanup and is retained for diagnosis.
 
 ``analyze``
 -----------

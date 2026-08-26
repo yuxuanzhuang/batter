@@ -52,6 +52,7 @@ from batter.orchestrate.markers import (
     is_done,
 )
 from batter.orchestrate.pipeline_utils import select_pipeline
+from batter.orchestrate.state_registry import get_phase_state
 from batter.orchestrate.results_io import (
     extract_ligand_metadata,
     save_fe_records,
@@ -199,6 +200,108 @@ def _rbfe_network_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> Li
     return [name for name in lig_map if name not in present]
 
 
+def _ligand_input_payload(payload: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    config = payload.get("config")
+    create = config.get("create") if isinstance(config, dict) else None
+    if not isinstance(create, dict):
+        return {}
+    return {
+        key: create.get(key)
+        for key in ("ligand_input", "ligand_paths")
+        if key in create
+    }
+
+
+def _format_ligand_name_list(names: set[str]) -> str:
+    ordered = sorted(names)
+    shown = ordered[:20]
+    suffix = (
+        f", ... (+{len(ordered) - len(shown)} more)"
+        if len(ordered) > len(shown)
+        else ""
+    )
+    return ", ".join(shown) + suffix
+
+
+def _resolved_ligand_input_path(run_dir: Path) -> Path:
+    return run_dir / "artifacts" / "config" / "ligand_input.resolved.json"
+
+
+def _resolved_ligand_map_payload(lig_map: Dict[str, Path]) -> Dict[str, str]:
+    return {
+        name: str(Path(path).expanduser().resolve())
+        for name, path in sorted(lig_map.items())
+    }
+
+
+def _load_resolved_ligand_input(run_dir: Path) -> Dict[str, str]:
+    path = _resolved_ligand_input_path(run_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("Could not read resolved ligand input map {}: {}", path, exc)
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def _store_resolved_ligand_input(run_dir: Path, lig_map: Dict[str, Path]) -> None:
+    path = _resolved_ligand_input_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_resolved_ligand_map_payload(lig_map), indent=2))
+
+
+def _raise_if_existing_ligand_input_changed(
+    *,
+    run_dir: Path,
+    staged_lig_map: Dict[str, Path],
+    requested_lig_map: Dict[str, Path],
+    stored_payload: Dict[str, Any] | None,
+    current_payload: Dict[str, Any] | None,
+) -> None:
+    problems: list[str] = []
+
+    stored_input = _ligand_input_payload(stored_payload)
+    current_input = _ligand_input_payload(current_payload)
+    if stored_input and current_input and stored_input != current_input:
+        problems.append("stored ligand input config differs from current config")
+
+    staged_names = set(staged_lig_map)
+    requested_names = set(requested_lig_map)
+    added = requested_names - staged_names
+    removed = staged_names - requested_names
+    if added:
+        problems.append(f"added ligand(s): {_format_ligand_name_list(added)}")
+    if removed:
+        problems.append(f"removed ligand(s): {_format_ligand_name_list(removed)}")
+
+    stored_resolved = _load_resolved_ligand_input(run_dir)
+    requested_resolved = _resolved_ligand_map_payload(requested_lig_map)
+    changed_paths = {
+        name
+        for name in staged_names & requested_names & set(stored_resolved)
+        if stored_resolved.get(name) != requested_resolved.get(name)
+    }
+    if changed_paths:
+        problems.append(
+            "changed ligand path(s): "
+            f"{_format_ligand_name_list(changed_paths)}"
+        )
+
+    if not problems:
+        return
+
+    raise RuntimeError(
+        "Changing create.ligand_input/create.ligand_paths for an existing BATTER "
+        f"execution is not supported: {run_dir}. "
+        f"{'; '.join(problems)}. Use a new run_id/output_folder or remove the "
+        "existing execution directory before changing ligand input."
+    )
+
+
 def _parent_phase_done_for_ligands(
     system: SimSystem,
     phase_name: str,
@@ -264,8 +367,7 @@ def _require_rbfe_network_has_pairs(config_dir: Path) -> None:
         raise RuntimeError(f"Could not parse prepared RBFE network file: {network_path}") from exc
     if not payload.get("pairs"):
         raise RuntimeError(
-            "Prepared RBFE network contains no ligand pairs after removing identical "
-            "duplicate ligands."
+            "Prepared RBFE network contains no ligand pairs."
         )
 
 
@@ -281,8 +383,8 @@ def _rbfe_network_review_note(run_dir: Path) -> str:
         "You may edit rbfe_network.json before continuing; BATTER reloads its "
         "pairs field for RBFE transformation setup. Newly added pairs without "
         "prepared mapping artifacts fall back to the configured atom mapper.\n"
-        "Identical duplicate ligands are omitted from pairs and recorded in "
-        "the JSON skip metadata when detected. Full-map edges are retained.\n"
+        "Set rbfe.skip_duplicate_ligands: true to omit identical duplicate "
+        "ligands from pairs and record JSON skip metadata. Full-map edges are retained.\n"
         "If the network looks correct, set run.only_rbfe_network: false or rerun "
         "with --full-rbfe to continue."
     )
@@ -329,7 +431,13 @@ def _clear_failure_markers(run_dir: Path) -> None:
     if not sim_root.exists():
         return
     removed = 0
-    marker_patterns = ("FAILED", "ATTEMPT_FAILED", "job_attempt.txt", "*.failed")
+    marker_patterns = (
+        "FAILED",
+        "ATTEMPT_FAILED",
+        "ATTEMPT_FAILED_ARCHIVE",
+        "job_attempt.txt",
+        "*.failed",
+    )
     for marker_pattern in marker_patterns:
         for path in sim_root.rglob(marker_pattern):
             try:
@@ -518,6 +626,16 @@ def _run_phase_with_failure_policy(
         return current_children, False
 
 
+def _analysis_inner_workers(
+    *, requested_workers: int | None, n_ligands: int
+) -> int:
+    """Avoid nested joblib fan-out during multi-ligand analysis."""
+    configured = 1 if requested_workers is None else max(1, int(requested_workers))
+    if int(n_ligands) > 1:
+        return 1
+    return configured
+
+
 def _build_rbfe_network_plan(
     ligands: List[str],
     lig_map: Dict[str, str],
@@ -558,14 +676,21 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    skip_duplicate_ligands = bool(
+        getattr(rbfe_cfg, "skip_duplicate_ligands", False)
+    )
+    mapping_source["skip_duplicate_ligands"] = skip_duplicate_ligands
     ligand_files_all = {
         name: Path(lig_map[name])
         for name in available
         if name in lig_map
     }
-    available, identical_replacements, skipped_identical_ligands = (
-        deduplicate_identical_ligands(available, ligand_files_all)
-    )
+    identical_replacements: dict[str, str] = {}
+    skipped_identical_ligands: list[dict[str, str]] = []
+    if skip_duplicate_ligands:
+        available, identical_replacements, skipped_identical_ligands = (
+            deduplicate_identical_ligands(available, ligand_files_all)
+        )
     if skipped_identical_ligands:
         mapping_source["skipped_identical_ligands"] = skipped_identical_ligands
         logger.warning(
@@ -1152,31 +1277,32 @@ def _run_from_yaml_impl(
         )
 
     if staged_lig_map:
+        if requested_lig_map:
+            _raise_if_existing_ligand_input_changed(
+                run_dir=run_dir,
+                staged_lig_map=staged_lig_map,
+                requested_lig_map=requested_lig_map,
+                stored_payload=stored_payload,
+                current_payload=config_payload,
+            )
+            if not _load_resolved_ligand_input(run_dir):
+                _store_resolved_ligand_input(run_dir, requested_lig_map)
         lig_map = dict(staged_lig_map)
         lig_original_names = dict(stored_names)
         if lig_original_names:
             logger.debug(
-                "Loaded %d original ligand names from %s",
+                "Loaded {} original ligand names from {}",
                 len(lig_original_names),
                 _ligand_names_path(run_dir),
             )
 
-        added_ligands: List[str] = []
-        for name, lig_path in requested_lig_map.items():
-            lig_original_names[name] = requested_original_names.get(name, name)
-            if name in lig_map:
-                continue
-            lig_map[name] = lig_path
-            added_ligands.append(name)
+        for name in lig_map:
+            if name in requested_original_names:
+                lig_original_names[name] = requested_original_names.get(name, name)
 
         logger.info(
             f"Resuming with {len(staged_lig_map)} staged ligand(s) discovered under {run_dir}"
         )
-        if added_ligands:
-            logger.info(
-                "Added ligand(s) from current input to existing execution: {}",
-                ", ".join(added_ligands),
-            )
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
     else:
@@ -1185,6 +1311,7 @@ def _run_from_yaml_impl(
         lig_original_names = requested_original_names
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
+        _store_resolved_ligand_input(run_dir, lig_map)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
 
     # Build system-prep params exactly once (after run_dir is known)
@@ -1244,7 +1371,7 @@ def _run_from_yaml_impl(
     batch_mode = bool(getattr(rc.run, "batch_mode", False))
     if batch_mode:
         raise NotImplementedError('batch mode not implemented')
-    batch_poll = 10.0 if batch_mode else 60 * 15
+    batch_poll = 10.0 if batch_mode else 60.0
     registry_file = None if batch_mode else _slurm_registry_path(run_dir)
     job_mgr = SlurmJobManager(
         poll_s=batch_poll,
@@ -1316,7 +1443,7 @@ def _run_from_yaml_impl(
                 if step.name == "param_ligands" and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
                     parent_failure = True
                     logger.error(
-                        "[param_ligands] encountered error with on_failure=%s: %s — continuing with successful ligands only.",
+                        "[param_ligands] encountered error with on_failure={}: {} — continuing with successful ligands only.",
                         rc.run.on_failure,
                         exc,
                     )
@@ -1403,7 +1530,7 @@ def _run_from_yaml_impl(
     if not param_idx_path.exists():
         if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
             logger.warning(
-                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure=%s.",
+                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure={}.",
                 rc.run.on_failure,
             )
             param_index = {"ligands": []}
@@ -1837,11 +1964,24 @@ def _run_from_yaml_impl(
     # PHASE 6: analyze (parallel)
     # --------------------
     def _inject_analysis_workers(p: Pipeline) -> Pipeline:
+        default_analysis_workers = _analysis_inner_workers(
+            requested_workers=rc.run.max_workers,
+            n_ligands=len(children),
+        )
+        logger.debug(
+            "Analysis worker layout: outer max_workers={}, ligands={}, "
+            "inner analysis_n_workers={}",
+            rc.run.max_workers,
+            len(children),
+            default_analysis_workers,
+        )
         patched = []
         for s in p.ordered_steps():
-            payload = (s.payload or StepPayload()).copy_with(
-                analysis_n_workers=rc.run.max_workers
+            base_payload = s.payload or StepPayload()
+            analysis_workers = base_payload.get(
+                "analysis_n_workers", default_analysis_workers
             )
+            payload = base_payload.copy_with(analysis_n_workers=analysis_workers)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
@@ -1870,8 +2010,29 @@ def _run_from_yaml_impl(
             else "FE production not included for this protocol"
         )
         logger.info(f"{no_fe_reason}; ending run without FE record export.")
+        no_fe_phase_names = [
+            name
+            for name, phase_obj in (
+                ("prepare_equil", phase_prepare_equil),
+                ("equil", phase_equil),
+                ("equil_analysis", phase_equil_analysis),
+                ("pre_prepare_fe", phase_pre_prepare_fe),
+                ("pre_fe_equil", phase_pre_fe_equil),
+                ("prepare_fe", phase_prepare_fe),
+                ("fe_equil", phase_fe_equil),
+            )
+            if phase_obj.ordered_steps()
+        ]
         _notify_no_fe_record_completion(
-            rc, run_id, run_dir, unbound_children, no_fe_reason
+            rc,
+            run_id,
+            run_dir,
+            unbound_children,
+            no_fe_reason,
+            children_all=fe_children_all,
+            children_survived=children,
+            final_components=final_components,
+            phase_names=no_fe_phase_names,
         )
         return
 
@@ -1983,8 +2144,19 @@ def _notify_no_fe_record_completion(
     run_dir: Path,
     unbound_children: Sequence[SimSystem],
     reason: str,
+    *,
+    children_all: Sequence[SimSystem] | None = None,
+    children_survived: Sequence[SimSystem] | None = None,
+    final_components: Sequence[str] | None = None,
+    phase_names: Sequence[str] | None = None,
 ) -> None:
-    failures = _unbound_completion_failures(unbound_children)
+    failures = _no_fe_record_completion_failures(
+        unbound_children,
+        children_all=children_all,
+        children_survived=children_survived,
+        final_components=final_components,
+        phase_names=phase_names,
+    )
     if failures:
         failed = ", ".join(
             [
@@ -2003,17 +2175,167 @@ def _notify_no_fe_record_completion(
     )
 
 
-def _unbound_completion_failures(
+_NO_FE_DEFAULT_PHASES = (
+    "prepare_equil",
+    "equil",
+    "equil_analysis",
+    "pre_prepare_fe",
+    "pre_fe_equil",
+    "prepare_fe",
+    "fe_equil",
+)
+_NO_FE_PHASE_LABELS = {
+    "prepare_equil": "equilibration preparation",
+    "equil": "equilibration",
+    "equil_analysis": "equilibration analysis",
+    "pre_prepare_fe": "pre-FE preparation",
+    "pre_fe_equil": "pre-FE equilibration",
+    "prepare_fe": "FE preparation",
+    "fe_equil": "FE equilibration",
+}
+
+
+def _no_fe_record_completion_failures(
     unbound_children: Sequence[SimSystem],
+    *,
+    children_all: Sequence[SimSystem] | None = None,
+    children_survived: Sequence[SimSystem] | None = None,
+    final_components: Sequence[str] | None = None,
+    phase_names: Sequence[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    return [
-        (
-            str(child.meta.get("ligand", child.name)),
-            "unbound",
-            "UNBOUND detected during equilibration",
+    failures: dict[str, tuple[str, str, str]] = {}
+
+    def add(child: SimSystem, status: str, reason: str) -> None:
+        ligand = str(child.meta.get("ligand", child.name))
+        failures.setdefault(ligand, (ligand, status, reason))
+
+    for child in unbound_children:
+        add(child, "unbound", "UNBOUND detected during equilibration")
+
+    if children_all is None:
+        return list(failures.values())
+
+    survived_roots = {
+        str(Path(child.root).resolve())
+        for child in (children_survived or [])
+    }
+    phases = tuple(phase_names or _NO_FE_DEFAULT_PHASES)
+    for child in children_all:
+        ligand = str(child.meta.get("ligand", child.name))
+        if ligand in failures:
+            continue
+        if str(Path(child.root).resolve()) in survived_roots:
+            continue
+        classified = _classify_no_fe_child_failure(
+            child,
+            phase_names=phases,
+            final_components=final_components,
         )
-        for child in unbound_children
-    ]
+        if classified is not None:
+            status, reason = classified
+        else:
+            status, reason = (
+                "failed",
+                "Ligand did not complete the requested equilibration workflow",
+            )
+        add(child, status, reason)
+    return list(failures.values())
+
+
+def _classify_no_fe_child_failure(
+    child: SimSystem,
+    *,
+    phase_names: Sequence[str],
+    final_components: Sequence[str] | None = None,
+) -> tuple[str, str] | None:
+    if (child.root / "equil" / "UNBOUND").exists():
+        return "unbound", "UNBOUND detected during equilibration"
+
+    for phase_name in phase_names:
+        components = _no_fe_components_for_phase(
+            child.root,
+            phase_name,
+            final_components=final_components,
+        )
+        spec = get_phase_state(child.root, phase_name)
+        if _no_fe_marker_spec_satisfied(
+            child.root,
+            spec.failure,
+            components=components,
+        ):
+            return (
+                "failed",
+                f"{_NO_FE_PHASE_LABELS.get(phase_name, phase_name)} failed",
+            )
+        success_spec = spec.success or spec.required
+        if not _no_fe_marker_spec_satisfied(
+            child.root,
+            success_spec,
+            components=components,
+        ):
+            return (
+                "failed",
+                f"{_NO_FE_PHASE_LABELS.get(phase_name, phase_name)} did not complete",
+            )
+    return None
+
+
+def _no_fe_components_for_phase(
+    root: Path,
+    phase_name: str,
+    *,
+    final_components: Sequence[str] | None = None,
+) -> list[str] | None:
+    if phase_name in {"pre_prepare_fe", "pre_fe_equil"}:
+        return ["z"]
+    if phase_name in {"prepare_fe", "fe_equil"} and final_components:
+        return [str(comp) for comp in final_components if str(comp)]
+    if phase_name in {"prepare_fe", "fe_equil"}:
+        fe_root = root / "fe"
+        if fe_root.exists():
+            comps = sorted(path.name for path in fe_root.iterdir() if path.is_dir())
+            if comps:
+                return comps
+    return None
+
+
+def _no_fe_marker_spec_satisfied(
+    root: Path,
+    spec: Sequence[Sequence[str]],
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
+    if not spec:
+        return False
+    for group in spec:
+        paths: list[Path] = []
+        for pattern in group:
+            expanded = _expand_no_fe_marker_pattern(
+                root,
+                str(pattern),
+                components=components,
+            )
+            if not expanded:
+                paths = []
+                break
+            paths.extend(expanded)
+        if paths and all(path.exists() for path in paths):
+            return True
+    return False
+
+
+def _expand_no_fe_marker_pattern(
+    root: Path,
+    pattern: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> list[Path]:
+    if "{comp" not in pattern:
+        return [root / pattern]
+    comp_values = [str(comp) for comp in (components or []) if str(comp)]
+    if not comp_values:
+        return []
+    return [root / pattern.replace("{comp}", comp) for comp in comp_values]
 
 
 def _notify_run_failure(

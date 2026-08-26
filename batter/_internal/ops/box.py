@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import os
+import copy
 import glob
 import json
+import os
 import shutil
+import shlex
 import re
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,11 +26,12 @@ from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import (
     Anchors,
-    PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     run_parmed_hmr_if_enabled,
-    merge_first_n_molecules_in_prmtop,
+    merge_first_n_and_lipid_fragments_in_prmtop,
+    revised_resids_for_lipid_fragments,
     save_anchors,
+    select_protein_com_atoms,
 )
 from batter._internal.ops.ring_repair import (
     repair_ring_penetrations,
@@ -36,65 +40,35 @@ from batter._internal.ops.ring_repair import (
 pmd = import_parmed()
 
 
-def _pdb_residue_records(path: Path) -> list[tuple[str, str, int]]:
-    records: list[tuple[str, str, int]] = []
-    seen: set[tuple[str, str, int]] = set()
-    for line in path.read_text(errors="ignore").splitlines():
-        if not line.startswith(("ATOM", "HETATM")):
-            continue
-        resname = line[17:20].strip()
-        chain = line[21].strip() or "_"
-        resid_text = line[22:26].strip()
-        try:
-            resid = int(resid_text)
-        except ValueError:
-            fields = line.split()
-            if len(fields) < 5:
-                continue
-            resname = fields[3]
-            if len(fields) >= 6 and re.fullmatch(r"-?\d+", fields[5]):
-                chain = fields[4]
-                resid_text = fields[5]
-            else:
-                chain = "_"
-                resid_text = fields[4]
-            try:
-                resid = int(resid_text)
-            except ValueError:
-                continue
-        key = (resname, chain, resid)
-        if key in seen:
-            continue
-        seen.add(key)
-        records.append(key)
-    return records
+def _first_atom_position(atoms: mda.core.groups.AtomGroup) -> np.ndarray:
+    if atoms.n_atoms == 0:
+        raise ValueError("Cannot place DUM atom from an empty atom group.")
+    return np.asarray(atoms[0].position, dtype=float).copy()
 
 
-def _write_identity_amber_renum(input_pdb: Path, renum_path: Path) -> None:
-    lines = []
-    for resname, chain, resid in _pdb_residue_records(input_pdb):
-        lines.append(f"{resname} {chain} {resid:5d} {resname} {resid:5d}\n")
-    renum_path.write_text("".join(lines))
+def _executable_path(command: str) -> str | None:
+    path = shutil.which(command)
+    if path:
+        return path
+    env_path = Path(sys.executable).resolve().parent / command
+    if env_path.exists() and os.access(env_path, os.X_OK):
+        return str(env_path)
+    return None
 
 
-def _run_pdb4amber_for_box_or_copy(
+def _run_pdb4amber_for_box(
     input_pdb: Path, output_pdb: Path, *, working_dir: Path
 ) -> None:
-    if shutil.which("pdb4amber"):
-        run_with_log(
-            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
-            working_dir=working_dir,
+    executable = _executable_path("pdb4amber")
+    if executable is None:
+        raise FileNotFoundError(
+            "pdb4amber is required but was not found in PATH. "
+            "Activate the batter_dev/AmberTools environment before building complexes."
         )
-        return
-
-    shutil.copy2(input_pdb, output_pdb)
-    _write_identity_amber_renum(input_pdb, working_dir / "build_amber_renum.txt")
-    (working_dir / "build_amber_sslink").write_text("")
-    logger.warning(
-        "pdb4amber was not found; copying {} to {} and writing identity "
-        "build_amber_renum.txt without additional cleanup.",
-        input_pdb,
-        output_pdb,
+    run_with_log(
+        f"{shlex.quote(executable)} -i {shlex.quote(input_pdb.name)} "
+        f"-o {shlex.quote(output_pdb.name)} -y",
+        working_dir=working_dir,
     )
 
 
@@ -105,6 +79,7 @@ _PRE_RING_REPAIR_FILES = {
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+_BULK_LIGAND_BOX_Z_PADDING = 4.0
 _WATER_RESNAMES = {
     "WAT",
     "HOH",
@@ -118,6 +93,39 @@ _WATER_RESNAMES = {
 }
 _WATER_OXYGEN_NAMES = {"O", "OW", "OH2"}
 _PERIODIC_WATER_CLASH_DISTANCE = 1.8
+_FE_NONWATER_VAC_COMPONENTS = {"d", "l", "z"}
+
+
+def _is_water_residue_name(name: str) -> bool:
+    return str(name).strip().upper() in _WATER_RESNAMES
+
+
+def _copy_structure_without_water(structure):
+    nonwater = copy.copy(structure)
+    water_selection = [
+        _is_water_residue_name(atom.residue.name) for atom in nonwater.atoms
+    ]
+    if any(water_selection):
+        nonwater.strip(water_selection)
+    return nonwater
+
+
+def _copy_structure_only_water(structure):
+    water = copy.copy(structure)
+    nonwater_selection = [
+        not _is_water_residue_name(atom.residue.name) for atom in water.atoms
+    ]
+    if any(nonwater_selection):
+        water.strip(nonwater_selection)
+    return water
+
+
+def _split_structure_nonwater_then_water(structure):
+    nonwater = _copy_structure_without_water(structure)
+    water = _copy_structure_only_water(structure)
+    if len(water.atoms) == 0:
+        return nonwater, water, nonwater
+    return nonwater, water, nonwater + water
 
 
 def _repair_lipid_hydrogens_in_amber_files(
@@ -485,6 +493,25 @@ def _pdb_atom_xyz(line: str) -> np.ndarray | None:
             return None
 
 
+def _translate_pdb_atom_line(line: str, delta: np.ndarray) -> str:
+    xyz = _pdb_atom_xyz(line)
+    if xyz is None:
+        return line
+    shifted = xyz + np.asarray(delta, dtype=float)
+    if len(line) < 54:
+        line = line.ljust(54)
+    return (
+        f"{line[:30]}{shifted[0]:8.3f}{shifted[1]:8.3f}{shifted[2]:8.3f}"
+        f"{line[54:]}"
+    )
+
+
+def _translate_pdb_block(block: Sequence[str], delta: np.ndarray) -> list[str]:
+    if not np.any(np.asarray(delta, dtype=float)):
+        return list(block)
+    return [_translate_pdb_atom_line(line, delta) for line in block]
+
+
 def _pdb_atom_name_is_hydrogen(name: str) -> bool:
     stripped = name.strip().upper()
     return stripped.startswith("H") or (
@@ -492,27 +519,31 @@ def _pdb_atom_name_is_hydrogen(name: str) -> bool:
     )
 
 
-def _extra_ligand_heavy_coords_from_build(
+def _extra_ligand_coords_from_build(
     build_pdb: Path,
     ligand_resname: str,
+    *,
+    heavy_only: bool,
 ) -> np.ndarray:
     ligand_blocks: list[list[np.ndarray]] = []
     current_key: tuple[str, str, str] | None = None
     current_coords: list[np.ndarray] = []
+    expected_resname = ligand_resname.upper()
     for line in build_pdb.read_text().splitlines():
         if not line.startswith(("ATOM  ", "HETATM")):
             continue
-        if _pdb_line_resname(line) != ligand_resname:
+        if _pdb_line_resname(line).upper() != expected_resname:
             continue
         key = (line[21:22], line[22:26], line[26:27])
         if current_key is not None and key != current_key:
             ligand_blocks.append(current_coords)
             current_coords = []
         current_key = key
-        if not _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
-            xyz = _pdb_atom_xyz(line)
-            if xyz is not None:
-                current_coords.append(xyz)
+        if heavy_only and _pdb_atom_name_is_hydrogen(_pdb_line_atom_name(line)):
+            continue
+        xyz = _pdb_atom_xyz(line)
+        if xyz is not None:
+            current_coords.append(xyz)
     if current_key is not None:
         ligand_blocks.append(current_coords)
     if len(ligand_blocks) <= 1:
@@ -521,6 +552,39 @@ def _extra_ligand_heavy_coords_from_build(
     if not coords:
         return np.empty((0, 3), dtype=float)
     return np.asarray(coords, dtype=float)
+
+
+def _extra_ligand_heavy_coords_from_build(
+    build_pdb: Path,
+    ligand_resname: str,
+) -> np.ndarray:
+    return _extra_ligand_coords_from_build(
+        build_pdb,
+        ligand_resname,
+        heavy_only=True,
+    )
+
+
+def _expanded_box_z_for_bulk_ligand(
+    build_pdb: Path,
+    ligand_resname: str,
+    box_z: float,
+    *,
+    padding: float = _BULK_LIGAND_BOX_Z_PADDING,
+) -> tuple[float, float | None]:
+    """Return ``Lz`` and bulk-ligand z maximum after applying top padding."""
+    bulk_coords = _extra_ligand_coords_from_build(
+        build_pdb,
+        ligand_resname,
+        heavy_only=False,
+    )
+    if bulk_coords.size == 0:
+        return float(box_z), None
+
+    bulk_z_max = float(np.max(bulk_coords[:, 2]))
+    if bulk_z_max <= float(box_z):
+        return float(box_z), bulk_z_max
+    return bulk_z_max + float(padding), bulk_z_max
 
 
 def _water_block_overlaps_coords(
@@ -920,6 +984,7 @@ def _write_membrane_water_chunks_from_build(
     ligand_resname: str,
     box: Sequence[float],
     z_max: float | None = None,
+    reference_z_period: float | None = None,
     ligand_clash_cutoff: float = 2.2,
     max_waters_per_chunk: int = 8000,
 ) -> list[Path]:
@@ -941,8 +1006,17 @@ def _write_membrane_water_chunks_from_build(
         build_pdb, ligand_resname
     )
     box_array = np.asarray(box, dtype=float)
+    z_min = _pdb_min_z(build_pdb) if z_max is not None else None
+    z_period = (
+        float(reference_z_period)
+        if reference_z_period is not None
+        and np.isfinite(float(reference_z_period))
+        and float(reference_z_period) > 0.0
+        else None
+    )
     skipped_z = 0
     skipped_overlap = 0
+    tiled_waters = 0
 
     def flush() -> None:
         if not current_blocks:
@@ -964,32 +1038,59 @@ def _write_membrane_water_chunks_from_build(
         current_blocks.clear()
 
     for block in _iter_water_blocks_from_pdb(build_pdb):
-        if z_max is not None:
-            keep_block = True
-            for line in block:
-                if _pdb_line_atom_name(line).upper() not in {"O", "OW", "OH2"}:
-                    continue
-                water_xyz = _pdb_atom_xyz(line)
-                if water_xyz is not None and float(water_xyz[2]) > float(z_max):
-                    keep_block = False
-                    break
-            if not keep_block:
-                skipped_z += 1
+        oxygen_z = None
+        for line in block:
+            if _pdb_line_atom_name(line).upper() not in _WATER_OXYGEN_NAMES:
                 continue
-        if _water_block_overlaps_coords(
-            block,
-            extra_ligand_coords,
-            box=box_array,
-            cutoff=ligand_clash_cutoff,
-        ):
-            skipped_overlap += 1
+            water_xyz = _pdb_atom_xyz(line)
+            if water_xyz is not None:
+                oxygen_z = float(water_xyz[2])
+                break
+        if oxygen_z is None:
             continue
-        current_blocks.append(block)
-        if len(current_blocks) >= max_waters_per_chunk:
-            flush()
+
+        shift_indices = [0]
+        if z_min is not None and z_max is not None and z_period is not None:
+            low_index = int(np.floor((float(z_min) - oxygen_z) / z_period))
+            high_index = int(np.ceil((float(z_max) - oxygen_z) / z_period))
+            shift_indices = list(range(low_index, high_index + 1))
+
+        for shift_index in shift_indices:
+            dz = (z_period or 0.0) * float(shift_index)
+            shifted_oxygen_z = oxygen_z + dz
+            if z_max is not None and shifted_oxygen_z > float(z_max) + 1.0e-6:
+                if shift_index == 0:
+                    skipped_z += 1
+                continue
+            if z_min is not None and shifted_oxygen_z < float(z_min) - 1.0e-6:
+                continue
+
+            shifted_block = _translate_pdb_block(
+                block,
+                np.asarray([0.0, 0.0, dz], dtype=float),
+            )
+            if _water_block_overlaps_coords(
+                shifted_block,
+                extra_ligand_coords,
+                box=box_array,
+                cutoff=ligand_clash_cutoff,
+            ):
+                skipped_overlap += 1
+                continue
+            if shift_index != 0:
+                tiled_waters += 1
+            current_blocks.append(shifted_block)
+            if len(current_blocks) >= max_waters_per_chunk:
+                flush()
     flush()
     if not chunks:
         raise ValueError(f"No membrane waters found in {build_pdb}")
+    if tiled_waters:
+        logger.debug(
+            "Added {} periodically tiled membrane water(s) to cover the SDR z extent in {}.",
+            tiled_waters,
+            window_dir,
+        )
     if skipped_z:
         logger.debug(
             "Removed {} membrane water(s) outside the SDR z extent in {}.",
@@ -1366,6 +1467,28 @@ _SEPARATE_METHYLAMIDE_ATOM_ALIASES = {
     "HM2": "H2",
     "HM3": "H3",
 }
+_ACE_CAP_ATOM_ALIASES = {
+    "C": "C",
+    "O": "O",
+    "OY": "O",
+    "CH3": "CH3",
+    "CAY": "CH3",
+    "CY": "CH3",
+    "H1": "H1",
+    "H2": "H2",
+    "H3": "H3",
+    "HY1": "H1",
+    "HY2": "H2",
+    "HY3": "H3",
+    "1HY": "H1",
+    "2HY": "H2",
+    "3HY": "H3",
+    "HH31": "H1",
+    "HH32": "H2",
+    "HH33": "H3",
+}
+_C_TERMINAL_CARBONYL_O_ALIASES = ("OT1", "OC1")
+_C_TERMINAL_OXT_ALIASES = ("OT2", "OC2", "O2", "O1")
 
 
 def _is_amber_protein_resname(resname: str) -> bool:
@@ -1524,6 +1647,146 @@ def _rewrite_separate_terminal_methylamide_cap(
         rewritten.append(line)
 
     return rewritten, changed
+
+
+def _rewrite_ace_caps_for_leap(pdb_path: Path) -> int:
+    """
+    Rewrite common ACE atom aliases into Amber ACE template atom names.
+
+    Dabble-style ACE caps can use ``CAY/HY1/HY2/HY3/OY`` while Amber LEaP's
+    ACE template expects ``CH3/H1/H2/H3/O``. If the aliases are left in place,
+    LEaP creates untyped CAY/OY atoms and later fails during ``saveamberparm``.
+    """
+    lines = pdb_path.read_text().splitlines(True)
+    rewritten: list[str] = []
+    emitted_by_residue: dict[tuple[str, int, str], set[str]] = {}
+    changed_residues: set[tuple[str, int, str]] = set()
+
+    for line in lines:
+        key = _pdb_residue_key(line)
+        if key is None or key[2] != "ACE":
+            rewritten.append(line)
+            continue
+
+        atom_name = _pdb_atom_name(line)
+        target_name = _ACE_CAP_ATOM_ALIASES.get(atom_name)
+        if target_name is None:
+            rewritten.append(line)
+            continue
+
+        emitted = emitted_by_residue.setdefault(key, set())
+        if target_name in emitted:
+            changed_residues.add(key)
+            continue
+
+        emitted.add(target_name)
+        if target_name != atom_name:
+            line = _replace_pdb_atom_name(line, target_name)
+            changed_residues.add(key)
+        rewritten.append(line)
+
+    if changed_residues:
+        pdb_path.write_text("".join(rewritten))
+    return len(changed_residues)
+
+
+def _rewrite_cterminal_oxygen_aliases_for_leap(pdb_path: Path) -> int:
+    """
+    Normalize C-terminal protein oxygen aliases before LEaP.
+
+    Some prepared protein PDBs carry terminal oxygens as ``OT1/OT2``,
+    ``OC1/OC2``, or an extra ``O1`` atom. Amber's C-terminal residue templates
+    expect the backbone carbonyl ``O`` and terminal ``OXT``; leaving aliases on
+    the terminal amino-acid residue creates untyped atoms such as ``CASP@O1``.
+    """
+    lines = pdb_path.read_text().splitlines(True)
+    rewritten: list[str] = []
+    block: list[str] = []
+    changed_count = 0
+
+    def flush_block() -> None:
+        nonlocal changed_count
+        if not block:
+            return
+
+        residue_keys = _residue_keys_in_order(block)
+        if not residue_keys:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        terminal_key = residue_keys[-1]
+        if not _is_amber_protein_resname(terminal_key[2]):
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        atom_names = _atom_names_for_residue(block, terminal_key)
+        rename: dict[str, str] = {}
+        drop: set[str] = set()
+        has_o = "O" in atom_names
+        has_oxt = "OXT" in atom_names
+
+        if not has_o:
+            for alias in _C_TERMINAL_CARBONYL_O_ALIASES:
+                if alias in atom_names:
+                    rename[alias] = "O"
+                    has_o = True
+                    break
+            if (
+                not has_o
+                and "O1" in atom_names
+                and any(alias in atom_names for alias in ("O2", "OT2", "OC2"))
+            ):
+                rename["O1"] = "O"
+                has_o = True
+
+        if has_oxt:
+            for alias in _C_TERMINAL_OXT_ALIASES:
+                if alias in atom_names:
+                    drop.add(alias)
+        else:
+            for alias in _C_TERMINAL_OXT_ALIASES:
+                if alias in atom_names and rename.get(alias) != "O":
+                    rename[alias] = "OXT"
+                    has_oxt = True
+                    break
+            if has_oxt:
+                for alias in _C_TERMINAL_OXT_ALIASES:
+                    if alias in atom_names and alias not in rename:
+                        drop.add(alias)
+
+        if not rename and not drop:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        changed = False
+        for line in block:
+            key = _pdb_residue_key(line)
+            atom_name = _pdb_atom_name(line)
+            if key == terminal_key and atom_name in drop:
+                changed = True
+                continue
+            if key == terminal_key and atom_name in rename:
+                line = _replace_pdb_atom_name(line, rename[atom_name])
+                changed = True
+            rewritten.append(line)
+        if changed:
+            changed_count += 1
+        block.clear()
+
+    for line in lines:
+        if line.startswith("TER"):
+            flush_block()
+            rewritten.append(line)
+        else:
+            block.append(line)
+    flush_block()
+
+    if changed_count:
+        pdb_path.write_text("".join(rewritten))
+    return changed_count
 
 
 def _rewrite_terminal_amide_caps_for_leap(
@@ -2121,7 +2384,7 @@ def _sync_ligand_anchor_residue_with_pdb(
             lig_res=str(actual_lig_res),
         ),
     )
-    logger.info(
+    logger.debug(
         "Updated ligand anchor residue from {} to {} after LEaP residue numbering.",
         anchors.lig_res,
         actual_lig_res,
@@ -2232,7 +2495,7 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
 
     charge_ligand_index = len(vac_p.residues)
     combined = vac_p + charge_ligand_p + other_part_p
-    vac = vac_p + charge_ligand_p
+    vac, _, combined = _split_structure_nonwater_then_water(combined)
     _rename_parmed_residues(combined, [charge_ligand_index], mol)
     _rename_parmed_residues(vac, [charge_ligand_index], mol)
     _make_residues_nonsteric(combined, [charge_ligand_index])
@@ -2287,9 +2550,10 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
         if hmr_enabled
         else str(window_dir / "full.prmtop")
     )
-    merge_first_n_molecules_in_prmtop(
+    merge_first_n_and_lipid_fragments_in_prmtop(
         full_prmtop,
         6,
+        getattr(sim, "lipid_mol", []),
         str(window_dir / "full_merged.prmtop"),
     )
 
@@ -2359,6 +2623,23 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z_left = _MIN_SDR_SOLVATION_BUFFER_Z
     else:
         buffer_z_left = buffer_z
+
+    if comp == "z" and sdr_abs_z is not None:
+        adjusted_box_z, bulk_z_max = _expanded_box_z_for_bulk_ligand(
+            window_dir / "build.pdb",
+            mol,
+            sdr_abs_z,
+        )
+        if adjusted_box_z > sdr_abs_z:
+            logger.debug(
+                "[create_box:z] Bulk ligand z maximum {:.3f} A exceeds Lz "
+                "{:.3f} A; increasing Lz to {:.3f} A.",
+                bulk_z_max,
+                sdr_abs_z,
+                adjusted_box_z,
+            )
+            abs_z = adjusted_box_z
+            sdr_abs_z = adjusted_box_z
 
     reference_dimensions = None
     membrane_dimensions = None
@@ -2440,6 +2721,21 @@ def create_box(ctx: BuildContext) -> None:
         water_box = "SPCBOX"
     else:
         water_box = f"{water_model}BOX"
+
+    build_ace_cap_count = _rewrite_ace_caps_for_leap(window_dir / "build.pdb")
+    if build_ace_cap_count:
+        logger.debug(
+            "Rewrote {} ACE terminal cap(s) into Amber atom names before pre-solvation LEaP.",
+            build_ace_cap_count,
+        )
+    build_cterm_o_count = _rewrite_cterminal_oxygen_aliases_for_leap(
+        window_dir / "build.pdb"
+    )
+    if build_cterm_o_count:
+        logger.debug(
+            "Rewrote {} C-terminal oxygen alias residue(s) before pre-solvation LEaP.",
+            build_cterm_o_count,
+        )
 
     build_cap_count = _rewrite_terminal_amide_caps_for_leap(
         window_dir / "build.pdb",
@@ -2530,6 +2826,11 @@ def create_box(ctx: BuildContext) -> None:
             ligand_resname=mol,
             box=membrane_dimensions,
             z_max=membrane_water_z_max,
+            reference_z_period=(
+                float(reference_dimensions[2])
+                if reference_dimensions is not None
+                else None
+            ),
         )
         if use_membrane_reference_box
         else []
@@ -2543,7 +2844,7 @@ def create_box(ctx: BuildContext) -> None:
     # pdb4amber is only used here for residue-renumbering and disulfide metadata.
     # For membrane FE systems, do not send the full solvent box through pdb4amber.
     pdb4amber_input = "build-dry.pdb" if use_membrane_reference_box else "build.pdb"
-    _run_pdb4amber_for_box_or_copy(
+    _run_pdb4amber_for_box(
         window_dir / pdb4amber_input,
         window_dir / "build_amber.pdb",
         working_dir=window_dir,
@@ -2560,16 +2861,13 @@ def create_box(ctx: BuildContext) -> None:
     renum_df["new_resname"] = renum_df["new_resname"].replace(
         ["HIS", "HIE", "HIP", "HID"], "HIS"
     )
-    revised_resids = []
-    resid_counter = 1
-    prev_resid = 0
-    for _, row in renum_df.iterrows():
-        if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
-            revised_resids.append(resid_counter)
-            resid_counter += 1
-        else:
-            revised_resids.append(resid_counter - 1)
-        prev_resid = row["old_resid"]
+    revised_resids = revised_resids_for_lipid_fragments(
+        (
+            (row["old_resname"], row["old_chain"], row["old_resid"])
+            for _, row in renum_df.iterrows()
+        ),
+        lipid_mol,
+    )
     disulfide_pairs = _map_disulfide_pairs_to_resids(
         _read_disulfide_pairs(window_dir / "build_amber_sslink"), revised_resids
     )
@@ -2682,10 +2980,20 @@ def create_box(ctx: BuildContext) -> None:
 
         # partitions
         final_system_dum = final_system.select_atoms("resname DUM")
-        final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
+        protein_com_atoms = select_protein_com_atoms(
+            final_system,
+            system_root=ctx.system_root,
+        )
+        if protein_com_atoms.n_atoms:
+            final_system_dum[0].position = protein_com_atoms.center_of_mass()
+        else:
+            logger.warning(
+                "[protein-com] Leaving the protein DUM coordinate unchanged because "
+                "the system contains no selectable protein atoms."
+            )
         ligand_residues = final_system.select_atoms(f"resname {mol}").residues
-        if comp in {"z", "d"} and len(ligand_residues) > 1:
-            final_system_dum[1].position = ligand_residues[1].atoms.center_of_mass()
+        if comp in {"z", "d"} and len(final_system_dum) > 1 and len(ligand_residues) > 1:
+            final_system_dum[1].position = _first_atom_position(ligand_residues[1].atoms)
         final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
         final_system_ligs = final_system.select_atoms(f"resname {mol}")
@@ -2727,6 +3035,18 @@ def create_box(ctx: BuildContext) -> None:
             prot_lines.append("TER\n")
         solvate_pre_prot = window_dir / "solvate_pre_prot.pdb"
         solvate_pre_prot.write_text("".join(prot_lines))
+        ace_cap_count = _rewrite_ace_caps_for_leap(solvate_pre_prot)
+        if ace_cap_count:
+            logger.debug(
+                "Rewrote {} ACE terminal cap(s) into Amber atom names before LEaP.",
+                ace_cap_count,
+            )
+        cterm_o_count = _rewrite_cterminal_oxygen_aliases_for_leap(solvate_pre_prot)
+        if cterm_o_count:
+            logger.debug(
+                "Rewrote {} C-terminal oxygen alias residue(s) before LEaP.",
+                cterm_o_count,
+            )
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:
             logger.debug(
@@ -3107,6 +3427,9 @@ def create_box(ctx: BuildContext) -> None:
                 float(reference_translation[2]),
             )
 
+    if comp in _FE_NONWATER_VAC_COMPONENTS:
+        vac, other_parts_pmd, combined = _split_structure_nonwater_then_water(combined)
+
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
     combined.save(str(window_dir / "full.pdb"), overwrite=True)
@@ -3163,9 +3486,12 @@ def create_box(ctx: BuildContext) -> None:
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
     # merge DUM + DUM + PROT plus all ligand copies before applying AMBER masks.
-    merge_molecule_count = 6 if comp == "d" and dec_method == "sdr" else 5
-    merge_first_n_molecules_in_prmtop(
-        full_prmtop, merge_molecule_count, str(window_dir / "full_merged.prmtop")
+    merge_molecule_count = 7 if comp == "d" and dec_method == "sdr" else 6
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        full_prmtop,
+        merge_molecule_count,
+        lipid_mol,
+        str(window_dir / "full_merged.prmtop"),
     )
     return
 
@@ -3275,12 +3601,12 @@ def create_box_x(ctx: BuildContext) -> None:
             f"{tleap} -s -f tleap_ions.in > tleap_ions.log", working_dir=window_dir
         )
         ion_p = pmd.load_file(
-        str(window_dir / "ions.prmtop"),
-        str(window_dir / "ions.inpcrd"),
+            str(window_dir / "ions.prmtop"),
+            str(window_dir / "ions.inpcrd"),
         )
         combined += ion_p
 
-    vac = vac_p + alter_ligands_p_site + alter_ligands_p_solvent
+    vac, _, combined = _split_structure_nonwater_then_water(combined)
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
@@ -3327,7 +3653,12 @@ def create_box_x(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        full_prmtop,
+        5,
+        lipid_mol,
+        str(window_dir / "full_merged.prmtop"),
+    )
 
     # get mapping file
 

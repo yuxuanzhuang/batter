@@ -48,7 +48,7 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "edit rbfe_network.json" in note
     assert "reloads its pairs field" in note
     assert "fall back to the configured atom mapper" in note
-    assert "Identical duplicate ligands are omitted" in note
+    assert "rbfe.skip_duplicate_ligands: true" in note
     assert "Full-map edges are retained" in note
     assert "run.only_rbfe_network" in note
     assert "--full-rbfe" in note
@@ -74,6 +74,71 @@ def test_preflight_required_python_packages_passes_when_available(
     monkeypatch.setattr(run_mod.importlib_util, "find_spec", lambda _name: object())
 
     run_mod._preflight_required_python_packages()
+
+
+def test_analysis_inner_workers_avoids_nested_parallelism() -> None:
+    assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=6) == 1
+    assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=1) == 8
+    assert run_mod._analysis_inner_workers(requested_workers=None, n_ligands=1) == 1
+
+
+def test_existing_ligand_input_guard_allows_same_ligand_set(tmp_path: Path) -> None:
+    staged = tmp_path / "run1" / "simulations" / "LIG1" / "inputs" / "ligand.sdf"
+    run_mod._raise_if_existing_ligand_input_changed(
+        run_dir=tmp_path / "run1",
+        staged_lig_map={"LIG1": staged},
+        requested_lig_map={"LIG1": tmp_path / "inputs" / "lig1.sdf"},
+        stored_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+        current_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+    )
+
+
+def test_existing_ligand_input_guard_rejects_added_ligand(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="added ligand.*LIG2"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=tmp_path / "run1",
+            staged_lig_map={"LIG1": tmp_path / "staged.sdf"},
+            requested_lig_map={
+                "LIG1": tmp_path / "lig1.sdf",
+                "LIG2": tmp_path / "lig2.sdf",
+            },
+            stored_payload={"config": {"create": {"ligand_input": "old.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "old.json"}}},
+        )
+
+
+def test_existing_ligand_input_guard_rejects_payload_change(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="stored ligand input config differs"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=tmp_path / "run1",
+            staged_lig_map={"LIG1": tmp_path / "staged.sdf"},
+            requested_lig_map={"LIG1": tmp_path / "lig1.sdf"},
+            stored_payload={"config": {"create": {"ligand_input": "old.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "new.json"}}},
+        )
+
+
+def test_existing_ligand_input_guard_rejects_changed_ligand_path(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    old_ligand = tmp_path / "old.sdf"
+    run_mod._store_resolved_ligand_input(run_dir, {"LIG1": old_ligand})
+
+    with pytest.raises(RuntimeError, match="changed ligand path.*LIG1"):
+        run_mod._raise_if_existing_ligand_input_changed(
+            run_dir=run_dir,
+            staged_lig_map={
+                "LIG1": run_dir
+                / "simulations"
+                / "LIG1"
+                / "inputs"
+                / "ligand.sdf"
+            },
+            requested_lig_map={"LIG1": tmp_path / "new.sdf"},
+            stored_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+            current_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
+        )
 
 
 @pytest.mark.parametrize("has_results", [False])
@@ -513,7 +578,52 @@ def test_build_rbfe_network_plan_orients_generated_edges_by_larger_volume(
     assert payload["direction_decisions"][0]["flipped"] is True
 
 
-def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
+def test_build_rbfe_network_plan_keeps_identical_duplicate_ligands_by_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+
+    def _unexpected_identity_check(path):
+        raise AssertionError(f"unexpected duplicate check for {path}")
+
+    monkeypatch.setattr("batter.rbfe.ligand_identity_key", _unexpected_identity_check)
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["B", "C"]]}))
+    seen: dict[str, object] = {}
+
+    def _fake_mapping_artifacts(**kwargs):
+        seen["pairs"] = kwargs["pairs"]
+        seen["ligand_files"] = kwargs["ligand_files"]
+        return {}
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert payload["skip_duplicate_ligands"] is False
+    assert payload["ligands"] == ["A", "B", "C"]
+    assert payload["pairs"] == [["A", "B"], ["B", "C"]]
+    assert "skipped_identical_ligands" not in payload
+    assert seen["pairs"] == [["A", "B"], ["B", "C"]]
+    assert set(seen["ligand_files"]) == {"A", "B", "C"}
+
+
+def test_build_rbfe_network_plan_skips_identical_duplicate_ligands_when_requested(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -545,10 +655,11 @@ def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
             "B": str(tmp_path / "B.sdf"),
             "C": str(tmp_path / "C.sdf"),
         },
-        RBFENetworkArgs(mapping_file=mapping_file),
+        RBFENetworkArgs(mapping_file=mapping_file, skip_duplicate_ligands=True),
         tmp_path,
     )
 
+    assert payload["skip_duplicate_ligands"] is True
     assert payload["ligands"] == ["A", "C"]
     assert payload["pairs"] == [["A", "C"]]
     assert payload["skipped_identical_ligands"] == [
@@ -579,10 +690,11 @@ def test_build_rbfe_network_plan_all_identical_ligands_writes_empty_network(
             "A": str(tmp_path / "A.sdf"),
             "B": str(tmp_path / "B.sdf"),
         },
-        RBFENetworkArgs(mapping="default"),
+        RBFENetworkArgs(mapping="default", skip_duplicate_ligands=True),
         tmp_path,
     )
 
+    assert payload["skip_duplicate_ligands"] is True
     assert payload["ligands"] == ["A"]
     assert payload["pairs"] == []
     assert payload["skipped_identical_ligands"] == [
@@ -1474,6 +1586,76 @@ def test_notify_no_fe_record_completion_sends_only_equil_email(
     assert "FE production skipped (--only-equil)" in sent["message"]
     assert "FE records stored under" not in sent["message"]
     assert "- LIG (unbound): UNBOUND detected during equilibration" in sent["message"]
+
+
+def test_notify_no_fe_record_completion_reports_failed_equil_ligand(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    child = SimSystem(
+        name="sys:LIG:run1",
+        root=tmp_path / "simulations" / "LIG",
+        meta=SystemMeta(ligand="LIG"),
+    )
+    (child.root / "equil").mkdir(parents=True)
+    (child.root / "equil" / "prepare_equil.ok").write_text("ok\n")
+    (child.root / "equil" / "full.prmtop").write_text("parm\n")
+    (child.root / "equil" / "FAILED").write_text("FAILED\n")
+
+    run_mod._notify_no_fe_record_completion(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        [],
+        "FE production skipped (--only-equil)",
+        children_all=[child],
+        children_survived=[],
+        phase_names=["prepare_equil", "equil"],
+    )
+
+    assert "- LIG (failed): equilibration failed" in sent["message"]
+    assert "No ligand failures were detected." not in sent["message"]
+
+
+def test_notify_no_fe_record_completion_reports_pruned_missing_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    failed = SimSystem(
+        name="sys:FAILED:run1",
+        root=tmp_path / "simulations" / "FAILED",
+        meta=SystemMeta(ligand="FAILED"),
+    )
+    survived = SimSystem(
+        name="sys:OK:run1",
+        root=tmp_path / "simulations" / "OK",
+        meta=SystemMeta(ligand="OK"),
+    )
+    for child in (failed, survived):
+        (child.root / "equil").mkdir(parents=True)
+        (child.root / "equil" / "prepare_equil.ok").write_text("ok\n")
+        (child.root / "equil" / "full.prmtop").write_text("parm\n")
+    (survived.root / "equil" / "FINISHED").write_text("FINISHED\n")
+
+    run_mod._notify_no_fe_record_completion(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        [],
+        "FE production skipped (--only-equil)",
+        children_all=[failed, survived],
+        children_survived=[survived],
+        phase_names=["prepare_equil", "equil"],
+    )
+
+    assert "- FAILED (failed): equilibration did not complete" in sent["message"]
+    assert "- OK" not in sent["message"]
 
 
 def test_notify_run_completion_skips_when_sender_missing(

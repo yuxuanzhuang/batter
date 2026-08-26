@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS, DEFAULT_NTPR
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.remd import RemdArgs
 from batter.config.utils import (
@@ -166,11 +167,11 @@ class CreateArgs(BaseModel):
         default_factory=list,
         description=(
             "Optional list of receptor anchor atom selections used for restraint "
-            "placement and binding-site geometry. Provide three selections for "
-            "explicit P1/P2/P3, one selection to pin P1 and let BATTER "
-            "auto-select P2/P3, or omit the field for full auto-selection from "
-            "the first real ligand pose when available, or from protein-only "
-            "geometry for apo MD."
+            "placement and binding-site geometry. Three distinct, unambiguous "
+            "selections define explicit P1/P2/P3; one selection pins P1 while "
+            "BATTER chooses P2/P3. Missing, incomplete, or invalid input falls "
+            "back to automatic selection from the first real ligand pose when "
+            "available, or from protein-only geometry for apo MD."
         ),
     )
     lipid_mol: list[str] = Field(
@@ -225,7 +226,7 @@ class CreateArgs(BaseModel):
         description="Anion species for ion placement.",
     )
     ion_conc: float = Field(
-        0.15,
+        0.05,
         description="Target salt concentration (M).",
     )
     neutralize_only: Literal["yes", "no"] = Field(
@@ -270,6 +271,15 @@ class CreateArgs(BaseModel):
         7.0,
         description="Maximum anchor-atom distance used during pose selection (Å).",
     )
+
+    @field_validator("anchor_atoms", mode="before")
+    @classmethod
+    def _coerce_anchor_atoms(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
 
     @field_validator(
         "protein_input",
@@ -500,6 +510,13 @@ class FESimArgs(BaseModel):
         10.0,
         description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
     )
+    ion_guard: Literal["yes", "no"] = Field(
+        "yes",
+        description=(
+            "Add FE-stage ion guard flat-bottom restraints that keep configured "
+            "bulk ions at least 10 Å from the binding-site ligand reference atom."
+        ),
+    )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
         "local_frame",
         description=(
@@ -547,7 +564,7 @@ class FESimArgs(BaseModel):
         default_factory=lambda: {"x": 300_000, "y": 300_000},
         description="Total production steps per component (key = letter).",
     )
-    ntpr: int = Field(100, description="Energy print frequency.")
+    ntpr: int = Field(DEFAULT_NTPR, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -561,6 +578,10 @@ class FESimArgs(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
+    mcwat_fe: Literal["yes", "no"] = Field(
+        "yes",
+        description="Enable MC water exchange moves during FE production inputs.",
+    )
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
     unbound_threshold: float = Field(
@@ -573,8 +594,15 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Only analyze FE production steps after this step (per window).",
     )
+    detect_equil: bool = Field(
+        True,
+        description=(
+            "Detect one global MBAR equilibration cutoff and decorrelation time "
+            "across lambda windows."
+        ),
+    )
     n_bootstraps: int = Field(
-        0,
+        DEFAULT_N_BOOTSTRAPS,
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
@@ -597,6 +625,8 @@ class FESimArgs(BaseModel):
         "rocklin_correction",
         "hmr",
         "enable_mcwat",
+        "mcwat_fe",
+        "ion_guard",
         "abfe_diff_pose_internal_restraints",
         mode="before",
     )
@@ -809,7 +839,7 @@ class MDSimArgs(BaseModel):
         ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
-    ntpr: int = Field(100, description="Energy print frequency.")
+    ntpr: int = Field(DEFAULT_NTPR, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -944,6 +974,13 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    skip_duplicate_ligands: bool = Field(
+        False,
+        description=(
+            "When true, omit later RBFE ligands with an identical molecular "
+            "identity to an earlier ligand before planning the network."
+        ),
+    )
     direction_policy: Literal["larger_volume", "preserve"] = Field(
         "larger_volume",
         description=(
@@ -1072,7 +1109,10 @@ class RunSection(BaseModel):
     )
     only_fe_preparation: bool = Field(
         False,
-        description="When true, stop the workflow after FE preparation.",
+        description=(
+            "For FE protocols, stop after FE window preparation and FE "
+            "equilibration, before FE production."
+        ),
     )
     only_rbfe_network: bool = Field(
         False,
@@ -1093,21 +1133,24 @@ class RunSection(BaseModel):
     )
     batch_mode: bool = Field(
         False,
-        description="When true, run SLURM jobs inline via srun inside the manager allocation instead of submitting with sbatch.",
+        description=(
+            "Reserved legacy option; the current orchestrator rejects true. "
+            "Use the separate `batter batch` command for bundled production."
+        ),
     )
     batch_gpus: int | None = Field(
         None,
         ge=0,
-        description="GPUs available to the manager process for batch_mode; auto-detected from SLURM env when omitted.",
+        description="Reserved legacy GPU count for run.batch_mode.",
     )
     batch_gpus_per_task: int = Field(
         1,
         ge=1,
-        description="GPUs to assign per task when batch_mode is enabled.",
+        description="Reserved legacy per-task GPU count for run.batch_mode.",
     )
     batch_srun_extra: List[str] = Field(
         default_factory=list,
-        description="Extra srun flags appended when launching tasks in batch_mode.",
+        description="Reserved legacy srun flags for run.batch_mode.",
     )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
@@ -1207,7 +1250,11 @@ class RunConfig(BaseModel):
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
-        "local", description="Execution backend."
+        "local",
+        description=(
+            "Execution backend. Only 'local' is currently accepted; use "
+            "'batter run --slurm-submit' for SLURM manager submission."
+        ),
     )
 
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")

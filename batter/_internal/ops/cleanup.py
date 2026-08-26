@@ -80,8 +80,6 @@ _SYSTEM_KEEP_NAMES = {
     "other_parts.pdb",
     "eq.rst7",
     "mini_eq.rst7",
-    "md-current.rst7",
-    "md-previous.rst7",
     "representative.pdb",
     "representative.rst7",
     "representative_complex.pdb",
@@ -115,6 +113,7 @@ _SYSTEM_KEEP_NAMES = {
 
 _KEEP_DIR_NAMES = {
     "artifacts",
+    "results",
     "params",
     "inputs",
     "remd",

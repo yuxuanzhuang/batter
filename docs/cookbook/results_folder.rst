@@ -40,12 +40,15 @@ such as:
 * ``total_dG`` and ``total_se``
 * ``canonical_smiles``, ``original_name``, and ``original_path`` when available
 * ``protocol``
-* ``analysis_start_step`` and ``n_bootstraps``
+* ``analysis_start_step`` and requested ``n_bootstraps``
+* ``include_in_analysis`` for aggregate Cinnabar filtering
 * ``status`` and ``failure_reason``
 * ``created_at``
 
 When BATTER saves the same ``(run_id, ligand, analysis_start_step, n_bootstraps)``
 combination again, the row is replaced rather than duplicated.
+When sparse-data guards reduce or disable bootstrapping for a component, the
+effective count is written in that component's ``*_results.json`` artifact.
 
 Successful Record Directory
 ---------------------------
@@ -127,6 +130,12 @@ For a successful result, BATTER writes::
    * ``representative_pose.pdb``
    * ``initial_pose.pdb``
    * ``initial_complex.pdb``
+   * ``prolif_interactions.json``
+   * ``prolif_interactions_timeseries.csv.gz``
+   * ``prolif_interactions_barcode.png``
+   * ``prolif_interactions_occupancy.png``
+   * ``prolif_interaction_diagram.png``
+   * ``prolif_lignetwork.html`` when available
    * ``<ligand>.sdf``, ``<ligand>.prmtop``, and ``<ligand>.pdb`` when present
 
 Failure or Unbound Record Directory
@@ -304,7 +313,7 @@ For equilibration trajectories, a common workflow is:
 
    vmd full.pdb md-*.nc
 
-Then load ``full.prmtop`` inside VMD to recover bonded information.
+Then load ``full_merged.prmtop`` inside VMD to recover bonded information.
 
 For FE production trajectories, inspect one window at a time from the corresponding
 component directory. BATTER stores these trajectories without water, so a common

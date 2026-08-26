@@ -14,6 +14,7 @@ import re
 import os
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS, DEFAULT_NTPR
 from batter.config.utils import coerce_yes_no
 from batter.config.remd import RemdArgs
 
@@ -207,7 +208,9 @@ class SimulationConfig(BaseModel):
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
 
-        n_bootstraps_val = 0
+        detect_equil_val = bool(_fe_attr("detect_equil", lambda: True))
+
+        n_bootstraps_val = DEFAULT_N_BOOTSTRAPS
         if hasattr(fe, "n_bootstraps"):
             n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
         elif isinstance(fe, Mapping) and "n_bootstraps" in fe:
@@ -283,6 +286,7 @@ class SimulationConfig(BaseModel):
                 _fe_attr("rocklin_correction", lambda: "no")
             ),
             "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
+            "mcwat_fe": coerce_yes_no(_fe_attr("mcwat_fe", lambda: "yes")),
             "lambdas": base_lambdas,
             "component_windows": component_lambda_map,
             "blocks": int(_fe_attr("blocks", lambda: 0)),
@@ -292,6 +296,7 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
+            "ion_guard": coerce_yes_no(_fe_attr("ion_guard", lambda: "yes")),
             "abfe_diff_pose_restraint_type": _fe_attr(
                 "abfe_diff_pose_restraint_type", lambda: "local_frame"
             ),
@@ -318,7 +323,7 @@ class SimulationConfig(BaseModel):
             "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "yes")),
             "release_eq": fe_release_eq,
             "eq_steps": eq_steps_value,
-            "ntpr": int(_fe_attr("ntpr", lambda: 100)),
+            "ntpr": int(_fe_attr("ntpr", lambda: DEFAULT_NTPR)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
             "ntwx": int(_fe_attr("ntwx", lambda: 50_000)),
@@ -327,6 +332,7 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
+            "detect_equil": detect_equil_val,
             "n_bootstraps": n_bootstraps_val,
             "cinnabar_x_convergence_filter": _coerce_cinnabar_x_convergence_filter(
                 _fe_attr("cinnabar_x_convergence_filter", lambda: (0.8, 1.0))
@@ -393,7 +399,11 @@ class SimulationConfig(BaseModel):
         description="Enable REMD execution (submission only; inputs are always prepared).",
     )
     remd_nstlim: int = Field(
-        100, description="Steps per REMD segment (applied to ``mdin-*-remd`` copies)."
+        1000,
+        description=(
+            "MD steps between REMD exchange attempts; written to "
+            "``mdin-remd-template`` as ``nstlim``."
+        ),
     )
     slurm_header_dir: Path = Field(
         default_factory=lambda: Path.home() / ".batter",
@@ -445,8 +455,15 @@ class SimulationConfig(BaseModel):
         ge=0,
         description="Analyze only steps after this (per FE window).",
     )
+    detect_equil: bool = Field(
+        True,
+        description=(
+            "Detect one global MBAR equilibration cutoff and decorrelation time "
+            "across lambda windows."
+        ),
+    )
     n_bootstraps: int = Field(
-        0,
+        DEFAULT_N_BOOTSTRAPS,
         ge=0,
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
@@ -477,6 +494,13 @@ class SimulationConfig(BaseModel):
     )
     rec_com_force: float = Field(0.0, description="Protein COM spring")
     lig_com_force: float = Field(0.0, description="Ligand COM spring")
+    ion_guard: Literal["yes", "no"] = Field(
+        "yes",
+        description=(
+            "FE-only ion guard restraints that keep configured bulk ions at least "
+            "10 Å from the binding-site ligand reference atom."
+        ),
+    )
     abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
         "local_frame",
         description="ABFE_diff bound-dummy pose restraint style.",
@@ -534,13 +558,17 @@ class SimulationConfig(BaseModel):
     neutralize_only: Literal["yes", "no"] = Field("no", description="Neutralize only")
     cation: str = Field("Na+", description="Cation species")
     anion: str = Field("Cl-", description="Anion species")
-    ion_conc: float = Field(0.15, description="Target salt concentration (M)")
+    ion_conc: float = Field(0.05, description="Target salt concentration (M)")
 
     # --- Simulation params ---
     hmr: Literal["yes", "no"] = Field("no", description="Hydrogen mass repartitioning")
     enable_mcwat: Literal["yes", "no"] = Field(
         "yes",
         description="Enable MC water exchange moves during equilibration templates.",
+    )
+    mcwat_fe: Literal["yes", "no"] = Field(
+        "yes",
+        description="Enable MC water exchange moves during FE production inputs.",
     )
     temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
@@ -560,7 +588,7 @@ class SimulationConfig(BaseModel):
     max_adis: Optional[float] = Field(None, description="Max anchor distance (Å)")
 
     # --- Amber i/o ---
-    ntpr: int = Field(100, description="Print energy every ntpr steps")
+    ntpr: int = Field(DEFAULT_NTPR, description="Print energy every ntpr steps")
     ntwr: int = Field(10_000, description="Write restart every ntwr steps")
     ntwe: int = Field(0, description="Write energy every ntwe steps")
     ntwx: int = Field(2500, description="Write trajectory every ntwx steps")
@@ -637,7 +665,9 @@ class SimulationConfig(BaseModel):
         "hmr",
         "rocklin_correction",
         "enable_mcwat",
+        "mcwat_fe",
         "remd",
+        "ion_guard",
         "abfe_diff_pose_internal_restraints",
         mode="before",
     )

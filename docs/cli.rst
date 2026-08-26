@@ -28,8 +28,8 @@ Options:
 ``--clean-failures / --no-clean-failures``
    Clear ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning an execution.
 ``--only-equil / --full``
-   Run only equilibration preparation steps. FE preparation is still performed (up to
-   ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.
+   For FE protocols, run through FE window preparation and FE equilibration,
+   then stop before FE production and analysis.
 ``--only-rbfe-network / --full-rbfe``
    For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
    ``rbfe_network.json`` are written so the planned ligand network can be reviewed.
@@ -52,21 +52,39 @@ Notes:
 * The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
   ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
 
+Rerun Equilibration Analysis
+============================
+
+Run equilibration analysis again for an existing execution or for one ligand
+simulation folder::
+
+   batter simulation-analysis work/adrb2/executions/rep1 --force
+   batter simulation-analysis work/adrb2/executions/rep1/simulations/LIG1 --force
+
+The command writes refreshed ``simulation_analysis.png``, representative
+structures, stable-distance JSON, and ProLIF raw/plot artifacts into each
+``equil/`` directory and copies the user-facing outputs into ``equil/results/``.
+Use ``--ligand-resname`` when the ligand residue name cannot be inferred from
+``params/*.sdf`` or ``equil/*.sdf``.
+
 Generate Batch Scripts
 ======================
 
-Use ``batter batch`` to emit an ``sbatch`` script that runs ``run-local-batch.bash`` (non-REMD)
-across one or more execution folders::
+Use ``batter batch`` to emit an REMD ``sbatch`` script that runs
+``run-local-remd.bash`` across one or more execution folders. REMD is the
+default batch mode::
 
    batter batch -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
 
-Use ``--remd`` to switch to REMD mode (runs ``run-local-remd.bash``)::
+Use ``--no-remd`` to select standard grouped production through
+``run-local-batch.bash``::
 
-   batter batch --remd -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
+   batter batch --no-remd -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
 
-The command writes ``run-local-batch.bash`` into each component folder using the packaged
-template and skips components that already contain ``FINISHED`` (or where all windows
-are marked ``FINISHED``).
+The command skips components that already contain ``FINISHED``. In non-REMD
+mode, it refreshes ``run-local-batch.bash`` in each component folder from the
+packaged template.
+
 Key options:
 
 ``--gpus``
@@ -76,14 +94,18 @@ Key options:
    ``MPI_EXEC`` is ``srun``.
 ``--nodes``
    Override the total node count in the header.
-``--remd``
-   Use REMD execution mode (``run-local-remd.bash``) instead of standard batch mode.
+``--time-limit``
+   Time limit for the generated sbatch script (default: 00:15:00).
+``--remd`` / ``--no-remd``
+   Use REMD execution mode (default, via ``run-local-remd.bash``), or explicitly
+   select standard grouped batch mode (via ``run-local-batch.bash``).
 ``--auto-resubmit`` / ``--no-auto-resubmit``
    When enabled (default), the generated sbatch traps a pre-timeout signal,
    regenerates the batch script, and resubmits it until all components finish
    or the max resubmission count is reached.
 ``--signal-mins``
-   Minutes before the time limit to trigger auto-resubmit (default: 90).
+   Minutes before the time limit to trigger auto-resubmit (default: 10). Must
+   be at least 1 minute shorter than ``--time-limit``.
 ``--max-resubmit-count``
    Maximum total submissions for the script (including the first run; default: 4).
 ``--current-submission-time``
@@ -119,8 +141,10 @@ To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
 
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window. By default existing analysis outputs are preserved;
-pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
-bootstrap resamples. Analysis failures are logged and skipped by default; pass
+pass ``--overwrite`` to regenerate them. Analysis uses 10 MBAR bootstrap resamples by
+default; pass ``--n-bootstrap`` to override this. Very sparse analyses may reduce or
+disable bootstrapping for that component and log the effective count in the component
+results JSON. Analysis failures are logged and skipped by default; pass
 ``--raise-on-error`` to stop at the first failure.
 
 To submit the analysis itself as a SLURM manager job, use ``--slurm-submit``::
@@ -128,7 +152,9 @@ To submit the analysis itself as a SLURM manager job, use ``--slurm-submit``::
    batter fe analyze work/adrb2 run-20240101 --slurm-submit
 
 The generated script uses ``job_manager.header``/``job_manager.body`` in the same
-way as ``batter run --slurm-submit``. Use ``--partition`` or
+way as ``batter run --slurm-submit``. By default, BATTER sets
+``#SBATCH --partition=batch`` and ``#SBATCH --account=BIP152`` for FE analysis
+SLURM submissions. Use ``--partition``, ``--account``, or
 ``--slurm-manager-path`` to override the generated manager script.
 
 To generate a per-ligand (or per-RBFE-pair) SLURM array script without submitting
@@ -139,8 +165,8 @@ it immediately, use ``--job-array``::
 This writes ``*_array.sbatch`` and a matching ``*.tasks.tsv`` task file in the
 current directory. Submit the generated script with ``sbatch`` after inspection.
 Use ``--array-limit`` to control concurrent array tasks, ``--array-output`` to
-choose the script path, and ``--partition`` to set the generated script's
-partition. For RBFE and ``rbfe_septop`` runs, each array task analyzes one
+choose the script path, and ``--partition``/``--account`` to set the generated
+script's SLURM allocation entries. For RBFE and ``rbfe_septop`` runs, each array task analyzes one
 transformation pair; ``--ligand`` may be a pair id such as ``LIG1~LIG2`` or an
 endpoint ligand name to include all pairs touching that ligand. If you omit
 ``run_id``, BATTER writes array tasks for every execution under
@@ -274,7 +300,7 @@ you can optimise or analyse lambda schedules without leaving the main CLI.
        -T 310 \
        --out sched.ar.z.dat \
        --plot sched.ar.z.png \
-       ADRB2_I/rep1/fe/pose0/sdr/z
+       work/adrb2/executions/rep1/simulations/LIG1/fe/z
 
 Key options:
 

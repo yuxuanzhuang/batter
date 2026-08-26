@@ -35,6 +35,8 @@ SLURM_FINAL_BAD = {
     "OUT_OF_MEMORY",
 }
 JOBID_RE = re.compile(r"Submitted batch job\s+(\d+)", re.I)
+DEPRECATED_DEFAULT_GPU_CONSTRAINT = '#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"'
+DEFAULT_GPU_CONSTRAINT = '#SBATCH -C "GPU_GEN:AMP"'
 SLURM_SUBMIT_RATE_LIMIT_PATTERNS = (
     "reached jobs per hour limit",
     "job violates accounting/qos policy",
@@ -95,6 +97,14 @@ def _write_text(p: Path, txt: str) -> None:
     """Write ``txt`` to ``p`` creating parent directories as required."""
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(txt)
+
+
+def _normalize_default_gpu_constraint(header_text: str) -> str:
+    """Replace the stale default PSC constraint, which can allocate TITAN Xp nodes."""
+    return header_text.replace(
+        DEPRECATED_DEFAULT_GPU_CONSTRAINT,
+        DEFAULT_GPU_CONSTRAINT,
+    )
 
 
 def _format_workdir_label(path: Path) -> str:
@@ -940,7 +950,7 @@ class SlurmJobManager:
 
                 # Retry budget covers suspected simulation/job failures. Scheduler
                 # interruptions are unlimited because they are outside the window's
-                # control and can resume from rolling restart files.
+                # control and can resume from production restart files.
                 r = retries.get(wd, 0)
                 if (
                     not scheduler_interrupt_state
@@ -1055,6 +1065,15 @@ class SlurmJobManager:
             body_path = spec.workdir / spec.body_rel
         elif candidate.exists():
             body_path = candidate
+            try:
+                script_text = script_abs.read_text()
+                script_is_body_only = not any(
+                    ln.lstrip().startswith("#SBATCH") for ln in script_text.splitlines()
+                )
+                if script_is_body_only and script_abs.stat().st_mtime > candidate.stat().st_mtime:
+                    body_path = script_abs
+            except Exception as exc:
+                logger.debug(f"[SLURM] Could not compare script/body mtimes for {script_abs}: {exc}")
         else:
             body_path = script_abs
         if not body_path.exists():
@@ -1078,6 +1097,8 @@ class SlurmJobManager:
                     header_text = spec.header_template.read_text()
                 except Exception:
                     header_text = ""
+
+        header_text = _normalize_default_gpu_constraint(header_text)
 
         # Read body, drop baked-in SBATCH lines so header owns SBATCH. If we are
         # rebuilding from the already-rendered submit script, also remove the exact

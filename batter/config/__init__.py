@@ -37,6 +37,15 @@ def load_run_config(path: Path | str) -> RunConfig:
     file_path = Path(path)
     raw: Dict[str, Any] = yaml.safe_load(file_path.read_text()) or {}
     expanded = expand_env_vars(raw, base_dir=file_path.parent)
+    create_data = expanded.get("create") if isinstance(expanded, dict) else None
+    if isinstance(create_data, dict):
+        conf_restraints = create_data.get("extra_conformation_restraints")
+        if conf_restraints not in (None, ""):
+            conf_path = Path(str(conf_restraints))
+            if not conf_path.is_absolute():
+                create_data["extra_conformation_restraints"] = str(
+                    (file_path.parent / conf_path).resolve()
+                )
     return RunConfig.model_validate(expanded)
 
 

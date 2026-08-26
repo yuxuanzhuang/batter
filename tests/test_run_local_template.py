@@ -4,6 +4,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from batter._internal.ops.helpers import rewrite_prmtop_reference
+
 
 def _write_stub_exe(path: Path, body: str) -> None:
     path.write_text(body)
@@ -22,8 +26,377 @@ def _restart_time(path: Path) -> str:
     return path.read_text().splitlines()[1].split()[1]
 
 
+def test_fe_window_equilibration_chains_handoff_stages(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    (tmp_path / "check_run.bash").write_text(check_run.read_text())
+    for index in range(4):
+        (tmp_path / f"eq-handoff-{index:02d}.in").write_text("staged EQ\n")
+    (tmp_path / "eq.in").write_text("final EQ\n")
+    (tmp_path / "eq_init.rst7").write_text(_restart_text("0.0"))
+    (tmp_path / "full_merged.prmtop").write_text("topology\n")
+
+    pmemd_calls = tmp_path / "pmemd-calls.txt"
+    pmemd = tmp_path / "pmemd-stub"
+    _write_stub_exe(
+        pmemd,
+        """#!/usr/bin/env bash
+input=""
+restart=""
+output=""
+result=""
+trajectory=""
+reference=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i) shift; input="$1" ;;
+    -c) shift; restart="$1" ;;
+    -o) shift; output="$1" ;;
+    -r) shift; result="$1" ;;
+    -x) shift; trajectory="$1" ;;
+    -ref) shift; reference="$1" ;;
+  esac
+  shift
+done
+printf '%s|%s|%s|%s|%s|%s\n' \
+  "$input" "$restart" "$output" "$result" "$trajectory" "$reference" \
+  >> "$PMEMD_CALLS"
+printf 'Amber 24 PMEMD\nTotal wall time\n' > "$output"
+printf 'Stub Amber restart\n1  10.0\n  0.0  0.0  0.0\n' > "$result"
+if [[ -n $trajectory ]]; then
+  printf 'trajectory\n' > "$trajectory"
+fi
+""",
+    )
+    cpptraj = tmp_path / "cpptraj-stub"
+    _write_stub_exe(
+        cpptraj,
+        """#!/usr/bin/env bash
+input=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i) shift; input="$1" ;;
+  esac
+  shift
+done
+output=$(awk '$1 == "trajout" { print $2; exit }' "$input")
+printf 'combined trajectory\n' > "$output"
+""",
+    )
+    runner = tmp_path / "run-handoff-test.bash"
+    runner.write_text(
+        """#!/usr/bin/env bash
+set -e
+log_file=run.log
+RETRY=0
+source ./check_run.bash
+print_and_run() {
+  eval "$@"
+  SIM_COMMAND_STATUS=$?
+  return 0
+}
+run_fe_window_equilibration \
+  "target-window EQ" eq_init.rst7 full_merged.prmtop
+"""
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "PMEMD_EXEC": str(pmemd),
+            "CPPTRAJ_EXEC": str(cpptraj),
+            "PMEMD_CALLS": str(pmemd_calls),
+        }
+    )
+    subprocess.run(
+        ["bash", runner.name],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = [line.split("|") for line in pmemd_calls.read_text().splitlines()]
+    assert [call[0] for call in calls] == [
+        "eq-handoff-00.in",
+        "eq-handoff-01.in",
+        "eq-handoff-02.in",
+        "eq-handoff-03.in",
+        "eq.in",
+    ]
+    assert [call[1] for call in calls] == [
+        "eq_init.rst7",
+        "eq-handoff-00.rst7",
+        "eq-handoff-01.rst7",
+        "eq-handoff-02.rst7",
+        "eq-handoff-03.rst7",
+    ]
+    assert {call[5] for call in calls} == {"eq_init.rst7"}
+    assert calls[-1][3:5] == ["eq.rst7", ""]
+    assert {call[4] for call in calls} == {""}
+    assert (tmp_path / "eq.rst7").is_file()
+    assert not (tmp_path / "eq.nc").exists()
+    assert not (tmp_path / "eq-final.nc").exists()
+    assert not (tmp_path / "eq-trajectory-combine.cpptraj").exists()
+
+
+def test_fe_equil_cleanup_removes_only_transient_artifacts(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    seed_dir = tmp_path / "z" / "z-1"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "check_run.bash").write_text(check_run.read_text())
+    (seed_dir / "eq.nc").write_text("seed trajectory\n")
+    (seed_dir / "eq.rst7.1").write_text(_restart_text("10.0"))
+    (seed_dir / "eq.rst7.2").write_text(_restart_text("20.0"))
+
+    for index in range(2):
+        window_dir = seed_dir.parent / f"z{index:02d}"
+        window_dir.mkdir()
+        (window_dir / "eq-handoff.json").write_text("{}\n")
+        (window_dir / "eq.rst7").write_text(_restart_text("50.0"))
+        (window_dir / "eq.out").write_text("final output\n")
+        (window_dir / "eq.in").write_text("final input\n")
+        (window_dir / "cmass.txt").write_text("restraint diagnostics\n")
+        (window_dir / "full_merged.prmtop").write_text("topology\n")
+        (window_dir / "eq_init.rst7").write_text(_restart_text("0.0"))
+        (window_dir / "eq.nc").write_text("combined trajectory\n")
+        (window_dir / "eq-final.nc").write_text("final trajectory\n")
+        (window_dir / "eq-trajectory-combine.cpptraj").write_text("run\n")
+        for stage in range(4):
+            stem = window_dir / f"eq-handoff-{stage:02d}"
+            stem.with_suffix(".in").write_text("stage input\n")
+            stem.with_suffix(".out").write_text("stage output\n")
+            stem.with_suffix(".rst7").write_text(_restart_text("10.0"))
+            stem.with_suffix(".nc").write_text("stage trajectory\n")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "cleanup_fe_equilibration_artifacts z 2 \"$PWD\"",
+        ],
+        cwd=seed_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Removed transient FE equilibration artifacts from 2 target window(s)" in result.stdout
+    assert not (seed_dir / "eq.nc").exists()
+    assert not list(seed_dir.glob("eq.rst7.[0-9]*"))
+    for index in range(2):
+        window_dir = seed_dir.parent / f"z{index:02d}"
+        assert not list(window_dir.glob("eq-handoff-*.*"))
+        assert not (window_dir / "eq_init.rst7").exists()
+        assert not (window_dir / "eq.nc").exists()
+        assert not (window_dir / "eq-final.nc").exists()
+        assert not (window_dir / "eq-trajectory-combine.cpptraj").exists()
+        assert (window_dir / "eq-handoff.json").is_file()
+        assert (window_dir / "eq.rst7").is_file()
+        assert not (window_dir / "eq.out").exists()
+        assert not (window_dir / "eq.in").exists()
+        assert not (window_dir / "cmass.txt").exists()
+        assert (window_dir / "full_merged.prmtop").is_file()
+
+
+def test_fe_equil_cleanup_is_transactional_when_final_restart_is_missing(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    seed_dir = tmp_path / "x" / "x-1"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "check_run.bash").write_text(check_run.read_text())
+    for index in range(2):
+        window_dir = seed_dir.parent / f"x{index:02d}"
+        window_dir.mkdir()
+        (window_dir / "eq-handoff.json").write_text("{}\n")
+        (window_dir / "eq-handoff-00.nc").write_text("trajectory\n")
+    (seed_dir.parent / "x00" / "eq.rst7").write_text(_restart_text("50.0"))
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "cleanup_fe_equilibration_artifacts x 2 \"$PWD\"",
+        ],
+        cwd=seed_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "final restart is missing" in result.stdout
+    assert (seed_dir.parent / "x00" / "eq-handoff-00.nc").is_file()
+    assert (seed_dir.parent / "x01" / "eq-handoff-00.nc").is_file()
+
+
+def test_fe_window_equilibration_refuses_cleaned_stage_inputs(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    (tmp_path / "check_run.bash").write_text(check_run.read_text())
+    (tmp_path / "eq-handoff.json").write_text("{}\n")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "source ./check_run.bash && "
+            "if run_fe_window_equilibration target eq_init.rst7 full_merged.prmtop; "
+            "then exit 99; else exit 0; fi",
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Staged EQ inputs were cleaned" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").is_file()
+
+
+def test_production_md_uses_expected_reference_restart() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    template_dir = repo_root / "batter" / "_internal" / "templates" / "run_files_orig"
+
+    expected_refs = {
+        "run-local.bash": "${win_00}/eq.rst7",
+        "run-local-rbfe.bash": "${win_00}/eq.rst7",
+        "run-local-vacuum.bash": "$rst_in",
+        "run-equil.bash": "$rst_in",
+    }
+
+    for name, expected_ref in expected_refs.items():
+        text = (template_dir / name).read_text()
+        assert (
+            "-c $rst_in -o ${out_tag}.out -r $rst_out "
+            f"-x ${{out_tag}}.nc -ref {expected_ref}"
+        ) in text
+
+
+def test_abfe_local_template_uses_merged_prmtop_for_cpptraj_restart_split() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-local.bash"
+    )
+
+    text = script.read_text()
+    assert "$CPPTRAJ_EXEC -p $PRMTOP_MERGED -i /dev/stdin" in text
+    assert "$CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin" not in text
+
+
+def test_abfe_equil_template_uses_merged_prmtop() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-equil.bash"
+    )
+
+    text = script.read_text()
+    assert 'PRMTOP="full_merged.prmtop"' in text
+    assert 'PRMTOP="full.hmr.prmtop"' not in text
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    [
+        "run-local.bash",
+        "run-local-rbfe.bash",
+        "run-local-vacuum.bash",
+        "run-equil.bash",
+    ],
+)
+def test_local_templates_use_merged_prmtop(template_name: str) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / template_name
+    )
+
+    text = script.read_text()
+    assert 'PRMTOP="full_merged.prmtop"' in text
+    assert 'PRMTOP="full.hmr.prmtop"' not in text
+    assert 'PRMTOP="full.prmtop"' not in text
+
+
+def test_check_penetration_template_uses_merged_prmtop() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_penetration.py"
+    )
+
+    text = script.read_text()
+    assert 'PRMTOP = "full_merged.prmtop"' in text
+    assert "full.hmr.prmtop" not in text
+    assert "full.prmtop" not in text
+
+
+def test_rewrite_prmtop_reference_normalizes_to_merged_prmtop() -> None:
+    text = 'PRMTOP="full.hmr.prmtop"\nparm full.prmtop\n'
+
+    rewritten = rewrite_prmtop_reference(text, hmr=True)
+    rewritten_no_hmr = rewrite_prmtop_reference(text, hmr=False)
+
+    assert rewritten == 'PRMTOP="full_merged.prmtop"\nparm full_merged.prmtop\n'
+    assert rewritten_no_hmr == rewritten
+
+
 def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> None:
-    """run-local.bash should honor mdin-template total_steps via md-current rolling restarts."""
+    """run-local.bash should honor mdin-template total_steps via explicit segment restarts."""
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -53,14 +426,21 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
 out=""
 rst=""
 nc=""
+restart=""
+ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -c) shift; restart="$1";;
     -o) shift; out="$1";;
     -r) shift; rst="$1";;
     -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
   esac
   shift
 done
+if [[ "$out" == md-*.out ]]; then
+  printf "%s %s %s\\n" "$out" "$restart" "$ref" >> md_ref_calls.txt
+fi
 seg=0
 if [[ "$out" =~ md-([0-9]+)\\.out ]]; then
   seg=$((10#${BASH_REMATCH[1]}))
@@ -147,15 +527,19 @@ exit 0
     assert len(archived_logs) == 1
     assert archived_logs[0].read_text() == "old log\n"
     assert (work / "run.log").exists()
-    assert (work / "md-current.rst7").exists()
+    assert (work / "md-01.rst7").exists()
     assert not (work / "output.pdb").exists()
 
     subprocess.run(cmd, cwd=work, check=True, env=env)
 
-    # After two segments we should have rolling restarts and output
-    assert (work / "md-current.rst7").exists()
-    assert (work / "md-previous.rst7").exists()
+    # After completion, segment restarts should be cleaned up.
+    assert not (work / "md-01.rst7").exists()
+    assert not (work / "md-02.rst7").exists()
     assert (work / "output.pdb").exists()
+    assert (work / "md_ref_calls.txt").read_text().splitlines() == [
+        "md-01.out eq.rst7 ../COMPONENT00/eq.rst7",
+        "md-02.out md-01.rst7 ../COMPONENT00/eq.rst7",
+    ]
 
 
 def test_run_local_does_not_skip_exact_100ps_debug_window_before_md(tmp_path: Path) -> None:
@@ -234,7 +618,7 @@ exit 0
     assert (work / "run_steps.txt").read_text().strip() == "25000"
     assert (work / "ntwx.txt").read_text().strip() == "25000"
     assert (work / "dumpfreq.txt").read_text().strip() == "1000"
-    assert (work / "md-current.rst7").exists()
+    assert not (work / "md-01.rst7").exists()
     assert (work / "output.pdb").exists()
 
 
@@ -259,7 +643,7 @@ def test_run_local_cleans_empty_md_artifacts_before_restart(tmp_path: Path) -> N
         "dt = 0.001,\n"
     )
 
-    for name in ["md-01.out", "md-01.nc", "cmass.txt", "cmass-01.txt", "md-current.rst7"]:
+    for name in ["md-01.out", "md-01.nc", "cmass.txt", "cmass-01.txt", "md-01.rst7"]:
         (work / name).write_text("")
 
     stub = work / "stub.sh"
@@ -334,11 +718,11 @@ exit 0
 
     assert "[INFO] Removed stale empty file md-01.out" in result.stdout
     assert "[INFO] Removed stale empty file cmass-01.txt" in result.stdout
-    assert "[INFO] Removed stale empty file md-current.rst7" in result.stdout
+    assert "[INFO] Removed stale empty file md-01.rst7" in result.stdout
     assert "Running segment 1 -> md-01.out" in result.stdout
     assert not (work / "ATTEMPT_FAILED").exists()
     assert (work / "md-01.out").read_text().strip() == "TIME(PS) = 0.010000"
-    assert _restart_time(work / "md-current.rst7") == "0.0100000000"
+    assert not (work / "md-01.rst7").exists()
     assert (work / "md-01.nc").read_text().strip() == "ok"
     assert not (work / "cmass.txt").exists()
     assert not (work / "cmass-01.txt").exists()
@@ -445,7 +829,7 @@ exit 0
     assert (work / "md-01.nc").read_text().strip() == "ok"
 
 
-def test_run_local_resumes_interrupted_current_restart(tmp_path: Path) -> None:
+def test_run_local_resumes_from_explicit_segment_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -456,7 +840,7 @@ def test_run_local_resumes_interrupted_current_restart(tmp_path: Path) -> None:
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "full_merged.prmtop").write_text("prmtop")
     (work / "eq.rst7").write_text(_restart_text("20.0000000000"))
-    (work / "md-current.rst7").write_text(_restart_text("50.0000000000"))
+    (work / "md-01.rst7").write_text(_restart_text("50.0000000000"))
     (work / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    11700   TIME(PS) =      55.100  TEMP(K) =   298.0\n"
@@ -478,127 +862,19 @@ out=""
 rst=""
 nc=""
 restart=""
+ref=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -c) shift; restart="$1";;
     -o) shift; out="$1";;
     -r) shift; rst="$1";;
     -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
   esac
   shift
 done
 printf "%s\\n" "$restart" > restart_in.txt
-[[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 20.010000\\n" > "$out"
-[[ -n "$rst" ]] && printf "Stub Amber restart\\n1  20.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
-[[ -n "$nc" ]] && echo "ok" > "$nc"
-exit 0
-""",
-    )
-    cpptraj_stub = work / "cpptraj"
-    _write_stub_exe(
-        cpptraj_stub,
-        """#!/usr/bin/env bash
-target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
-[[ -n "$target" ]] && echo "pdb" > "$target"
-exit 0
-""",
-    )
-    ncdump_stub = work / "ncdump"
-    _write_stub_exe(
-        ncdump_stub,
-        """#!/usr/bin/env bash
-file=""
-for arg in "$@"; do
-  if [[ "$arg" != -* ]]; then
-    file="$arg"
-  fi
-done
-time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
-[[ -n "$time" ]] || time=0
-cat <<EOF
-        double time ;
-                time:units = "picosecond" ;
- time = $time ;
-EOF
-exit 0
-""",
-    )
-
-    env = os.environ.copy()
-    env["PMEMD_EXEC"] = str(stub)
-    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
-    env["PATH"] = f"{work}:{env.get('PATH','')}"
-
-    result = subprocess.run(
-        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
-        cwd=work,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "Archived incomplete MD segment" not in result.stdout
-    assert "Running segment 2 -> md-02.out" in result.stdout
-    assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
-    assert (work / "md-01.out").exists()
-    assert (work / "md-01.nc").exists()
-    assert _restart_time(work / "md-previous.rst7") == "50.0000000000"
-    assert (work / "md-02.out").exists()
-    assert not (work / "WRONG_FAIL").exists()
-
-
-def test_run_local_archives_invalid_current_restart_and_uses_previous(
-    tmp_path: Path,
-) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
-    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-
-    work = tmp_path
-    (work / "run-local.bash").write_text(script.read_text())
-    (work / "check_run.bash").write_text(check_run.read_text())
-    (work / "full.hmr.prmtop").write_text("prmtop")
-    (work / "full_merged.prmtop").write_text("prmtop")
-    (work / "eq.rst7").write_text(_restart_text("20.0000000000"))
-    (work / "md-previous.rst7").write_text(_restart_text("50.0000000000"))
-    (work / "md-current.rst7").write_text("not a restart\n")
-    (work / "md-01.out").write_text(
-        "CONTROL DATA FOR THE RUN\n"
-        "|  Final Performance Info:\n"
-        " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
-    )
-    (work / "md-02.out").write_text(
-        "CONTROL DATA FOR THE RUN\n"
-        " NSTEP =    11700   TIME(PS) =      55.100  TEMP(K) =   298.0\n"
-    )
-    (work / "md-02.nc").write_text("partial traj\n")
-    (work / "mdin-template").write_text(
-        "! total_steps=200000\n"
-        "irest = 1,\n"
-        "ntx   = 5,\n"
-        "nstlim = 10,\n"
-        "dt = 0.001,\n"
-    )
-
-    stub = work / "stub.sh"
-    _write_stub_exe(
-        stub,
-        """#!/usr/bin/env bash
-out=""
-rst=""
-nc=""
-restart=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -c) shift; restart="$1";;
-    -o) shift; out="$1";;
-    -r) shift; rst="$1";;
-    -x) shift; nc="$1";;
-  esac
-  shift
-done
-printf "%s\\n" "$restart" > restart_in.txt
+printf "%s\\n" "$ref" > reference_in.txt
 [[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 50.010000\\n" > "$out"
 [[ -n "$rst" ]] && printf "Stub Amber restart\\n1  50.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
 [[ -n "$nc" ]] && echo "ok" > "$nc"
@@ -649,12 +925,129 @@ exit 0
         text=True,
     )
 
-    assert "Archived invalid MD restart md-current.rst7" in result.stdout
+    assert "Archived incomplete MD segment" not in result.stdout
     assert "Running segment 2 -> md-02.out" in result.stdout
-    assert (work / "restart_in.txt").read_text().strip() == "md-previous.rst7"
-    assert _restart_time(work / "md-current.rst7") == "50.0100000000"
+    assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "../COMPONENT00/eq.rst7"
+    assert (work / "md-01.out").exists()
+    assert (work / "md-01.nc").exists()
+    assert _restart_time(work / "md-01.rst7") == "50.0000000000"
+    assert _restart_time(work / "md-02.rst7") == "50.0100000000"
+    assert (work / "md-02.out").exists()
+    assert not (work / "WRONG_FAIL").exists()
+
+
+def test_run_local_archives_invalid_segment_restart_and_uses_previous_segment(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work = tmp_path
+    (work / "run-local.bash").write_text(script.read_text())
+    (work / "check_run.bash").write_text(check_run.read_text())
+    (work / "full.hmr.prmtop").write_text("prmtop")
+    (work / "full_merged.prmtop").write_text("prmtop")
+    (work / "eq.rst7").write_text(_restart_text("20.0000000000"))
+    (work / "md-01.rst7").write_text(_restart_text("50.0000000000"))
+    (work / "md-02.rst7").write_text("not a restart\n")
+    (work / "md-01.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        "|  Final Performance Info:\n"
+        " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
+    )
+    (work / "md-02.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    11700   TIME(PS) =      55.100  TEMP(K) =   298.0\n"
+    )
+    (work / "md-02.nc").write_text("partial traj\n")
+    (work / "mdin-template").write_text(
+        "! total_steps=200000\n"
+        "irest = 1,\n"
+        "ntx   = 5,\n"
+        "nstlim = 10,\n"
+        "dt = 0.001,\n"
+    )
+
+    stub = work / "stub.sh"
+    _write_stub_exe(
+        stub,
+        """#!/usr/bin/env bash
+out=""
+rst=""
+nc=""
+restart=""
+ref=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -c) shift; restart="$1";;
+    -o) shift; out="$1";;
+    -r) shift; rst="$1";;
+    -x) shift; nc="$1";;
+    -ref) shift; ref="$1";;
+  esac
+  shift
+done
+printf "%s\\n" "$restart" > restart_in.txt
+printf "%s\\n" "$ref" > reference_in.txt
+[[ -n "$out" ]] && printf "CONTROL DATA FOR THE RUN\\n|  Final Performance Info:\\n|  Total wall time: 1 seconds\\nTIME(PS) = 50.010000\\n" > "$out"
+[[ -n "$rst" ]] && printf "Stub Amber restart\\n1  50.0100000000\\n  0.0  0.0  0.0\\n" > "$rst"
+[[ -n "$nc" ]] && echo "ok" > "$nc"
+exit 0
+""",
+    )
+    cpptraj_stub = work / "cpptraj"
+    _write_stub_exe(
+        cpptraj_stub,
+        """#!/usr/bin/env bash
+target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+[[ -n "$target" ]] && echo "pdb" > "$target"
+exit 0
+""",
+    )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+[[ -n "$time" ]] || time=0
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env["PMEMD_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["PATH"] = f"{work}:{env.get('PATH','')}"
+
+    result = subprocess.run(
+        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
+        cwd=work,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Archived invalid MD restart md-02.rst7" in result.stdout
+    assert "Running segment 2 -> md-02.out" in result.stdout
+    assert (work / "restart_in.txt").read_text().strip() == "md-01.rst7"
+    assert (work / "reference_in.txt").read_text().strip() == "../COMPONENT00/eq.rst7"
+    assert _restart_time(work / "md-02.rst7") == "50.0100000000"
     assert (work / "md-02.out").read_text().startswith("CONTROL DATA FOR THE RUN")
-    assert list((work / "WRONG_FAIL").glob("*/md-current.rst7"))
+    assert list((work / "WRONG_FAIL").glob("*/md-02.rst7"))
     assert list((work / "WRONG_FAIL").glob("*/md-02.out"))
     assert list((work / "WRONG_FAIL").glob("*/md-02.nc"))
 
@@ -670,7 +1063,7 @@ def test_run_local_remaining_steps_follow_reduced_dt(tmp_path: Path) -> None:
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "full_merged.prmtop").write_text("prmtop")
     (work / "eq.rst7").write_text("eqrst")
-    (work / "md-current.rst7").write_text(_restart_text("0.0200000000"))
+    (work / "md-01.rst7").write_text(_restart_text("0.0200000000"))
     (work / "mdin-template").write_text(
         "! total_steps=10\n"
         "irest = 1,\n"
@@ -862,7 +1255,7 @@ def test_run_local_subtracts_initial_restart_time_for_production_progress(tmp_pa
         "64844  8.0000000E+01\n"
         "  1.0  2.0  3.0\n"
     )
-    (work / "md-current.rst7").write_text(_restart_text("2080.0000000000"))
+    (work / "md-01.rst7").write_text(_restart_text("2080.0000000000"))
     (work / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         "|  Final Performance Info:\n"

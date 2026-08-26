@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -8,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import batter.param.ligand as ligand_mod  # noqa: E402
 from batter.param.ligand import (  # noqa: E402
     FORBIDDEN_MOL_NAMES,
     LigandFactory,
@@ -169,3 +171,49 @@ def test_ligand_factory_rejects_pdb(tmp_path: Path) -> None:
             index=0,
             output_dir=tmp_path,
         )
+
+
+def test_monoatomic_sodium_writes_amber_ion_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdf = tmp_path / "sodium.sdf"
+    sdf.write_text(
+        "SODIUM\n"
+        "  BATTER          3D\n"
+        "\n"
+        "  1  0  0  0  0  0            999 V2000\n"
+        "    1.0000    2.0000    3.0000 Na  0  0  0  0  0  0  0  0  0  0  0  0\n"
+        "M  CHG  1   1   1\n"
+        "M  END\n"
+        "$$$$\n"
+    )
+
+    def _fake_tleap(_cmd: str, *, working_dir: Path) -> None:
+        work = Path(working_dir)
+        for suffix in ("lib", "prmtop", "inpcrd", "pdb"):
+            (work / f"ion.{suffix}").write_text(f"{suffix}\n")
+
+    monkeypatch.setattr(ligand_mod, "run_with_log", _fake_tleap)
+
+    ligand = LigandFactory().create_ligand(
+        ligand_file=sdf,
+        index=0,
+        output_dir=tmp_path / "params",
+        ligand_name="ion",
+        ligand_ff="gaff2",
+    )
+    ligand.prepare_ligand_parameters()
+
+    out = tmp_path / "params"
+    mol2 = (out / "ion.mol2").read_text()
+    frcmod = (out / "ion.frcmod").read_text()
+    metadata = json.loads((out / "ion.json").read_text())
+
+    assert "Na+" in mol2
+    assert "USER_CHARGES" in mol2
+    assert "MASS" in frcmod
+    assert "NONBON" in frcmod
+    assert "Na+  22.990000" in frcmod
+    assert metadata["ligand_charge"] == 1.0
+    assert ligand.atomnames == ["NA"]

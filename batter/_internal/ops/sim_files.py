@@ -18,14 +18,33 @@ import shutil
 from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
+from batter._internal.ops.fe_defaults import (
+    DEFAULT_FE_HANDOFF_RESTRAINT_END,
+    DEFAULT_FE_HANDOFF_RESTRAINT_START,
+    DEFAULT_FE_HANDOFF_STAGES,
+    DEFAULT_FE_SEED_LAMBDA_STATES,
+    DEFAULT_FE_SEED_STEPS_PER_STATE,
+    fe_window_equil_steps,
+)
 from batter._internal.ops.helpers import format_ranges
 from batter._internal.ops.remd import patch_mdin_file
+from batter.systemprep import non_loop_dssp_indices
 
 pmd = import_parmed()
 from parmed.amber.mask import AmberMask
 
 
 # ----------------------------- helpers ----------------------------- #
+
+DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000_000
+
+
+def _fe_production_chunk_steps(total_steps: int) -> int:
+    """Return per-submission FE production steps while preserving total sampling."""
+    total_steps = int(total_steps)
+    if total_steps <= 0:
+        return 0
+    return min(total_steps, DEFAULT_FE_PRODUCTION_CHUNK_STEPS)
 
 
 def _non_loop_mask_from_dssp_assignments(
@@ -34,32 +53,17 @@ def _non_loop_mask_from_dssp_assignments(
     """
     Convert DSSP assignments to a compact AMBER residue range string.
 
-    Keeps contiguous non-loop segments (assignment != '-') with length >= min_len.
-    Default shift-based residue indices.
+    Keeps contiguous helix/sheet segments with length >= ``min_len`` and maps
+    their zero-based DSSP positions to shifted AMBER residue indices.
     """
-    if min_len < 1:
-        raise ValueError("min_len must be >= 1")
-
-    keep: list[int] = []
-    run_start: int | None = None
-    seq = [str(x).strip() for x in assignments]
-
-    for idx, ss in enumerate(seq, start=shift):
-        if ss and ss != "-":
-            if run_start is None:
-                run_start = idx
-            continue
-        if run_start is not None:
-            run_len = idx - run_start
-            if run_len >= min_len:
-                keep.extend(range(run_start, idx))
-            run_start = None
-
-    if run_start is not None:
-        run_len = len(seq) + 1 - run_start
-        if run_len >= min_len:
-            keep.extend(range(run_start, len(seq) + 1))
-
+    keep = [
+        idx + shift
+        for idx in non_loop_dssp_indices(
+            assignments,
+            min_structure_size=min_len,
+            trim_structure_ends=0,
+        )
+    ]
     return format_ranges(keep)
 
 
@@ -411,6 +415,401 @@ def _mask_with_added_component(base_mask: str, new_mask_component: str) -> str:
     return f"({base} | {new_mask_component}) & !@H="
 
 
+def _ligand_anchor_masks_from_disang(disang_path: Path) -> list[str]:
+    """Return L1/L2/L3 masks recorded in a component restraint file."""
+    if not disang_path.exists():
+        return []
+
+    for line in disang_path.read_text().splitlines():
+        fields = line.split()
+        if fields[:3] != ["#", "Anchor", "atoms"] or len(fields) < 9:
+            continue
+        return [
+            mask
+            for mask in fields[6:9]
+            if mask.upper() != "NA" and "@" in mask
+        ]
+    return []
+
+
+def _anchor_atom_name(mask: str) -> str | None:
+    if "@" not in mask:
+        return None
+    name = mask.split("@", 1)[1].strip()
+    return name or None
+
+
+def _atom_is_hydrogen(atom) -> bool:
+    element = str(getattr(atom, "element", "") or "").strip().upper()
+    if element:
+        return element == "H"
+    return bool(re.match(r"^\d*H", str(atom.name).strip(), flags=re.IGNORECASE))
+
+
+def _first_heavy_atom_masks(
+    pdb_path: Path,
+    ligand_resids: Sequence[int],
+    *,
+    per_residue: int = 3,
+) -> list[str]:
+    """Build a broad fallback anchor set when no persisted L1/L2/L3 exists."""
+    if not pdb_path.exists():
+        return []
+
+    universe = mda.Universe(pdb_path.as_posix())
+    masks: list[str] = []
+    for resid in ligand_resids:
+        residues = universe.select_atoms(f"resid {int(resid)}").residues
+        if not residues:
+            continue
+        heavy = [atom for atom in residues[0].atoms if not _atom_is_hydrogen(atom)]
+        masks.extend(
+            f":{int(resid)}@{str(atom.name).strip()}"
+            for atom in heavy[:per_residue]
+        )
+    return masks
+
+
+def _ligand_resids_from_pdb(pdb_path: Path, resname: str) -> list[int]:
+    if not pdb_path.exists():
+        return []
+    universe = mda.Universe(pdb_path.as_posix())
+    return [
+        int(residue.resid)
+        for residue in universe.select_atoms(f"resname {resname}").residues
+    ]
+
+
+def _replicate_anchor_names(
+    anchor_masks: Sequence[str], ligand_resids: Sequence[int]
+) -> list[str]:
+    names = list(
+        dict.fromkeys(
+            name
+            for name in (_anchor_atom_name(mask) for mask in anchor_masks)
+            if name
+        )
+    )
+    return [f":{int(resid)}@{name}" for resid in ligand_resids for name in names]
+
+
+def _combine_handoff_masks(masks: Sequence[str]) -> str:
+    unique = list(dict.fromkeys(str(mask).strip() for mask in masks if str(mask).strip()))
+    if not unique:
+        raise ValueError("No ligand atoms are available for the FE handoff restraint")
+    return f"({' | '.join(unique)}) & !@H="
+
+
+def _ligand_handoff_restraint_mask(
+    *,
+    window_dir: Path,
+    vac_pdb: Path,
+    ligand_resids: Sequence[int],
+) -> str:
+    """Select persisted Boresch anchors, with a three-heavy-atom fallback."""
+    anchor_masks = _ligand_anchor_masks_from_disang(window_dir / "disang.rest")
+    masks = (
+        _replicate_anchor_names(anchor_masks, ligand_resids)
+        if ligand_resids
+        else list(anchor_masks)
+    )
+    if not masks:
+        masks = _first_heavy_atom_masks(vac_pdb, ligand_resids)
+        logger.debug(
+            "[fe_handoff] No persisted L1/L2/L3 masks in {}; using the first "
+            "three heavy atoms of each ligand copy.",
+            window_dir / "disang.rest",
+        )
+    return _combine_handoff_masks(masks)
+
+
+def _septop_guard_anchor_masks(
+    guard_path: Path,
+    *,
+    ref_resids: Sequence[int],
+    alt_resids: Sequence[int],
+) -> list[str]:
+    if not guard_path.exists():
+        return []
+    try:
+        endpoints = (json.loads(guard_path.read_text()).get("endpoints") or {})
+    except Exception as exc:
+        logger.warning("[fe_handoff] Could not read {}: {}", guard_path, exc)
+        return []
+
+    masks: list[str] = []
+    for endpoint, resids in (("ref", ref_resids), ("alt", alt_resids)):
+        final = ((endpoints.get(endpoint) or {}).get("final") or {})
+        names = [
+            str(record.get("name")).strip()
+            for label in ("L1", "L2", "L3")
+            for record in (final.get(label),)
+            if isinstance(record, dict) and record.get("resolved") and record.get("name")
+        ]
+        masks.extend(f":{int(resid)}@{name}" for resid in resids for name in names)
+    return masks
+
+
+def _rbfe_handoff_restraint_mask(
+    *,
+    window_dir: Path,
+    vac_pdb: Path,
+    scmask: dict,
+    ref_resid: int,
+    septop: bool,
+) -> str:
+    common_keys = (
+        "scmk1_cc_site_indices",
+        "scmk1_cc_solvent_indices",
+        "scmk2_cc_site_indices",
+        "scmk2_cc_solvent_indices",
+    )
+    common_indices = [
+        int(index)
+        for key in common_keys
+        for index in (scmask.get(key) or [])
+    ]
+    mapped_atom_count = len(scmask.get("scmk1_cc_site_indices") or [])
+
+    # SepTop only treats the mapping as a stable handoff frame when it has at
+    # least four atoms. Conventional RBFE already requires and uses its core.
+    if common_indices and (not septop or mapped_atom_count > 3):
+        return _combine_handoff_masks([indices_to_selection(common_indices)])
+
+    masks: list[str] = []
+    if septop:
+        guard_path = next(
+            (
+                path
+                for path in (
+                    window_dir / "boresch_anchor_guard.json",
+                    window_dir.parent / "x-1" / "boresch_anchor_guard.json",
+                )
+                if path.exists()
+            ),
+            window_dir / "boresch_anchor_guard.json",
+        )
+        masks = _septop_guard_anchor_masks(
+            guard_path,
+            ref_resids=(ref_resid, ref_resid + 1),
+            alt_resids=(ref_resid + 2, ref_resid + 3),
+        )
+    if not masks:
+        masks = _first_heavy_atom_masks(
+            vac_pdb,
+            (ref_resid, ref_resid + 1, ref_resid + 2, ref_resid + 3),
+        )
+        logger.warning(
+            "[fe_handoff] RBFE common core/Boresch anchors were unavailable; "
+            "using the first three heavy atoms of each ligand copy."
+        )
+    return _combine_handoff_masks(masks)
+
+
+def _apply_fe_handoff_restraint(
+    mdin_path: Path,
+    *,
+    restraint_mask: str,
+    total_steps: int,
+    prmtop_path: Path | None = None,
+    start_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_START,
+    end_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_END,
+    stages: int = DEFAULT_FE_HANDOFF_STAGES,
+) -> list[Path]:
+    """Write staged target-window EQ inputs with independent DUM/ligand weights.
+
+    AMBER's ``&wt type='REST'`` schedule scales NMR restraints from ``DISANG``;
+    it does not vary ``ntr`` Cartesian restraint weights.  Use short, restart-
+    chained stages and legacy GROUP input instead.  Every DUM residue keeps the
+    original EQ positional force while the ligand handoff group decreases from
+    ``start_weight`` to ``end_weight``.
+    """
+    total_steps = int(total_steps)
+    if total_steps <= 0:
+        raise ValueError("FE handoff total_steps must be positive")
+    stages = min(int(stages), total_steps)
+    if stages < 2:
+        raise ValueError("FE handoff requires at least two restraint stages")
+
+    base_text = mdin_path.read_text()
+    # A prior build may already have converted restraintmask to legacy GROUP
+    # input.  Everything after this sentinel is generated restraint data.
+    base_text = re.split(r"(?m)^&end\s*$", base_text, maxsplit=1)[0]
+    wt_match = re.search(
+        r"\brestraint_wt\s*=\s*"
+        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eEdD][+-]?\d+)?)",
+        base_text,
+        flags=re.IGNORECASE,
+    )
+    dum_weight = float(wt_match.group(1).replace("D", "E").replace("d", "e")) if wt_match else 10.0
+
+    prmtop_path = prmtop_path or _find_prmtop_for_masks(mdin_path.parent)
+    if prmtop_path is None:
+        vac_pdb = mdin_path.parent / "vac.pdb"
+        if vac_pdb.exists():
+            prmtop_path = vac_pdb
+    if prmtop_path is None or not prmtop_path.exists():
+        raise FileNotFoundError(
+            f"A topology is required for independent DUM/ligand handoff restraints: {mdin_path}"
+        )
+    parm = pmd.load_file(prmtop_path.as_posix())
+    dum_indices = [
+        index + 1
+        for index, atom in enumerate(parm.atoms)
+        if str(atom.residue.name).strip().upper() == "DUM"
+    ]
+    if not dum_indices:
+        raise ValueError(f"No DUM atoms found in {prmtop_path}")
+    dum_index_set = set(dum_indices)
+    ligand_selection = AmberMask(parm, restraint_mask).Selection()
+    ligand_indices = [
+        index + 1
+        for index, selected in enumerate(ligand_selection)
+        if selected > 0 and index + 1 not in dum_index_set
+    ]
+    if not ligand_indices:
+        raise ValueError(
+            f"The FE handoff mask selected no non-DUM atoms: {restraint_mask!r}"
+        )
+
+    def group_lines(title: str, weight: float, indices: Sequence[int]) -> list[str]:
+        lines = [title, _format_restraint_weight(weight)]
+        ranges = _merge_consecutive(sorted(set(int(index) for index in indices)))
+        for offset in range(0, len(ranges), 7):
+            parts = [
+                str(value)
+                for start, end in ranges[offset : offset + 7]
+                for value in (start, end)
+            ]
+            lines.append("ATOM " + " ".join(parts))
+        lines.append("END")
+        return lines
+
+    def render_stage(*, stage_index: int, stage_steps: int, ligand_weight: float) -> str:
+        replacements = {
+            "irest": "0" if stage_index == 0 else "1",
+            "ntx": "1" if stage_index == 0 else "5",
+            "nstlim": str(stage_steps),
+            "ntwx": "0",
+            "ntwv": "0",
+            "nmropt": "1",
+            "ntr": "1",
+            # GROUP records below carry the actual per-group force constants.
+            "restraint_wt": f"{dum_weight:.8g}",
+        }
+        seen = {key: False for key in replacements}
+        out: list[str] = []
+        in_cntrl = False
+        for line in base_text.splitlines(True):
+            if line.startswith("! FE target-window handoff stage"):
+                continue
+            if re.match(r"\s*&cntrl\b", line, flags=re.IGNORECASE):
+                in_cntrl = True
+            if in_cntrl and re.match(r"\s*/\s*$", line):
+                for key, value in replacements.items():
+                    if not seen[key]:
+                        out.append(f"  {key} = {value},\n")
+                in_cntrl = False
+            elif in_cntrl and re.search(
+                r"\brestraintmask\s*=", line, flags=re.IGNORECASE
+            ):
+                continue
+            elif in_cntrl:
+                for key, value in replacements.items():
+                    if re.search(rf"\b{re.escape(key)}\s*=", line, flags=re.IGNORECASE):
+                        line = f"  {key} = {value},\n"
+                        seen[key] = True
+                        break
+            if re.search(
+                r"\btype\s*=\s*['\"]REST['\"]", line, flags=re.IGNORECASE
+            ):
+                continue
+            if re.search(
+                r"\btype\s*=\s*['\"]DUMPFREQ['\"]", line, flags=re.IGNORECASE
+            ):
+                line = re.sub(
+                    r"\bistep1\s*=\s*[0-9]+",
+                    f"istep1={stage_steps}",
+                    line,
+                    flags=re.IGNORECASE,
+                )
+            out.append(line)
+
+        comment = (
+            f"! FE target-window handoff stage {stage_index + 1}/{stages}: "
+            f"DUM={dum_weight:.8g}, ligand={ligand_weight:.8g} kcal/mol/A^2\n"
+        )
+        rendered = comment + "".join(out)
+        if not rendered.endswith("\n"):
+            rendered += "\n"
+        rendered += "&end\n"
+        blocks = group_lines(
+            "FE constant DUM positional restraint", dum_weight, dum_indices
+        )
+        if ligand_weight > 0.0:
+            blocks.extend(
+                group_lines(
+                    "FE ligand anchor/common-core handoff positional restraint",
+                    ligand_weight,
+                    ligand_indices,
+                )
+            )
+        blocks.append("END")
+        return rendered + "\n".join(blocks) + "\n"
+
+    base_steps, remainder = divmod(total_steps, stages)
+    stage_steps = [base_steps + (1 if index < remainder else 0) for index in range(stages)]
+    weights = np.linspace(float(start_weight), float(end_weight), num=stages)
+    for stale in mdin_path.parent.glob("eq-handoff-*.in"):
+        stale.unlink()
+
+    paths: list[Path] = []
+    stage_records: list[dict[str, object]] = []
+    for index, (steps, weight) in enumerate(zip(stage_steps, weights)):
+        path = (
+            mdin_path
+            if index == stages - 1
+            else mdin_path.parent / f"eq-handoff-{index:02d}.in"
+        )
+        path.write_text(
+            render_stage(
+                stage_index=index,
+                stage_steps=int(steps),
+                ligand_weight=float(weight),
+            )
+        )
+        paths.append(path)
+        stage_records.append(
+            {
+                "input": path.name,
+                "steps": int(steps),
+                "dum_weight": dum_weight,
+                "ligand_weight": float(weight),
+            }
+        )
+
+    (mdin_path.parent / "eq-handoff.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "total_steps": total_steps,
+                "reference_restart": "eq_init.rst7",
+                "dum_atom_indices": dum_indices,
+                "ligand_atom_indices": ligand_indices,
+                "stages": stage_records,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return paths
+
+
+def _fe_eq_cache_tag(comp: str, win: int) -> str:
+    phase = "seed" if win == -1 else "handoff"
+    return f"{comp}-{phase}-eq.in"
+
+
 def _maybe_extra_mask(
     ctx: BuildContext, work: Path, *, resid_shift: int = 0
 ) -> tuple[Optional[str], float]:
@@ -474,8 +873,63 @@ def _maybe_extra_mask(
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
-def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 10000, n_lambdas = 5):
-    dynlmb = 1 / (n_lambdas-1)
+
+_FE_WATER_RESNAMES = {"WAT", "HOH", "SOL", "TIP3", "TIP3P", "TIP4P", "SPC", "SPCE"}
+
+
+def _pdb_atom_record_count(pdb_path: Path) -> int:
+    return sum(
+        1
+        for line in pdb_path.read_text().splitlines()
+        if line.startswith(("ATOM", "HETATM"))
+    )
+
+
+def _leading_nonwater_pdb_atom_count(pdb_path: Path) -> int:
+    count = 0
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+        if line[17:20].strip().upper() in _FE_WATER_RESNAMES:
+            break
+        count += 1
+    return count
+
+
+def _fe_ntwprt_atom_count(window_dir: Path, all_atoms: str) -> int:
+    full_pdb = window_dir / "full.pdb"
+    if str(all_atoms).lower() != "no":
+        if not full_pdb.exists():
+            raise FileNotFoundError(f"Missing required file: {full_pdb}")
+        return _pdb_atom_record_count(full_pdb)
+
+    vac_pdb = window_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    vac_atoms = _pdb_atom_record_count(vac_pdb)
+
+    if not full_pdb.exists():
+        return vac_atoms
+
+    reduced_atoms = _leading_nonwater_pdb_atom_count(full_pdb)
+    if reduced_atoms >= vac_atoms:
+        return reduced_atoms
+
+    logger.warning(
+        "[ntwprt] Leading non-water atom count in {} ({}) is smaller than "
+        "vac.pdb atom count ({}); using vac.pdb count.",
+        full_pdb,
+        reduced_atoms,
+        vac_atoms,
+    )
+    return vac_atoms
+
+
+def build_dyna_steps_run_per_lambda(
+    n_steps_run_per_lambda: int = DEFAULT_FE_SEED_STEPS_PER_STATE,
+    n_lambdas: int = DEFAULT_FE_SEED_LAMBDA_STATES,
+):
+    dynlmb = 1 / (n_lambdas - 1)
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
@@ -687,6 +1141,29 @@ def _write_cmass_dump_block(handle, *, istep1: int | str, disang: str = "disang.
     handle.write("LISTOUT=POUT\n")
 
 
+def _mcwat_fe_enabled(sim) -> bool:
+    value = getattr(sim, "mcwat_fe", "no")
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text in {"yes", "true", "1", "on"}
+
+
+def _write_mcwat_block(handle, mask: str) -> None:
+    handle.write("  mcwat = 1,\n")
+    handle.write("  nmd = 1000,\n")
+    handle.write("  nmc = 1000,\n")
+    handle.write(f"  mcwatmask = \"{mask}\",\n")
+    handle.write("  mcligshift = 15,\n")
+    handle.write("  mcwatretry = 3000,\n")
+    handle.write("  mcresstr = \"WAT\",\n")
+
+
+def _write_mcwat_fe_block(handle, sim, mask: str) -> None:
+    if _mcwat_fe_enabled(sim):
+        _write_mcwat_block(handle, mask)
+
+
 def _component_l_cmass_dumpfreq(ntwx: int) -> int:
     """Use denser restraint-energy traces for component l than trajectory output."""
     return max(1, min(int(ntwx), 1000))
@@ -886,13 +1363,11 @@ def _sim_files_d_sdr_charge_transfer(
         )
 
     n_steps_run_per_lambda, _n_lambdas, dynlmb, n_steps_run = (
-        build_dyna_steps_run_per_lambda(
-            n_lambdas=len(lambdas) if len(lambdas) > 1 else 5
-        )
+        build_dyna_steps_run_per_lambda()
     )
     if win != -1:
-        n_steps_run = 10000
-        n_steps_run_per_lambda = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     eq_path = windows_dir / "eq.in"
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
@@ -943,15 +1418,26 @@ def _sim_files_d_sdr_charge_transfer(
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    if win != -1:
+        _apply_fe_handoff_restraint(
+            eq_path,
+            restraint_mask=_ligand_handoff_restraint_mask(
+                window_dir=windows_dir,
+                vac_pdb=vac_pdb,
+                ligand_resids=ligand_resids,
+            ),
+            total_steps=n_steps_run,
+        )
     _apply_restraintmask_length_limit(
         eq_path,
         prmtop_for_masks,
         cache_dir=cache_dir,
-        cache_tag=f"{comp}-eq.in",
+        cache_tag=_fe_eq_cache_tag(comp, win),
         cache_master=cache_master,
     )
 
     mdin_template = windows_dir / "mdin-template"
+    chunk_steps = _fe_production_chunk_steps(int(steps2))
     with template_mdin.open("rt") as fin, mdin_template.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
         for line in fin:
@@ -962,7 +1448,7 @@ def _sim_files_d_sdr_charge_transfer(
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
-                .replace("_num-steps_", str(steps2))
+                .replace("_num-steps_", str(chunk_steps))
             )
             line = _replace_d_sdr_tokens(
                 line,
@@ -974,6 +1460,7 @@ def _sim_files_d_sdr_charge_transfer(
             fout.write(line)
 
     with mdin_template.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, f":{mk1}")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
@@ -1108,16 +1595,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[win if win != -1 else 0]
 
-    # Count atoms
-    if all_atoms.lower() == "no":
-        vac_pdb = windows_dir / "vac.pdb"
-        if not vac_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-        vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
-    else:
-        full_pdb = windows_dir / "full.pdb"
-        vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"
+    # Count the FE trajectory prefix: reduced trajectories keep the non-water
+    # system prefix, including ions, while all_atoms=yes writes the full system.
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ntwprt_atoms = _fe_ntwprt_atom_count(windows_dir, all_atoms)
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
@@ -1126,13 +1609,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if not ligand_resids:
         raise ValueError(f"No residues with resname {mol!r} found in {vac_pdb}")
     ref_resid = ligand_resids[0]
-    bulk_resid = ligand_resids[1] if len(ligand_resids) > 1 else ref_resid
     ref_lig_in_site_mask = f':{int(ref_resid)}'
-    solvent_ligand_restraint_mask = _solvent_ligand_restraint_mask(
-        vac_pdb,
-        resid=int(bulk_resid),
-        comp=comp,
-    )
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
@@ -1150,7 +1627,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         _sim_files_d_sdr_charge_transfer(
             ctx,
             lambdas,
-            vac_atoms=vac_atoms,
+            vac_atoms=ntwprt_atoms,
             vac_pdb=vac_pdb,
             ligand_resids=ligand_resids_ordered,
             non_loop_mask=non_loop_mask,
@@ -1172,8 +1649,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # it will gradually increase lambda value
         n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
         if win != -1:
-            n_steps_run = 10000
-            n_steps_run_per_lambda = 10000
+            n_steps_run = fe_window_equil_steps(0.002)
+            n_steps_run_per_lambda = n_steps_run
         out_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -1204,7 +1681,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", str(n_steps_run))
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1225,7 +1702,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("  nmd = 1000,\n")
             mdin.write("  nmc = 1000,\n")
             mdin.write(f"  mcwatmask = \"{ref_lig_in_site_mask}\",\n")
-            mdin.write("  mcligshift = 10,\n")
+            mdin.write("  mcligshift = 15,\n")
             mdin.write("  mcwatretry = 3000,\n")
             mdin.write("  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
@@ -1237,31 +1714,35 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        if win != -1:
+            _apply_fe_handoff_restraint(
+                out_path,
+                restraint_mask=_ligand_handoff_restraint_mask(
+                    window_dir=windows_dir,
+                    vac_pdb=vac_pdb,
+                    ligand_resids=ligand_resids_ordered,
+                ),
+                total_steps=n_steps_run,
+            )
         _apply_restraintmask_length_limit(
             out_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag=f"{comp}-eq.in",
+            cache_tag=_fe_eq_cache_tag(comp, win),
             cache_master=cache_master,
         )
 
         # end eq.in
 
         # write mdin-template
-        n_steps_run = str(steps2)
+        n_steps_run = str(_fe_production_chunk_steps(int(steps2)))
         out_path = windows_dir / f"mdin-template"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
-                if "restraintmask" in line:
-                    rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
-                    line = (
-                        "restraintmask = "
-                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
-                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1270,6 +1751,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            _write_mcwat_fe_block(mdin, sim, ref_lig_in_site_mask)
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
@@ -1328,7 +1810,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        n_steps_run = 20000
+        n_steps_run = fe_window_equil_steps(0.002)
         eq_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
@@ -1355,7 +1837,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         #line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1370,34 +1852,33 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        if win != -1:
+            _apply_fe_handoff_restraint(
+                eq_path,
+                restraint_mask=_ligand_handoff_restraint_mask(
+                    window_dir=windows_dir,
+                    vac_pdb=vac_pdb,
+                    ligand_resids=ligand_resids_ordered,
+                ),
+                total_steps=n_steps_run,
+            )
         _apply_restraintmask_length_limit(
             eq_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag=f"{comp}-eq.in",
+            cache_tag=_fe_eq_cache_tag(comp, win),
             cache_master=cache_master,
         )
 
         # production template
-        n_steps_run = str(steps2)
+        n_steps_run = str(_fe_production_chunk_steps(int(steps2)))
         out_path = windows_dir / "mdin-template"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
-                if "restraintmask" in line:
-                    rm = (
-                        line.split("=", 1)[1]
-                        .strip()
-                        .rstrip(",")
-                        .replace("'", "")
-                    )
-                    line = (
-                        "restraintmask = "
-                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
-                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
-                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
                     .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
@@ -1405,6 +1886,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            _write_mcwat_fe_block(mdin, sim, ref_lig_in_site_mask)
             mdin.write(f" \n mbar_states = {len(lambdas)}\n")
             mdin.write("  mbar_lambda =")
             for lbd in lambdas:
@@ -1517,10 +1999,17 @@ def _write_l_mdin_from_equil_template(
     total_steps: int,
     ntwx: int,
     eq_seed: bool,
+    chunk_steps: int | None = None,
     rest_ramp: tuple[float, float] | None = None,
     cmass_dumpfreq: int | None = None,
+    mcwat_fe_mask: str | None = None,
 ) -> None:
     inserted_rest_weight = False
+    mcwat_fe = bool(mcwat_fe_mask)
+    mcwat_mask = mcwat_fe_mask or ""
+    saw_mcwat = False
+    inserted_mcwat_block = False
+    nstlim_steps = int(chunk_steps if chunk_steps is not None else total_steps)
     with src.open("rt") as fin, dst.open("wt") as fout:
         if not eq_seed:
             fout.write(f"! total_steps={total_steps}\n")
@@ -1537,11 +2026,22 @@ def _write_l_mdin_from_equil_template(
                 elif re.search(r"\bdt\s*=", line):
                     line = "  dt = 0.002,\n"
             if re.search(r"\bmcwat\s*=", line):
-                line = "  mcwat = 0,\n"
+                line = "  mcwat = 1,\n" if mcwat_fe else "  mcwat = 0,\n"
+                saw_mcwat = True
+            elif mcwat_fe and re.search(r"\bmcwatmask\s*=", line):
+                line = f"  mcwatmask = \"{mcwat_mask}\",\n"
             elif re.search(r"\bnstlim\s*=", line):
-                line = f"  nstlim = {int(total_steps)},\n"
+                line = f"  nstlim = {nstlim_steps},\n"
             elif re.search(r"\binfe\s*=", line):
                 line = "  infe = 0,\n"
+            elif (
+                mcwat_fe
+                and not saw_mcwat
+                and not inserted_mcwat_block
+                and re.match(r"\s*/\s*$", line)
+            ):
+                _write_mcwat_block(fout, mcwat_mask)
+                inserted_mcwat_block = True
             if rest_ramp is not None and "type='DUMPFREQ'" in line and not inserted_rest_weight:
                 fout.write(
                     " &wt type='REST', istep1=0, "
@@ -1556,13 +2056,15 @@ def _write_l_mdin_from_equil_template(
                     line,
                 )
             line = (
-                line.replace("_num-steps_", str(int(total_steps)))
+                line.replace("_num-steps_", str(nstlim_steps))
                 .replace("_lig_name_", mol)
                 .replace("disang_file", "disang")
             )
             for key, value in replacements.items():
                 line = line.replace(key, value)
             fout.write(line)
+        if mcwat_fe and not saw_mcwat and not inserted_mcwat_block:
+            _write_mcwat_block(fout, mcwat_mask)
 
 
 @register_sim_files("l")
@@ -1642,13 +2144,12 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         },
     )
 
-    n_lambdas = max(2, len(lambdas))
-    n_steps_run_per_lambda, _, _, n_steps_run = build_dyna_steps_run_per_lambda(
-        n_lambdas=n_lambdas
+    n_steps_run_per_lambda, _, _, n_steps_run = (
+        build_dyna_steps_run_per_lambda()
     )
     if win != -1:
-        n_steps_run_per_lambda = 10000
-        n_steps_run = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     _write_l_mdin_from_equil_template(
         src=amber_dir / "mdin-equil",
@@ -1661,11 +2162,22 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         rest_ramp=(0.0, 1.0) if win == -1 else None,
         cmass_dumpfreq=n_steps_run_per_lambda,
     )
+    if win != -1:
+        vac_pdb = windows_dir / "vac.pdb"
+        _apply_fe_handoff_restraint(
+            windows_dir / "eq.in",
+            restraint_mask=_ligand_handoff_restraint_mask(
+                window_dir=windows_dir,
+                vac_pdb=vac_pdb,
+                ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
+            ),
+            total_steps=n_steps_run,
+        )
     _apply_restraintmask_length_limit(
         windows_dir / "eq.in",
         prmtop_for_masks,
         cache_dir=cache_dir,
-        cache_tag="l-eq.in",
+        cache_tag=_fe_eq_cache_tag(comp, win),
         cache_master=cache_master,
     )
 
@@ -1677,7 +2189,9 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         total_steps=n_steps,
         ntwx=ntwx,
         eq_seed=False,
+        chunk_steps=_fe_production_chunk_steps(n_steps),
         cmass_dumpfreq=ntwx,
+        mcwat_fe_mask=f":{mol}" if _mcwat_fe_enabled(sim) else None,
     )
     _apply_restraintmask_length_limit(
         windows_dir / "mdin-template",
@@ -1745,19 +2259,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
 
-    # Count atoms (vac or full)
+    # Count the FE trajectory prefix: reduced trajectories keep the non-water
+    # system prefix, including ions, while all_atoms=yes writes the full system.
     all_atoms = sim.all_atoms
-    if all_atoms.lower() == "no":
-        vac_pdb = windows_dir / "vac.pdb"
-        if not vac_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-        vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
-    else:
-        full_pdb = windows_dir / "full.pdb"
-        if not full_pdb.exists():
-            raise FileNotFoundError(f"Missing required file: {full_pdb}")
-        vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ntwprt_atoms = _fe_ntwprt_atom_count(windows_dir, all_atoms)
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
@@ -1851,8 +2359,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     eq_path = windows_dir / "eq.in"
     n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
     if win != -1:
-        n_steps_run = 10000
-        n_steps_run_per_lambda = 10000
+        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda = n_steps_run
 
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -1893,7 +2401,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-atoms_", str(ntwprt_atoms))
                 .replace("_num-steps_", str(n_steps_run))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("timk1", mk1)
@@ -1917,7 +2425,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write(f"  nmd = 1000,\n")
         mdin.write(f"  nmc = 1000,\n")
         mdin.write(f"  mcwatmask = \"{lig_in_site_mask}\",\n")
-        mdin.write(f"  mcligshift = 10,\n")
+        mdin.write(f"  mcligshift = 15,\n")
         mdin.write(f"  mcwatretry = 3000,\n")
         mdin.write(f"  mcresstr = \"WAT\",\n")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
@@ -1929,15 +2437,28 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    if win != -1:
+        _apply_fe_handoff_restraint(
+            eq_path,
+            restraint_mask=_rbfe_handoff_restraint_mask(
+                window_dir=windows_dir,
+                vac_pdb=vac_pdb,
+                scmask=scmk_dict,
+                ref_resid=int(ref_resid),
+                septop=septop,
+            ),
+            total_steps=n_steps_run,
+        )
     _apply_restraintmask_length_limit(
         eq_path,
         prmtop_for_masks,
         cache_dir=cache_dir,
-        cache_tag="x-eq.in",
+        cache_tag=_fe_eq_cache_tag(comp, win),
         cache_master=cache_master,
     )
 
     # --- mdin-template (production) ---
+    chunk_steps = _fe_production_chunk_steps(int(steps2))
     out_path = windows_dir / "mdin-template"
     with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
@@ -1950,8 +2471,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-atoms_", str(vac_atoms))
-                .replace("_num-steps_", str(steps2))
+                .replace("_num-atoms_", str(ntwprt_atoms))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("timk1", str(mk1))
                 .replace("timk2", str(mk2))
@@ -1963,6 +2484,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             if septop and re.search(r"\bgti_vdw_exp\b", line):
                 fout.write("  gti_bat_sc      = 1\n")
     with out_path.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, lig_in_site_mask)
         mdin.write(f" \n  mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
@@ -2139,7 +2661,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", "5000")
+                .replace("_num-steps_", str(fe_window_equil_steps(0.001)))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2156,15 +2678,26 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    if ctx.win != -1:
+        _apply_fe_handoff_restraint(
+            eq_path,
+            restraint_mask=_ligand_handoff_restraint_mask(
+                window_dir=windows_dir,
+                vac_pdb=vac_pdb,
+                ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
+            ),
+            total_steps=fe_window_equil_steps(0.001),
+        )
     _apply_restraintmask_length_limit(
         eq_path,
         prmtop_for_masks,
         cache_dir=cache_dir,
-        cache_tag="y-eq.in",
+        cache_tag=_fe_eq_cache_tag("y", ctx.win),
         cache_master=cache_master,
     )
 
-    # production template (single long segment)
+    # production template
+    chunk_steps = _fe_production_chunk_steps(int(n_steps))
     out_path = windows_dir / "mdin-template"
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
@@ -2184,7 +2717,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", str(n_steps))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2193,6 +2726,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with out_path.open("a") as mdin:
+        _write_mcwat_fe_block(mdin, sim, f":{mol}")
         mdin.write(f" \n mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:
@@ -2222,6 +2756,8 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     sim = ctx.sim
     mol = ctx.residue_name
     windows_dir = ctx.window_dir
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     temperature = sim.temperature
     n_steps = sim.dic_n_steps["m"]
@@ -2231,6 +2767,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk1 = 2  # ligand-only marker convention
 
     amber_dir = ctx.amber_dir
+    vac_pdb = windows_dir / "vac.pdb"
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # mini.in from ligand template
@@ -2273,7 +2810,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", "5000")
+                .replace("_num-steps_", str(fe_window_equil_steps(0.001)))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2290,22 +2827,33 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    if ctx.win != -1:
+        _apply_fe_handoff_restraint(
+            eq_path,
+            restraint_mask=_ligand_handoff_restraint_mask(
+                window_dir=windows_dir,
+                vac_pdb=vac_pdb,
+                ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
+            ),
+            total_steps=fe_window_equil_steps(0.001),
+        )
     _apply_restraintmask_length_limit(
         eq_path,
         prmtop_for_masks,
         cache_dir=cache_dir,
-        cache_tag="m-eq.in",
+        cache_tag=_fe_eq_cache_tag("m", ctx.win),
         cache_master=cache_master,
     )
 
-    # production template (single long segment)
+    # production template
+    chunk_steps = _fe_production_chunk_steps(int(n_steps))
     out_path = windows_dir / "mdin-template"
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
         for line in fin:
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", str(n_steps))
+                .replace("_num-steps_", str(chunk_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")

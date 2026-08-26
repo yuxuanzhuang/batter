@@ -47,8 +47,10 @@ def render_batch_slurm_script(
         },
     )
     out_body.write_text(body_text)
+    out.with_suffix(out.suffix + ".body").write_text(body_text)
     try:
         out_body.chmod(0o755)
+        out.with_suffix(out.suffix + ".body").chmod(0o755)
     except Exception:
         pass
     return out

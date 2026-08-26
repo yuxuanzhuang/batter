@@ -12,6 +12,11 @@ pmd = pytest.importorskip("parmed")
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import box
+from batter._internal.ops.helpers import (
+    merge_first_n_and_lipid_fragments_in_prmtop,
+    revised_resids_for_lipid_fragments,
+    select_protein_com_atoms,
+)
 
 
 def _pdb_atom(
@@ -31,6 +36,213 @@ def _pdb_atom(
     )
 
 
+def _format_prmtop_ints(values: list[int], per_line: int = 10) -> str:
+    return "\n".join(
+        "".join(f"{value:8d}" for value in values[i : i + per_line])
+        for i in range(0, len(values), per_line)
+    )
+
+
+def _format_prmtop_names(values: list[str], per_line: int = 20) -> str:
+    return "\n".join(
+        "".join(f"{value:<4}" for value in values[i : i + per_line])
+        for i in range(0, len(values), per_line)
+    )
+
+
+def test_first_atom_position_uses_first_atom_not_center_of_mass(tmp_path: Path) -> None:
+    pdb = tmp_path / "lig.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 1.0, 2.0, 3.0, "C"),
+                _pdb_atom(2, "C2", "LIG", "A", 1, 7.0, 8.0, 9.0, "C"),
+                "END\n",
+            ]
+        )
+    )
+    universe = mda.Universe(str(pdb))
+
+    np.testing.assert_allclose(
+        box._first_atom_position(universe.select_atoms("resname LIG")),
+        [1.0, 2.0, 3.0],
+    )
+
+
+def test_bulk_ligand_box_z_expands_to_maximum_plus_four(tmp_path: Path) -> None:
+    pdb = tmp_path / "build.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.0, 0.0, 10.0, "C"),
+                "TER\n",
+                _pdb_atom(2, "C1", "LIG", "A", 2, 0.0, 0.0, 126.5, "C"),
+                _pdb_atom(3, "H1", "LIG", "A", 2, 0.0, 0.0, 126.8, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    adjusted, bulk_z_max = box._expanded_box_z_for_bulk_ligand(
+        pdb,
+        "lig",
+        125.7,
+    )
+
+    assert bulk_z_max == pytest.approx(126.8)
+    assert adjusted == pytest.approx(130.8)
+
+
+def test_bulk_ligand_box_z_stays_unchanged_when_ligand_is_below_lz(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "X", "ION", "A", 1, 0.0, 0.0, 10.0, "X"),
+                "TER\n",
+                _pdb_atom(2, "X", "ION", "A", 2, 0.0, 0.0, 124.0, "X"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    adjusted, bulk_z_max = box._expanded_box_z_for_bulk_ligand(
+        pdb,
+        "ION",
+        125.0,
+    )
+
+    assert bulk_z_max == pytest.approx(124.0)
+    assert adjusted == pytest.approx(125.0)
+
+
+def test_select_protein_com_atoms_uses_non_loop_calpha_subset(tmp_path: Path) -> None:
+    system_root = tmp_path / "execution"
+    manifest_dir = system_root / "all-ligands"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dssp": {
+                    "results": [["-", "H", "H", "H", "H", "-", "E", "E"]]
+                }
+            }
+        )
+    )
+    pdb = tmp_path / "protein_com.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(
+                    resid,
+                    "CA",
+                    "ALA",
+                    "A",
+                    resid,
+                    float(resid),
+                    0.0,
+                    0.0,
+                    "C",
+                )
+                for resid in range(1, 9)
+            ]
+            + ["END\n"]
+        )
+    )
+    universe = mda.Universe(str(pdb))
+
+    selected = select_protein_com_atoms(universe, system_root=system_root)
+
+    assert selected.resids.tolist() == [2, 3, 4, 5]
+    np.testing.assert_allclose(selected.center_of_mass(), [3.5, 0.0, 0.0])
+
+
+def test_select_protein_com_atoms_falls_back_on_dssp_count_mismatch(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "execution"
+    manifest_dir = system_root / "all-ligands"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps({"dssp": {"results": [["H", "H", "H", "H"]]}})
+    )
+    pdb = tmp_path / "protein_com_mismatch.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(
+                    resid,
+                    "CA",
+                    "ALA",
+                    "A",
+                    resid,
+                    float(resid),
+                    0.0,
+                    0.0,
+                    "C",
+                )
+                for resid in range(1, 6)
+            ]
+            + ["END\n"]
+        )
+    )
+
+    selected = select_protein_com_atoms(
+        mda.Universe(str(pdb)),
+        system_root=system_root,
+    )
+
+    assert selected.resids.tolist() == [1, 2, 3, 4, 5]
+
+
+def _write_minimal_prmtop(
+    path: Path,
+    *,
+    atoms_per_molecule: list[int],
+    residue_labels: list[str],
+    residue_pointers: list[int],
+    solvent_pointers: list[int],
+) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "%FLAG RESIDUE_LABEL",
+                "%FORMAT(20a4)",
+                _format_prmtop_names(residue_labels),
+                "%FLAG RESIDUE_POINTER",
+                "%FORMAT(10I8)",
+                _format_prmtop_ints(residue_pointers),
+                "%FLAG ATOMS_PER_MOLECULE",
+                "%FORMAT(10I8)",
+                _format_prmtop_ints(atoms_per_molecule),
+                "%FLAG SOLVENT_POINTERS",
+                "%FORMAT(3I8)",
+                _format_prmtop_ints(solvent_pointers, per_line=3),
+                "",
+            ]
+        )
+    )
+
+
+def _read_prmtop_int_flag(path: Path, flag: str) -> list[int]:
+    lines = path.read_text().splitlines()
+    start = lines.index(f"%FLAG {flag}") + 2
+    end = start
+    while end < len(lines) and not lines[end].startswith("%FLAG"):
+        end += 1
+    values: list[int] = []
+    for line in lines[start:end]:
+        for i in range(0, len(line), 8):
+            chunk = line[i : i + 8].strip()
+            if chunk:
+                values.append(int(chunk))
+    return values
+
+
 def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
     parm = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
@@ -43,6 +255,89 @@ def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     assert parm.parm_data["SOLVENT_POINTERS"] == [1, 1, 2]
     assert parm.parm_data["ATOMS_PER_MOLECULE"] == [len(parm.atoms)]
     assert len(copy.copy(parm).atoms) == len(parm.atoms)
+
+
+def test_merge_first_n_and_lipid_fragments_groups_split_popc(tmp_path: Path) -> None:
+    src = tmp_path / "full.prmtop"
+    out = tmp_path / "full_merged.prmtop"
+    _write_minimal_prmtop(
+        src,
+        atoms_per_molecule=[1, 1, 10, 5, 5, 46, 38, 50, 3],
+        residue_labels=["DUM", "DUM", "PRO", "LIG", "LIG", "PA", "PC", "OL", "WAT"],
+        residue_pointers=[1, 2, 3, 13, 18, 23, 69, 107, 157],
+        solvent_pointers=[9, 9, 9],
+    )
+
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        src.as_posix(),
+        5,
+        ["POPC"],
+        out.as_posix(),
+    )
+
+    assert _read_prmtop_int_flag(out, "ATOMS_PER_MOLECULE") == [22, 134, 3]
+    assert _read_prmtop_int_flag(out, "SOLVENT_POINTERS") == [9, 3, 3]
+
+
+def test_merge_first_n_and_lipid_fragments_leaves_grouped_popc_alone(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "full.prmtop"
+    out = tmp_path / "full_merged.prmtop"
+    _write_minimal_prmtop(
+        src,
+        atoms_per_molecule=[1, 1, 10, 5, 5, 134, 3],
+        residue_labels=["DUM", "DUM", "PRO", "LIG", "LIG", "PA", "PC", "OL", "WAT"],
+        residue_pointers=[1, 2, 3, 13, 18, 23, 69, 107, 157],
+        solvent_pointers=[9, 7, 7],
+    )
+
+    merge_first_n_and_lipid_fragments_in_prmtop(
+        src.as_posix(),
+        5,
+        ["POPC"],
+        out.as_posix(),
+    )
+
+    assert _read_prmtop_int_flag(out, "ATOMS_PER_MOLECULE") == [22, 134, 3]
+    assert _read_prmtop_int_flag(out, "SOLVENT_POINTERS") == [9, 3, 3]
+
+
+def test_revised_resids_for_lipid_fragments_groups_split_popc() -> None:
+    records = [
+        ("ALA", "A", 10),
+        ("LIG", "L", 220),
+        ("PA", "X", 289),
+        ("PC", "X", 290),
+        ("OL", "X", 291),
+        ("PA", "X", 292),
+        ("PC", "X", 293),
+        ("OL", "X", 294),
+        ("WAT", "X", 295),
+    ]
+
+    assert revised_resids_for_lipid_fragments(records, ["POPC"]) == [
+        1,
+        2,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        5,
+    ]
+    assert revised_resids_for_lipid_fragments(records, ["PC", "PA", "OL"]) == [
+        1,
+        2,
+        3,
+        3,
+        3,
+        4,
+        4,
+        4,
+        5,
+    ]
 
 
 def test_restore_reference_hydrogen_coordinates_repairs_existing_lipid_protons(
@@ -125,6 +420,46 @@ def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> No
     )
 
 
+def test_membrane_water_chunks_tile_reference_waters_to_cover_expanded_z(
+    tmp_path: Path,
+) -> None:
+    build_pdb = tmp_path / "build.pdb"
+    build_pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.000, 0.000, 0.000, "C"),
+                "TER\n",
+                _pdb_atom(2, "O", "WAT", "W", 2, 1.000, 1.000, 1.000, "O"),
+                _pdb_atom(3, "H1", "WAT", "W", 2, 1.100, 1.000, 1.000, "H"),
+                _pdb_atom(4, "H2", "WAT", "W", 2, 1.000, 1.100, 1.000, "H"),
+                "TER\n",
+                _pdb_atom(5, "O", "WAT", "W", 3, 2.000, 2.000, 8.000, "O"),
+                _pdb_atom(6, "H1", "WAT", "W", 3, 2.100, 2.000, 8.000, "H"),
+                _pdb_atom(7, "H2", "WAT", "W", 3, 2.000, 2.100, 8.000, "H"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+
+    chunks = box._write_membrane_water_chunks_from_build(
+        tmp_path,
+        ligand_resname="LIG",
+        box=[10.0, 10.0, 15.0],
+        z_max=15.0,
+        reference_z_period=10.0,
+    )
+
+    assert [path.name for path in chunks] == ["solvate_pre_wat_00.pdb"]
+    oxygen_z = [
+        float(line[46:54])
+        for line in chunks[0].read_text().splitlines()
+        if line.startswith("ATOM") and line[12:16].strip() == "O"
+    ]
+    assert sorted(oxygen_z) == pytest.approx([1.0, 8.0, 11.0])
+    assert max(oxygen_z) <= 15.0
+
+
 def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
     data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
     first = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
@@ -147,6 +482,38 @@ def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
     assert sum(atom.charge for atom in combined.residues[1].atoms) == pytest.approx(
         original_charge
     )
+
+
+def test_split_structure_nonwater_then_water_keeps_ions_in_vacuum_prefix(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "full.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                _pdb_atom(1, "C1", "LIG", "A", 1, 0.0, 0.0, 0.0, "C"),
+                _pdb_atom(2, "NA", "Na+", "A", 2, 1.0, 0.0, 0.0, "Na"),
+                _pdb_atom(3, "O", "WAT", "A", 3, 2.0, 0.0, 0.0, "O"),
+                _pdb_atom(4, "H1", "WAT", "A", 3, 2.1, 0.0, 0.0, "H"),
+                _pdb_atom(5, "CL", "Cl-", "A", 4, 3.0, 0.0, 0.0, "Cl"),
+                "TER\n",
+                "END\n",
+            ]
+        )
+    )
+    structure = pmd.load_file(str(pdb))
+
+    nonwater, water, reordered = box._split_structure_nonwater_then_water(structure)
+
+    assert [atom.residue.name for atom in nonwater.atoms] == ["LIG", "Na+", "Cl-"]
+    assert [atom.residue.name for atom in water.atoms] == ["WAT", "WAT"]
+    assert [atom.residue.name for atom in reordered.atoms] == [
+        "LIG",
+        "Na+",
+        "Cl-",
+        "WAT",
+        "WAT",
+    ]
 
 
 def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(
@@ -614,6 +981,118 @@ def test_rewrite_terminal_nme_drops_duplicate_methyl_aliases(tmp_path: Path) -> 
     assert "HH31 NME" not in text
 
 
+def test_rewrite_ace_cap_aliases_for_leap(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  CAY ACE A   3       0.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      2  HY1 ACE A   3       0.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      3  HY2 ACE A   3       0.000   0.500   0.000  1.00  0.00           H",
+                "ATOM      4  HY3 ACE A   3       0.000   0.000   0.500  1.00  0.00           H",
+                "ATOM      5  C   ACE A   3       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      6  OY  ACE A   3       1.500   0.000   0.000  1.00  0.00           O",
+                "ATOM      7  N   GLU A   3       2.000   0.000   0.000  1.00  0.00           N",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_ace_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " CH3 ACE A   3" in text
+    assert " H1  ACE A   3" in text
+    assert " H2  ACE A   3" in text
+    assert " H3  ACE A   3" in text
+    assert " O   ACE A   3" in text
+    assert " CAY ACE" not in text
+    assert " HY1 ACE" not in text
+    assert " OY  ACE" not in text
+
+
+def test_rewrite_ace_cap_drops_duplicate_alias_atoms(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  H1  ACE A   3       0.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      2  CH3 ACE A   3       0.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  H2  ACE A   3       0.000   0.500   0.000  1.00  0.00           H",
+                "ATOM      4  H3  ACE A   3       0.000   0.000   0.500  1.00  0.00           H",
+                "ATOM      5  C   ACE A   3       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      6  O   ACE A   3       1.500   0.000   0.000  1.00  0.00           O",
+                "ATOM      7  CAY ACE A   3       0.010   0.010   0.010  1.00  0.00           C",
+                "ATOM      8  OY  ACE A   3       1.510   0.010   0.010  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_ace_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert text.count(" CH3 ACE A   3") == 1
+    assert text.count(" O   ACE A   3") == 1
+    assert " CAY ACE" not in text
+    assert " OY  ACE" not in text
+
+
+def test_rewrite_cterminal_oxygen_alias_drops_duplicate_o1(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   ASP A 298       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  ASP A 298       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   ASP A 298       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   ASP A 298       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OXT ASP A 298       2.500   1.000   0.000  1.00  0.00           O",
+                "ATOM      6  O1  ASP A 298       2.510   1.010   0.010  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_cterminal_oxygen_aliases_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " OXT ASP A 298" in text
+    assert " O1  ASP A 298" not in text
+
+
+def test_rewrite_cterminal_oxygen_alias_renames_ot_pair(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   SER B   7       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  SER B   7       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   SER B   7       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  OT1 SER B   7       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OT2 SER B   7       2.500   1.000   0.000  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_cterminal_oxygen_aliases_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " O   SER B   7" in text
+    assert " OXT SER B   7" in text
+    assert " OT1 SER" not in text
+    assert " OT2 SER" not in text
+
+
 def test_rewrite_terminal_amide_cap_after_high_residues_uses_chain_local_id(
     tmp_path: Path,
 ) -> None:
@@ -808,37 +1287,46 @@ def test_renum_chain_ids_for_shifted_fe_protein_uses_sequence(
     ]
 
 
-def test_write_identity_amber_renum_preserves_pdb_residue_records(
-    tmp_path: Path,
+def test_pdb4amber_is_required_for_box(tmp_path: Path, monkeypatch) -> None:
+    input_pdb = tmp_path / "build.pdb"
+    output_pdb = tmp_path / "build_amber.pdb"
+    input_pdb.write_text("ATOM\n")
+    monkeypatch.setattr(box, "_executable_path", lambda cmd: None)
+
+    with pytest.raises(FileNotFoundError, match="pdb4amber is required"):
+        box._run_pdb4amber_for_box(input_pdb, output_pdb, working_dir=tmp_path)
+
+    assert not output_pdb.exists()
+    assert not (tmp_path / "build_amber_renum.txt").exists()
+
+
+def test_pdb4amber_for_box_resolves_from_active_python_environment(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    pdb = tmp_path / "build.pdb"
-    renum = tmp_path / "build_amber_renum.txt"
-    pdb.write_text(
-        "".join(
-            [
-                _pdb_atom(1, "DU", "DUM", "D", 1, 0, 0, 0, "C"),
-                "TER\n",
-                _pdb_atom(2, "DU", "DUM", "D", 2, 0, 0, 0, "C"),
-                "TER\n",
-                _pdb_atom(3, "N", "LEU", "A", 3, 0, 0, 0, "N"),
-                _pdb_atom(4, "CA", "LEU", "A", 3, 0, 0, 0, "C"),
-                _pdb_atom(5, "N", "HID", "B", 217, 0, 0, 0, "N"),
-                _pdb_atom(6, "CA", "HID", "B", 217, 0, 0, 0, "C"),
-                _pdb_atom(7, "O", "WAT", "W", 999, 0, 0, 0, "O"),
-                "TER\n",
-                "END\n",
-            ]
-        )
+    env_bin = tmp_path / "env" / "bin"
+    env_bin.mkdir(parents=True)
+    python = env_bin / "python"
+    python.write_text("#!/bin/sh\n")
+    pdb4amber = env_bin / "pdb4amber"
+    pdb4amber.write_text("#!/bin/sh\n")
+    pdb4amber.chmod(0o755)
+    input_pdb = tmp_path / "build.pdb"
+    output_pdb = tmp_path / "build_amber.pdb"
+    input_pdb.write_text("ATOM\n")
+    commands: list[tuple[str, Path | None]] = []
+
+    monkeypatch.setattr(box.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(box.sys, "executable", str(python))
+    monkeypatch.setattr(
+        box,
+        "run_with_log",
+        lambda cmd, working_dir=None: commands.append((cmd, working_dir)),
     )
 
-    box._write_identity_amber_renum(pdb, renum)
+    box._run_pdb4amber_for_box(input_pdb, output_pdb, working_dir=tmp_path)
 
-    assert renum.read_text().splitlines() == [
-        "DUM D     1 DUM     1",
-        "DUM D     2 DUM     2",
-        "LEU A     3 LEU     3",
-        "HID B   217 HID   217",
-        "WAT W   999 WAT   999",
+    assert commands == [
+        (f"{pdb4amber} -i {input_pdb.name} -o {output_pdb.name} -y", tmp_path),
     ]
 
 

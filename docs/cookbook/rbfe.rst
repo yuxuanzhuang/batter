@@ -46,20 +46,22 @@ Anchor selection
 receptor anchors heuristically during system preparation:
 
 * For ABFE/RBFE and MD runs with at least one real ligand, BATTER uses the first
-  real ligand pose as the binding-site reference. It prefers stable receptor
-  backbone atoms near the ligand, keeps P1-P2 and P2-P3 separated by the usual
-  BATTER distance guideline, and scores P1 using nearby ligand interaction
-  atoms.
+  real ligand pose as the binding-site reference. It prefers stable non-loop
+  receptor Cα atoms near the ligand, keeps P1-P2 and P2-P3 separated by the
+  usual BATTER distance guideline, and scores P1 using nearby ligand interaction
+  atoms. During automatic selection, a detected salt bridge can define P1/L1;
+  L2/L3 then prefer ring atoms connected to at least two heavy atoms, atoms with
+  more than two heavy-atom connections, and other nonterminal heavy atoms.
 * For apo-only MD runs, BATTER uses a protein-only heuristic that chooses a
   stable, non-degenerate receptor-anchor triplet without relying on dummy
   ligand coordinates.
 
-If you know the receptor interaction that should define the Boresch reference,
-provide one selection. BATTER treats that atom as P1 and chooses P2/P3
-automatically; prefer the binding-site Cα of a residue associated with a
-conserved ligand interaction, such as the residue forming a salt bridge. Provide
-three selections only when you need fully manual P1/P2/P3 geometry. Resolved
-global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
+One selection is a P1 hint. Two selections are treated as incomplete and only
+the first is retained while BATTER chooses P2/P3 together. Three distinct,
+unambiguous selections define fully manual P1/P2/P3 geometry; invalid or
+ambiguous input warns and falls back to automatic selection. If no triplet meets
+the preferred spacing, compact systems use the best non-collinear frame. The
+resolved global anchors are stored in ``executions/<run_id>/all-ligands/manifest.json``
 under ``anchors`` and ``anchor_atom_selections``. Prepared-system anchor masks
 used later by equilibration and FE setup are written to each ligand's
 ``equil/anchors.json``.
@@ -321,10 +323,12 @@ The HTML view is the primary network-review artifact:
   score, mapped-atom ratio, volume ratio, shape mismatch, and shape overlap.
   Missing optional metrics are simply absent from the selector.
 
-During planning, BATTER omits duplicate ligands with identical molecular
-identity. Full atom or full heavy-atom mappings are retained as normal edges and
-recorded as coverage metadata in the per-edge mapping status and network JSON.
-Skipped identical ligands are recorded in ``rbfe_network.json`` as skip metadata.
+By default, BATTER keeps duplicate ligands in RBFE network planning. Set
+``rbfe.skip_duplicate_ligands: true`` to omit later ligands with identical
+molecular identity before the network is planned. Full atom or full heavy-atom
+mappings are retained as normal edges and recorded as coverage metadata in the
+per-edge mapping status and network JSON. Skipped identical ligands are recorded
+in ``rbfe_network.json`` as skip metadata.
 
 Transformation systems are created under:
 

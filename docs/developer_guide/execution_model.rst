@@ -52,15 +52,17 @@ Phase ordering and sentinels
 ============================
 
 Orchestration follows a fixed phase order: system_prep → param_ligands →
-prepare_rbfe (RBFE only) → prepare_equil → equil → equil_analysis → prepare_fe
-→ fe → analysis. MD-only runs
-stop after equilibration analysis. Handlers drop ``FINISHED``/``FAILED`` sentinels
-in window/component folders; the job manager (local or SLURM) checks these to decide
-whether to continue, retry, or mark ligands as failed. ``RunConfig.run.on_failure``
+prepare_rbfe (RBFE only) → prepare_equil → equil → equil_analysis → optional
+pre_prepare_fe/pre_fe_equil → prepare_fe (including prepare_fe_windows) →
+fe_equil → fe → analyze. MD-only runs stop after equilibration analysis.
+Preparation handlers write phase-specific ``*.ok``/``*.failed`` markers, while
+simulation windows and components use ``FINISHED``/``FAILED`` sentinels. The job
+manager (local or SLURM) checks these to decide whether to continue, retry, or mark
+ligands as failed. ``RunConfig.run.on_failure``
 controls behaviour: ``prune`` skips remaining phases for failed ligands, ``retry``
 clears ``FAILED`` once and reruns, and ``raise`` aborts the whole run. Interrupted
 runs can resume because submit helpers and ``run-local*.bash`` honor the sentinels
 and the ``total_steps`` markers in mdin templates; each invocation runs a single
-segment and updates rolling restarts. For a manual reset before rerunning, use
+segment and writes a numbered ``md-*.rst7`` restart. For a manual reset before rerunning, use
 ``run.clean_failures`` or ``batter run --clean-failures`` to remove ``FAILED``
 sentinels, ``job_attempt.txt`` retry counters, and progress caches.

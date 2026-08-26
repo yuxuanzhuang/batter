@@ -14,8 +14,8 @@ from batter.pipeline.step import Step
 from batter.utils import components_under
 from batter.orchestrate.state_registry import get_phase_state, PhaseState
 
-_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 5
-_PROLIF_INTERACTIONS_SCHEMA_VERSION = 3
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 10
+_PROLIF_INTERACTIONS_SCHEMA_VERSION = 4
 
 
 def _components_under_pattern(root: Path, pattern: str) -> list[str]:
@@ -206,7 +206,7 @@ def handle_phase_failures(
                     retried.append(c)
                 else:
                     logger.warning(
-                        "[%s] retry requested but no sentinels removed for %s",
+                        "[{}] retry requested but no sentinels removed for {}",
                         phase_name,
                         c.meta.get("ligand", c.name),
                     )
@@ -437,10 +437,20 @@ def is_done(
         prolif_path = system.root / "equil" / "prolif_interactions.json"
         if not unbound.exists() and not _prolif_interactions_current(prolif_path):
             return False
-        if not system.anchors:
-            stable_path = system.root / "equil" / "stable_boresch_distance.json"
-            if not unbound.exists() and not _stable_boresch_distance_current(stable_path):
-                return False
+        stable_path = system.root / "equil" / "stable_boresch_distance.json"
+        if not unbound.exists() and not _stable_boresch_distance_current(stable_path):
+            return False
+    if phase_name in {"prepare_fe", "prepare_fe_windows"}:
+        equil = system.root / "equil"
+        unbound = equil / "UNBOUND"
+        representative = equil / "representative.pdb"
+        stable_path = equil / "stable_boresch_distance.json"
+        if (
+            representative.exists()
+            and not unbound.exists()
+            and not _stable_boresch_distance_current(stable_path)
+        ):
+            return False
 
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success

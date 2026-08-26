@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
+from batter.config.defaults import DEFAULT_N_BOOTSTRAPS, DEFAULT_NTPR
 from batter.config.run import (
     CreateArgs,
     FESimArgs,
@@ -223,6 +224,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  skip_duplicate_ligands: true
   network_scorer: shape-difference
   atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
@@ -242,6 +244,7 @@ rbfe:
     assert cfg.run.only_rbfe_network is True
     assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
     assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
+    assert cfg.rbfe.skip_duplicate_ligands is True
     assert cfg.rbfe.atom_mapper == "lomap"
     assert cfg.rbfe.network_scorer == "shape_difference"
     assert cfg.rbfe.lomap.time == 7
@@ -287,6 +290,7 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.allow_bond_breaks is False
     assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
+    assert cfg.skip_duplicate_ligands is False
     assert cfg.minimal_mapping_atom == 3
     assert cfg.direction_policy == "larger_volume"
 
@@ -368,6 +372,30 @@ def test_create_args_rejects_reserved_ligand_name(tmp_path: Path) -> None:
     lig.write_text("dummy\n")
     with pytest.raises(ValidationError, match="reserved"):
         CreateArgs(system_name="sys", ligand_paths={"transformations": lig})
+
+
+@pytest.mark.parametrize(
+    ("raw_anchors", "expected"),
+    [
+        (None, []),
+        ("resid 10 and name CA", ["resid 10 and name CA"]),
+    ],
+)
+def test_create_args_normalizes_optional_anchor_atoms(
+    tmp_path: Path,
+    raw_anchors,
+    expected: list[str],
+) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy\n")
+
+    args = CreateArgs(
+        system_name="sys",
+        ligand_paths={"LIG": lig},
+        anchor_atoms=raw_anchors,
+    )
+
+    assert args.anchor_atoms == expected
 
 
 def test_fesim_args_invalid_remd_type():
@@ -453,7 +481,12 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
         create, fe_args, protocol="abfe", run_remd="yes"
     )
     assert cfg.remd == "yes"
-    assert cfg.remd_nstlim == 100
+    assert cfg.remd_nstlim == 1000
+
+
+def test_simulation_config_direct_remd_nstlim_default() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.remd_nstlim == 1000
 
 
 def test_fesim_remd_block():
@@ -558,9 +591,73 @@ fe_sim:
     assert cfg.create.extra_conformation_restraints == conf_json.resolve()
 
 
+def test_load_run_config_resolves_relative_conformation_restraints(tmp_path: Path) -> None:
+    conf_json = tmp_path / "rest.json"
+    conf_json.write_text("[]")
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text(
+        """
+protocol: abfe
+backend: local
+create:
+  system_name: sys
+  ligand_paths:
+    LIG: lig.sdf
+  extra_conformation_restraints: rest.json
+run:
+  output_folder: out
+fe_sim:
+  lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(yaml_path)
+
+    assert cfg.create.extra_conformation_restraints == conf_json.resolve()
+
+
 def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     cfg = SimulationConfig(**base_sim_kwargs())
     assert cfg.enable_mcwat == "yes"
+
+
+def test_simulation_config_mcwat_fe_defaults_to_yes() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.mcwat_fe == "yes"
+    assert FESimArgs().mcwat_fe == "yes"
+
+
+def test_simulation_config_ion_guard_defaults_to_yes() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.ion_guard == "yes"
+
+
+def test_default_ion_conc_is_50_mm(tmp_path: Path) -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.ion_conc == pytest.approx(0.05)
+    assert cfg.ion_def[:2] == ["Na+", "Cl-"]
+    assert cfg.ion_def[2] == pytest.approx(0.05)
+
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0.0, 1.0], n_steps={"z": 300_000})
+    section_cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert section_cfg.ion_conc == pytest.approx(0.05)
+    assert section_cfg.ion_def[2] == pytest.approx(0.05)
+
+
+def test_ion_guard_from_sections_can_be_disabled(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        n_steps={"z": 300_000},
+        ion_guard=False,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert cfg.ion_guard == "no"
 
 
 def test_component_lambdas_override_and_default() -> None:
@@ -818,6 +915,28 @@ def test_analysis_start_step_respects_user_override(tmp_path: Path) -> None:
     assert cfg.analysis_start_step == 5000
 
 
+def test_detect_equil_defaults_true_and_respects_false_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    default_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    disabled_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        detect_equil=False,
+    )
+
+    assert SimulationConfig.from_sections(
+        create, default_args, protocol="abfe"
+    ).detect_equil is True
+    assert SimulationConfig.from_sections(
+        create, disabled_args, protocol="abfe"
+    ).detect_equil is False
+
+
 def test_n_bootstraps_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
@@ -826,7 +945,8 @@ def test_n_bootstraps_default(tmp_path: Path) -> None:
         n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.n_bootstraps == 0
+    assert fe_args.n_bootstraps == DEFAULT_N_BOOTSTRAPS
+    assert cfg.n_bootstraps == DEFAULT_N_BOOTSTRAPS
 
 
 def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
@@ -839,6 +959,30 @@ def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.n_bootstraps == 64
+
+
+def test_ntpr_default(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert fe_args.ntpr == DEFAULT_NTPR
+    assert cfg.ntpr == DEFAULT_NTPR
+
+
+def test_ntpr_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        ntpr=500,
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.ntpr == 500
 
 
 def test_cinnabar_x_convergence_filter_default(tmp_path: Path) -> None:
@@ -891,6 +1035,22 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"
+
+
+def test_mcwat_fe_propagates_from_fesim_args(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0, 1],
+        eq_steps=100,
+        mcwat_fe="on",
+        n_steps={"z": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert fe_args.mcwat_fe == "yes"
+    assert cfg.mcwat_fe == "yes"
+    assert FESimArgs(mcwat_fe="off").mcwat_fe == "no"
 
 
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:

@@ -1,10 +1,9 @@
 :orphan:
 
 .. meta::
-   :http-equiv=refresh: 0; url=./cookbook/remd_submission.html
+   :http-equiv=refresh: 0; url=./cookbook/remote_bundled_jobs.html
 
-REMD submission flow
-====================
+Remote bundled production jobs
+==============================
 
-This page moved to :doc:`cookbook/remd_submission`.
-
+This page moved to :doc:`cookbook/remote_bundled_jobs`.

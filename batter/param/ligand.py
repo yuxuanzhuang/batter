@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     Any,
@@ -275,6 +279,96 @@ def _hash_id(payload: str, ligand_ff: str, retain_h: bool) -> str:
     return h.hexdigest()[:12]
 
 
+def _is_openff_force_field(ligand_ff: str) -> bool:
+    return "openff" in str(ligand_ff).lower()
+
+
+def _installed_version(package: str) -> str:
+    try:
+        return importlib_metadata.version(package)
+    except importlib_metadata.PackageNotFoundError:
+        return "not installed"
+
+
+def _validate_openff_export_stack(ligand_ff: str) -> None:
+    """Fail early when OpenFF export dependencies are not importable."""
+    if not _is_openff_force_field(ligand_ff):
+        return
+
+    try:
+        from openff.interchange import Interchange  # noqa: F401
+    except Exception as exc:
+        raise RuntimeError(
+            "OpenFF ligand parameter export requires a working openff-interchange "
+            "installation. Importing openff.interchange failed under Python "
+            f"{sys.version.split()[0]} with openff-interchange "
+            f"{_installed_version('openff-interchange')}: {exc}. "
+            "Use a Python 3.11 environment or install an openff-interchange build "
+            "compatible with this Python version."
+        ) from exc
+
+
+def _is_charged_monoatomic_ion(mol: Chem.Mol) -> bool:
+    """Return True for simple single-atom charged ions such as Na+ or Cl-."""
+    if mol.GetNumAtoms() != 1 or mol.GetNumBonds() != 0:
+        return False
+    return int(mol.GetAtomWithIdx(0).GetFormalCharge()) != 0
+
+
+def _formal_charge(mol: Chem.Mol) -> int:
+    return int(sum(atom.GetFormalCharge() for atom in mol.GetAtoms()))
+
+
+_OPC_MONOATOMIC_ION_PARAMS: dict[str, tuple[float, float, float]] = {
+    "Li+": (6.94, 1.242, 0.00216058),
+    "Na+": (22.99, 1.467, 0.02960343),
+    "K+": (39.10, 1.702, 0.13953816),
+    "Cl-": (35.45, 2.360, 0.67878870),
+    "Mg2+": (24.305, 1.330, 0.00716930),
+    "Ca2+": (40.08, 1.608, 0.08337961),
+}
+
+
+def _has_complete_ligand_artifacts(target_dir: Path, ligand_name: str = "lig") -> bool:
+    required = (
+        "sdf",
+        "mol2",
+        "frcmod",
+        "lib",
+        "prmtop",
+        "inpcrd",
+        "pdb",
+        "json",
+    )
+    return all((target_dir / f"{ligand_name}.{ext}").exists() for ext in required)
+
+
+@contextmanager
+def _ligand_parameter_lock(output_root: Path, hash_id: str):
+    """Serialize writers targeting the same content-addressed ligand cache."""
+    lock_dir = output_root / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{hash_id}.lock"
+
+    with lock_path.open("a+") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info(
+                "[param_ligands] Waiting for another run to finish shared ligand {}",
+                hash_id,
+            )
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            logger.info(
+                "[param_ligands] Acquired shared ligand cache lock for {}",
+                hash_id,
+            )
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 # --------------------------------------------------------------------------- #
 # core                                                                         #
 # --------------------------------------------------------------------------- #
@@ -357,6 +451,18 @@ class LigandProcessing(ABC):
 
         self.unique_mol_names = set(unique_mol_names or [])
         ligand_rdkit = self._load_ligand()
+        self._is_monoatomic_ion = _is_charged_monoatomic_ion(ligand_rdkit)
+        self._formal_charge = _formal_charge(ligand_rdkit)
+        self._monoatomic_symbol: str | None = None
+        self._monoatomic_coords: tuple[float, float, float] | None = None
+        if self._is_monoatomic_ion:
+            atom = ligand_rdkit.GetAtomWithIdx(0)
+            self._monoatomic_symbol = atom.GetSymbol()
+            if ligand_rdkit.GetNumConformers():
+                pos = ligand_rdkit.GetConformer().GetAtomPosition(0)
+                self._monoatomic_coords = (float(pos.x), float(pos.y), float(pos.z))
+            else:
+                self._monoatomic_coords = (0.0, 0.0, 0.0)
         self._cano_smiles = Chem.MolToSmiles(ligand_rdkit, canonical=True)
 
         if ligand_name is None:
@@ -432,6 +538,16 @@ class LigandProcessing(ABC):
 
     def _calculate_partial_charge(self) -> None:
         """Estimate the net charge using the configured partial-charge method."""
+        if self._is_monoatomic_ion:
+            self.ligand_charge = float(self._formal_charge)
+            logger.debug(
+                "Net charge of monoatomic ion {} in {} is {} from formal charge.",
+                self.name,
+                self.ligand_file,
+                self.ligand_charge,
+            )
+            return
+
         molecule = self.openff_molecule
         charge_method = self.charge if self.force_field == "openff" else "gasteiger"
         molecule.assign_partial_charges(partial_charge_method=charge_method)
@@ -446,6 +562,110 @@ class LigandProcessing(ABC):
             self.ligand_charge,
         )
 
+    @staticmethod
+    def _amber_ion_atom_type(symbol: str, charge: int) -> str:
+        sign = "+" if charge > 0 else "-"
+        magnitude = abs(int(charge))
+        suffix = sign if magnitude == 1 else f"{magnitude}{sign}"
+        return f"{symbol}{suffix}"
+
+    @staticmethod
+    def _monoatomic_atom_name(symbol: str) -> str:
+        name = re.sub(r"[^A-Za-z0-9]", "", symbol).upper()
+        return (name or "ION")[:4]
+
+    def _prepare_monoatomic_ion_parameters(self) -> None:
+        """Write Amber-compatible artifacts for a charged single-atom ion."""
+        if not self._is_monoatomic_ion:
+            raise ValueError("Monoatomic ion parameter writer called for non-ion ligand.")
+
+        self._calculate_partial_charge()
+        mol = self.name
+        symbol = self._monoatomic_symbol or "Na"
+        charge = int(round(float(self.ligand_charge)))
+        x, y, z = self._monoatomic_coords or (0.0, 0.0, 0.0)
+        atom_name = self._monoatomic_atom_name(symbol)
+        atom_type = self._amber_ion_atom_type(symbol, charge)
+        out = Path(self.output_dir)
+        try:
+            mass, radius, epsilon = _OPC_MONOATOMIC_ION_PARAMS[atom_type]
+        except KeyError as exc:
+            raise ValueError(
+                f"Unsupported monoatomic ion atom type {atom_type!r}. "
+                "Add its Amber mass and OPC nonbonded parameters before using it "
+                "as a ligand."
+            ) from exc
+
+        (out / f"{mol}.mol2").write_text(
+            "\n".join(
+                [
+                    "@<TRIPOS>MOLECULE",
+                    mol,
+                    " 1 0 1 0 0",
+                    "SMALL",
+                    "USER_CHARGES",
+                    "",
+                    "@<TRIPOS>ATOM",
+                    (
+                        f"{1:7d} {atom_name:<4s} "
+                        f"{x:10.4f} {y:10.4f} {z:10.4f} "
+                        f"{atom_type:<8s} {1:4d} {mol:<8s} {float(charge):10.6f}"
+                    ),
+                    "@<TRIPOS>BOND",
+                    "@<TRIPOS>SUBSTRUCTURE",
+                    f"{1:6d} {mol:<8s} {1:5d} TEMP              0 ****  ****    0 ROOT",
+                    "",
+                ]
+            )
+        )
+        (out / f"{mol}.frcmod").write_text(
+            "\n".join(
+                [
+                    f"Monoatomic ion parameters for {atom_type}",
+                    "MASS",
+                    f"{atom_type:<4s} {mass:.6f}",
+                    "",
+                    "BOND",
+                    "",
+                    "ANGLE",
+                    "",
+                    "DIHE",
+                    "",
+                    "IMPROPER",
+                    "",
+                    "NONBON",
+                    f"{atom_type:<4s} {radius:.6f} {epsilon:.8f}",
+                    "",
+                ]
+            )
+        )
+
+        tleap_script = "\n".join(
+            [
+                "source leaprc.protein.ff14SB",
+                "source leaprc.water.opc",
+                f"loadamberparams {mol}.frcmod",
+                f"lig = loadmol2 {mol}.mol2",
+                f"saveoff lig {mol}.lib",
+                f"saveamberparm lig {mol}.prmtop {mol}.inpcrd",
+                f"savepdb lig {mol}.pdb",
+                "quit",
+                "",
+            ]
+        )
+        (out / "tleap_monoatomic_ion.in").write_text(tleap_script)
+        run_with_log(
+            f"{tleap} -s -f tleap_monoatomic_ion.in > tleap_monoatomic_ion.log",
+            working_dir=out,
+        )
+        self.atomnames = [atom_name]
+        self._ligand_mol2_path = str(out / f"{mol}.mol2")
+        logger.info(
+            "Ligand {} is a monoatomic ion; wrote Amber ion artifacts with atom type {}.",
+            mol,
+            atom_type,
+        )
+
     def prepare_ligand_parameters(self) -> None:
         """
         Generate parameters using either AMBER (GAFF/GAFF2) or OpenFF path.
@@ -455,7 +675,9 @@ class LigandProcessing(ABC):
         - OpenFF path first creates AMBER artifacts for tleap-based system build.
         - Writes a ``<name>.json`` metadata file to the output folder.
         """
-        if self.force_field == "openff":
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+        elif self.force_field == "openff":
             self.prepare_ligand_parameters_openff()
         elif self.force_field == "amber":
             self.prepare_ligand_parameters_amberff()
@@ -476,11 +698,27 @@ class LigandProcessing(ABC):
         - Runs a **fast** AMBER bootstrap (GAFF2 + gas charges) so tleap artifacts exist.
         - Generates an OpenFF `prmtop` for downstream if you prefer OpenMM/OpenFF.
         """
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+            logger.info(
+                "Ligand {} is a monoatomic ion; using Amber ion artifacts and "
+                "skipping OpenFF interchange export.",
+                self.name,
+            )
+            return
+
         # Bootstrap via AMBER with fast charges
         ligand_ff_openff = self.ligand_ff
         self.ligand_ff = "gaff2"
         self.prepare_ligand_parameters_amberff(charge_method="gas")
         self.ligand_ff = ligand_ff_openff
+        if self._is_monoatomic_ion:
+            logger.info(
+                "Ligand {} is a monoatomic ion; using Amber ion artifacts and "
+                "skipping OpenFF interchange export.",
+                self.name,
+            )
+            return
 
         from openff.toolkit import ForceField, Topology
 
@@ -519,6 +757,10 @@ class LigandProcessing(ABC):
         charge_method
             Antechamber charge method (e.g., ``"bcc"`` or ``"gas"``).
         """
+        if self._is_monoatomic_ion:
+            self._prepare_monoatomic_ion_parameters()
+            return
+
         mol = self.name
         logger.debug(
             "Preparing ligand {} parameters with AMBER force field {}.",
@@ -879,6 +1121,7 @@ def batch_ligand_process(
             f"Unsupported force field: {ligand_ff}. "
             f"Supported: {available_amber_ff + available_openff_ff}"
         )
+    _validate_openff_export_stack(ligand_ff)
 
     # --- compute content hashes for unique physical inputs ---
     # key: path (string) → (hash_id, canonical_smiles)
@@ -901,75 +1144,75 @@ def batch_ligand_process(
             seen.add(p)
         hash_order.append(unique[p][0])
 
-    # --- build LigandProcessing objects for each unique hash ---
-    to_prepare: List[Tuple[str, str, "LigandProcessing", str]] = []
+    # --- prepare each unique hash while holding its cross-process cache lock ---
     success_paths: set[str] = set()
-
     factory = LigandFactory()
+    mode_lower = (on_failure or "").lower()
 
     for idx, p in enumerate(ordered_paths, start=1):
         lig_name = ligand_names[idx - 1]
         hid, smi = unique[p]
         target_dir = out_root / hid
-        target_dir.mkdir(parents=True, exist_ok=True)
 
-        lig = factory.create_ligand(
-            ligand_file=p,
-            index=idx,
-            output_dir=target_dir.as_posix(),
-            # set to a generic name
-            ligand_name="lig",
-            retain_lig_prot=retain_lig_prot,
-            charge=charge_method,
-            ligand_ff=ligand_ff,
-            unique_mol_names=[],
-        )
-        # Dump metadata for traceability
-        meta = {
-            "hash_id": hid,
-            "input_path": str(Path(p).resolve()),
-            "aliases": [name for name, path in lig_map.items() if path == p],
-            "canonical_smiles": smi,
-            "retain_lig_prot": bool(retain_lig_prot),
-            "ligand_ff": ligand_ff,
-            "prepared_base": lig_name,
-        }
-        (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        with _ligand_parameter_lock(out_root, hid):
+            # A concurrent BATTER run may have populated the cache while this
+            # process was waiting, so completeness must be checked under lock.
+            if not overwrite and _has_complete_ligand_artifacts(target_dir):
+                logger.info("Reusing cached ligand @ {} ({})", hid, lig_name)
+                success_paths.add(p)
+                continue
 
-        # Skip if artifacts already present and not overwriting
-        marker_any = any(
-            (target_dir / f"{lig.name}.{ext}").exists()
-            for ext in ("frcmod", "lib", "prmtop", "xml")
-        )
-        if not overwrite and marker_any:
-            logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
-            # treat cached ligands as successful so they propagate downstream
-            success_paths.add(p)
-        else:
-            to_prepare.append((lig_name, hid, lig, p))
+            if run_with_slurm:
+                raise NotImplementedError("Not implemented yet.")
 
-    # --- perform parametrization (local or SLURM) ---
-    mode_lower = (on_failure or "").lower()
-    if to_prepare:
-        if run_with_slurm:
-            raise NotImplementedError("Not implemented yet.")
-        else:
-            for lig_name, hid, lig, path in to_prepare:
-                logger.info(f"Preparing {lig_name} in {lig.output_dir}")
-                try:
-                    lig.prepare_ligand_parameters()
-                    success_paths.add(path)
-                except Exception as exc:
-                    if mode_lower in {"prune", "retry"}:
-                        logger.error(
-                            "[param_ligands] failed to prepare %s (hash=%s): %s — skipping due to on_failure=%s",
-                            lig_name,
-                            hid,
-                            exc,
-                            mode_lower,
-                        )
-                        continue
-                    raise
+            if target_dir.exists():
+                logger.warning(
+                    "[param_ligands] Rebuilding incomplete ligand cache @ {}",
+                    hid,
+                )
+                shutil.rmtree(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            lig = factory.create_ligand(
+                ligand_file=p,
+                index=idx,
+                output_dir=target_dir.as_posix(),
+                # set to a generic name
+                ligand_name="lig",
+                retain_lig_prot=retain_lig_prot,
+                charge=charge_method,
+                ligand_ff=ligand_ff,
+                unique_mol_names=[],
+            )
+            meta = {
+                "hash_id": hid,
+                "input_path": str(Path(p).resolve()),
+                "aliases": [name for name, path in lig_map.items() if path == p],
+                "canonical_smiles": smi,
+                "retain_lig_prot": bool(retain_lig_prot),
+                "ligand_ff": ligand_ff,
+                "prepared_base": lig_name,
+            }
+            (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+
+            logger.info(f"Preparing {lig_name} in {lig.output_dir}")
+            try:
+                lig.prepare_ligand_parameters()
+                if not _has_complete_ligand_artifacts(target_dir, lig.name):
+                    raise RuntimeError(
+                        "parameterization returned without all required ligand artifacts"
+                    )
+                success_paths.add(p)
+            except Exception as exc:
+                if mode_lower in {"prune", "retry"}:
+                    logger.error(
+                        "[param_ligands] failed to prepare {} (hash={}): {} — skipping due to on_failure={}",
+                        lig_name,
+                        hid,
+                        exc,
+                        mode_lower,
+                    )
+                    continue
+                raise
 
     # filter outputs to successful ligands only
     if not success_paths:
