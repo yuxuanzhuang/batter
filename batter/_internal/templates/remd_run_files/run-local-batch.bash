@@ -62,6 +62,22 @@ print_and_run() {
     eval "$@"
 }
 
+# AMBER only supports MC-water moves for grouped runs when REMD is enabled.
+# Keep the production template unchanged, but force MC water off in the
+# transient input used by this non-REMD batch launcher.
+disable_mcwat_for_non_remd_batch() {
+    awk '
+        {
+            line = $0
+            if (tolower(line) ~ /^[[:space:]]*mcwat[[:space:]]*=/) {
+                print "  mcwat = 0,"
+                next
+            }
+            print line
+        }
+    '
+}
+
 reduce_dt_for_batch_windows() {
     local stage=$1
     local retry_count=${2:-${RETRY_COUNT:-${RETRY:-0}}}
@@ -178,7 +194,8 @@ if (( remaining_steps > 0 )); then
         current_mdin="${PFOLDER}/${win}/mdin-current"
         cmass_file=$(printf "cmass-%02d.txt" "$seg_idx")
         dumpave_file="${win}/${cmass_file}"
-        write_mdin_current "$tmpl" "$run_steps" "$first_run" "$current_mdin" "$retry" "" "$dumpave_file" > "$current_mdin"
+        write_mdin_current "$tmpl" "$run_steps" "$first_run" "$current_mdin" "$retry" "" "$dumpave_file" \
+            | disable_mcwat_for_non_remd_batch > "$current_mdin"
 
         window_start_ps=$(production_start_ps "${PFOLDER}/${win}/production-start.ps" "${PFOLDER}/${win}/eq.rst7")
         rst_in=$(select_window_restart_name "${PFOLDER}/${win}" "$window_start_ps" "$retry") || exit 1

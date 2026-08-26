@@ -185,9 +185,10 @@ Useful knobs:
 ``fe_sim.hmr`` / ``fe_sim.dt``
    Hydrogen mass repartitioning and timestep settings.
 ``fe_sim.enable_mcwat``
-   Enable or disable MC water moves during equilibration.
+   Enable or disable MC water moves during equilibration; the default is enabled.
 ``fe_sim.mcwat_fe``
-   Enable MC water moves in FE production templates; the default is disabled.
+   Enable MC water moves in FE production templates; the default is enabled.
+   Standard grouped batch runs disable these moves at launch unless REMD is used.
 ``run.clean_failures`` / ``--clean-failures``
    Clear failed sentinels and retry counters before rerunning an execution.
 ``run.run_id``

@@ -591,9 +591,10 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
-def test_simulation_config_mcwat_fe_defaults_to_no() -> None:
+def test_simulation_config_mcwat_fe_defaults_to_yes() -> None:
     cfg = SimulationConfig(**base_sim_kwargs())
-    assert cfg.mcwat_fe == "no"
+    assert cfg.mcwat_fe == "yes"
+    assert FESimArgs().mcwat_fe == "yes"
 
 
 def test_simulation_config_ion_guard_defaults_to_yes() -> None:

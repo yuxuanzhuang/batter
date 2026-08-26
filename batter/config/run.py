@@ -579,7 +579,7 @@ class FESimArgs(BaseModel):
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
     mcwat_fe: Literal["yes", "no"] = Field(
-        "no",
+        "yes",
         description="Enable MC water exchange moves during FE production inputs.",
     )
     temperature: float = Field(298.15, description="Simulation temperature (K).")

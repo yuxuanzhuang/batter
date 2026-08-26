@@ -316,6 +316,66 @@ def test_remd_run_templates_write_segmented_cmass_dumpave(
 
 
 @pytest.mark.parametrize(
+    ("script_name", "template_name", "current_name", "expected_mcwat"),
+    [
+        ("run-local-batch.bash", "mdin-batch-template", "mdin-current", 0),
+        ("run-local-remd.bash", "mdin-remd-template", "mdin-remd-current", 1),
+    ],
+)
+def test_grouped_run_templates_handle_mcwat_by_execution_mode(
+    tmp_path: Path,
+    script_name: str,
+    template_name: str,
+    current_name: str,
+    expected_mcwat: int,
+) -> None:
+    comp_dir, win0, tmpl = _prepare_component(
+        tmp_path,
+        script_name=script_name,
+        template_name=template_name,
+        total_steps=10,
+        nstlim=10,
+    )
+    tmpl.write_text(
+        tmpl.read_text().replace(
+            "  ntwr = 10,\n",
+            "  ntwr = 10,\n"
+            "  mcwat = 1,\n"
+            "  nmd = 1000,\n"
+            "  nmc = 1000,\n"
+            '  mcwatmask = ":1",\n',
+        )
+    )
+
+    pmemd_stub = tmp_path / "pmemd-success.sh"
+    _write_success_pmemd_stub(pmemd_stub)
+
+    env = os.environ.copy()
+    env["PMEMD_MPI_EXEC"] = str(pmemd_stub)
+    env["MPI_EXEC"] = "/bin/bash"
+    env["MPI_FLAGS"] = " "
+
+    result = subprocess.run(
+        ["bash", f"./{script_name}"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = (win0 / current_name).read_text()
+    assert re.search(
+        rf"^\s*mcwat\s*=\s*{expected_mcwat},",
+        text,
+        flags=re.MULTILINE,
+    )
+    assert "  nmd = 1000," in text
+    assert "  nmc = 1000," in text
+
+
+@pytest.mark.parametrize(
     ("script_name", "template_name", "groupfile_name"),
     [
         ("run-local-remd.bash", "mdin-remd-template", "remd/mdin.in.remd.groupfile"),

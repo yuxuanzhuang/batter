@@ -219,10 +219,10 @@ within 10 Å of the ligand reference atom in the binding site. Set
 ``fe_sim.ion_guard: no`` to disable this
 FE-stage guard; equilibration restraints are unchanged.
 
-Equilibration options
----------------------
+HMR and MC-water options
+------------------------
 
-Two frequently toggled equilibration knobs live under ``fe_sim`` and flow into the
+These frequently toggled settings live under ``fe_sim`` and flow into the
 resolved :class:`~batter.config.simulation.SimulationConfig`:
 
 * ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning during preparation.
@@ -232,9 +232,14 @@ resolved :class:`~batter.config.simulation.SimulationConfig`:
   equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
   :func:`batter._internal.ops.amber.write_amber_templates`; MC-water
   equilibration templates place the shifted ligand dummy 15 Å from the site.
-* ``mcwat_fe`` – ``"no"`` (default) enables the same MC-water move block in FE
-  production input templates when set to ``"yes"``. Runtime ``mdin-current``,
-  REMD, and batch inputs inherit it from the generated production template.
+* ``mcwat_fe`` – ``"yes"`` (default) enables the same MC-water move block in FE
+  production input templates. Local single-window and REMD runs preserve this
+  setting. Standard grouped batch runs force ``mcwat = 0`` in their transient
+  ``mdin-current`` files because AMBER only supports MC-water moves for grouped
+  execution when REMD is enabled. Because ``enable_mcwat`` and ``mcwat_fe`` both
+  default to ``"yes"``, omitting either field enables MC-water moves for its
+  corresponding stage. MC-water REMD requires the patched AMBER26 MPI build
+  described in :doc:`amber_compilation`.
 
 REMD runs
 ---------
