@@ -446,6 +446,59 @@ def test_preferred_l1_triplet_prioritizes_comfortable_torsion_margin(
     assert selected["margins"][1] >= restraints.BORESCH_PREFERRED_TORSION_MARGIN_DEG
 
 
+def test_preferred_l1_triplet_avoids_terminal_atoms_before_soft_torsion_margin(
+    monkeypatch,
+) -> None:
+    receptor_atoms = [
+        _FakeAtom("P1", (0.0, 0.0, 0.0)),
+        _FakeAtom("P2", (0.0, 1.0, 0.0)),
+        _FakeAtom("P3", (1.0, 1.0, 0.0)),
+    ]
+    internal = {
+        "preferred_rank": 0,
+        "names": ["N1", "R1", "R2"],
+        "positions": (
+            np.asarray((0.0, 0.0, 1.0)),
+            np.asarray((1.0, 0.0, 1.0)),
+            np.asarray((1.0, 1.0, 1.0)),
+        ),
+        "score": 0.0,
+        "low_degree_l2_l3_count": 0,
+        "l2_l3_priority_rank": 0,
+    }
+    terminal = {
+        "preferred_rank": 0,
+        "names": ["N1", "T1", "R1"],
+        "positions": (
+            np.asarray((0.0, 0.0, 1.0)),
+            np.asarray((2.0, 0.0, 1.0)),
+            np.asarray((2.0, 1.0, 1.0)),
+        ),
+        "score": 10.0,
+        "low_degree_l2_l3_count": 1,
+        "l2_l3_priority_rank": 10_000_000,
+    }
+
+    def _fake_values(_p1, _p2, _p3, _l1, l2, _l3):
+        torsion = 20.0 if float(l2[0]) == 1.0 else 60.0
+        return (90.0, torsion, 90.0, 60.0, 60.0)
+
+    monkeypatch.setattr(
+        restraints,
+        "_boresch_frame_values_from_positions",
+        _fake_values,
+    )
+
+    selected = restraints._best_preferred_l1_triplet_for_receptor_frame(
+        receptor_atoms,
+        [terminal, internal],
+    )
+
+    assert selected is not None
+    assert selected["names"] == internal["names"]
+    assert selected["low_degree_l2_l3_count"] == 0
+
+
 def test_preferred_l1_triplet_prioritizes_ring_l2_l3() -> None:
     residue = _FakeResidue(
         [

@@ -3011,12 +3011,14 @@ def _best_preferred_l1_triplet_for_receptor_frame(
         }
         if best is None or (
             int(scored["preferred_rank"]),
+            int(scored["low_degree_l2_l3_count"]),
             int(scored["torsion_safety_rank"]),
             int(scored["l2_l3_priority_rank"]),
             -float(scored["score"]),
             scored["names"],
         ) < (
             int(best["preferred_rank"]),
+            int(best.get("low_degree_l2_l3_count", 0)),
             int(best.get("torsion_safety_rank", 0)),
             int(best.get("l2_l3_priority_rank", 0)),
             -float(best["score"]),
