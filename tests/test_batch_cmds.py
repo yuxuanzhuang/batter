@@ -17,6 +17,18 @@ def _setup_abfe_component(exec_path: Path, ligand: str = "L1", comp: str = "z") 
     return comp_dir
 
 
+def _assert_header_mpi_flags_are_authoritative(text: str) -> None:
+    assert (
+        'if [[ "$use_srun" -eq 1 && -z "$mpi_flags" '
+        '&& "$nodes" -gt 0 && "$win" -gt 0 ]]; then'
+    ) in text
+    assert (
+        'mpi_flags="--nodes=${nodes} --ntasks=${win} --exclusive '
+        '--gpus-per-task=1 --gpu-bind=closest"'
+    ) in text
+    assert 'mpi_flags="${mpi_flags} ${extra_flags}"' not in text
+
+
 def test_parse_slurm_time_limit_minutes() -> None:
     assert batch_cmds._parse_slurm_time_limit_minutes("15") == 15
     assert batch_cmds._parse_slurm_time_limit_minutes("90:00") == 90
@@ -151,6 +163,40 @@ def test_batch_cli_remd_renders_run_local_remd(
     assert "bash ./run-local-remd.bash" in text
     assert "bash ./run-local-batch.bash" not in text
     assert "#SBATCH --time=00:15:00" in text
+    _assert_header_mpi_flags_are_authoritative(text)
+
+
+def test_batch_cli_uses_header_mpi_flags_without_appending(
+    tmp_path: Path, monkeypatch
+) -> None:
+    exec_path = tmp_path / "executions" / "rep1"
+    comp_dir = _setup_abfe_component(exec_path, ligand="L1", comp="z")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setattr(batch_cmds, "components_under", lambda _: ["z"])
+    monkeypatch.setattr(
+        batch_cmds,
+        "_write_batch_run_script",
+        lambda *args, **kwargs: comp_dir / "run-local-batch.bash",
+    )
+
+    out = tmp_path / "batch.sbatch"
+    result = CliRunner().invoke(
+        cli,
+        [
+            "batch",
+            "-e",
+            str(exec_path),
+            "--output",
+            str(out),
+            "--no-auto-resubmit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    assert "bash ./run-local-batch.bash" in text
+    _assert_header_mpi_flags_are_authoritative(text)
 
 
 def test_batch_cli_remd_explains_missing_rbfe_transformations(tmp_path: Path) -> None:

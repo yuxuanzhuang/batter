@@ -29,6 +29,7 @@ source /home/groups/rondror/software/amber26/setup_amber.sh > /dev/null 2>&1
 #   PMEMD_CPU_MPI_EXEC (default: pmemd.MPI)
 #   SANDER_EXEC       (default: sander)
 #   MPI_EXEC          (default: mpirun)
+#   MPI_FLAGS         (default: inferred by the runner; explicit values are used as-is)
 
 # Uncomment and edit to override
 # export PMEMD_EXEC=pmemd.cuda
@@ -37,4 +38,5 @@ source /home/groups/rondror/software/amber26/setup_amber.sh > /dev/null 2>&1
 # export PMEMD_CPU_EXEC=pmemd
 # export PMEMD_CPU_MPI_EXEC=pmemd.MPI
 # export SANDER_EXEC=sander
-# export MPI_EXEC=mpirun
+# export MPI_EXEC=srun
+# export MPI_FLAGS="-N 6 -n 48 --ntasks-per-node=8 -c 1 --cpu-bind=threads --threads-per-core=1 -m block:cyclic --gpus-per-task=1 --gpu-bind=closest --exclusive"

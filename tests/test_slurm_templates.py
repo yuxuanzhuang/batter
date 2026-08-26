@@ -9,6 +9,13 @@ from batter.utils.slurm_templates import (
 )
 
 
+MPI_FLAGS_OVERRIDE = (
+    '# export MPI_FLAGS="-N 6 -n 48 --ntasks-per-node=8 -c 1 '
+    '--cpu-bind=threads --threads-per-core=1 -m block:cyclic '
+    '--gpus-per-task=1 --gpu-bind=closest --exclusive"'
+)
+
+
 def test_slurm_template_seeds_user_header(monkeypatch, tmp_path):
     """
     When no ~/.batter/<name> exists, render_slurm_with_header_body should
@@ -158,6 +165,40 @@ def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
     res = runner.invoke(seed_headers, [])
     assert res.exit_code == 0, res.output
     assert "No headers copied" in res.output
+
+
+def test_batch_headers_offer_mpi_flags_override_after_mpi_exec():
+    repo_root = Path(__file__).resolve().parents[1]
+    headers = [
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "remd_run_files"
+        / "SLURMM-BATCH-remd.header",
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "batch_run"
+        / "SLURMM-BATCH.header",
+    ]
+
+    for header in headers:
+        lines = header.read_text().splitlines()
+        mpi_exec_index = lines.index("# export MPI_EXEC=srun")
+        assert lines[mpi_exec_index + 1] == MPI_FLAGS_OVERRIDE
+
+
+def test_grouped_runners_put_mpi_flags_after_mpi_exec():
+    repo_root = Path(__file__).resolve().parents[1]
+    runner_root = (
+        repo_root / "batter" / "_internal" / "templates" / "remd_run_files"
+    )
+
+    for name in ("run-local-remd.bash", "run-local-batch.bash"):
+        text = (runner_root / name).read_text()
+        assert 'MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"' in text
 
 
 def test_diff_headers_detects_changes(tmp_path):
