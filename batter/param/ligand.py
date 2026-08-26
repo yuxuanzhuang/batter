@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import importlib.metadata as importlib_metadata
 import json
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     Any,
@@ -339,6 +341,32 @@ def _has_complete_ligand_artifacts(target_dir: Path, ligand_name: str = "lig") -
         "json",
     )
     return all((target_dir / f"{ligand_name}.{ext}").exists() for ext in required)
+
+
+@contextmanager
+def _ligand_parameter_lock(output_root: Path, hash_id: str):
+    """Serialize writers targeting the same content-addressed ligand cache."""
+    lock_dir = output_root / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{hash_id}.lock"
+
+    with lock_path.open("a+") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info(
+                "[param_ligands] Waiting for another run to finish shared ligand {}",
+                hash_id,
+            )
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            logger.info(
+                "[param_ligands] Acquired shared ligand cache lock for {}",
+                hash_id,
+            )
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 # --------------------------------------------------------------------------- #
@@ -1116,71 +1144,75 @@ def batch_ligand_process(
             seen.add(p)
         hash_order.append(unique[p][0])
 
-    # --- build LigandProcessing objects for each unique hash ---
-    to_prepare: List[Tuple[str, str, "LigandProcessing", str]] = []
+    # --- prepare each unique hash while holding its cross-process cache lock ---
     success_paths: set[str] = set()
-
     factory = LigandFactory()
+    mode_lower = (on_failure or "").lower()
 
     for idx, p in enumerate(ordered_paths, start=1):
         lig_name = ligand_names[idx - 1]
         hid, smi = unique[p]
         target_dir = out_root / hid
-        target_dir.mkdir(parents=True, exist_ok=True)
 
-        lig = factory.create_ligand(
-            ligand_file=p,
-            index=idx,
-            output_dir=target_dir.as_posix(),
-            # set to a generic name
-            ligand_name="lig",
-            retain_lig_prot=retain_lig_prot,
-            charge=charge_method,
-            ligand_ff=ligand_ff,
-            unique_mol_names=[],
-        )
-        # Dump metadata for traceability
-        meta = {
-            "hash_id": hid,
-            "input_path": str(Path(p).resolve()),
-            "aliases": [name for name, path in lig_map.items() if path == p],
-            "canonical_smiles": smi,
-            "retain_lig_prot": bool(retain_lig_prot),
-            "ligand_ff": ligand_ff,
-            "prepared_base": lig_name,
-        }
-        (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        with _ligand_parameter_lock(out_root, hid):
+            # A concurrent BATTER run may have populated the cache while this
+            # process was waiting, so completeness must be checked under lock.
+            if not overwrite and _has_complete_ligand_artifacts(target_dir):
+                logger.info("Reusing cached ligand @ {} ({})", hid, lig_name)
+                success_paths.add(p)
+                continue
 
-        # Skip if artifacts already present and not overwriting
-        if not overwrite and _has_complete_ligand_artifacts(target_dir, lig.name):
-            logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
-            # treat cached ligands as successful so they propagate downstream
-            success_paths.add(p)
-        else:
-            to_prepare.append((lig_name, hid, lig, p))
+            if run_with_slurm:
+                raise NotImplementedError("Not implemented yet.")
 
-    # --- perform parametrization (local or SLURM) ---
-    mode_lower = (on_failure or "").lower()
-    if to_prepare:
-        if run_with_slurm:
-            raise NotImplementedError("Not implemented yet.")
-        else:
-            for lig_name, hid, lig, path in to_prepare:
-                logger.info(f"Preparing {lig_name} in {lig.output_dir}")
-                try:
-                    lig.prepare_ligand_parameters()
-                    success_paths.add(path)
-                except Exception as exc:
-                    if mode_lower in {"prune", "retry"}:
-                        logger.error(
-                            "[param_ligands] failed to prepare {} (hash={}): {} — skipping due to on_failure={}",
-                            lig_name,
-                            hid,
-                            exc,
-                            mode_lower,
-                        )
-                        continue
-                    raise
+            if target_dir.exists():
+                logger.warning(
+                    "[param_ligands] Rebuilding incomplete ligand cache @ {}",
+                    hid,
+                )
+                shutil.rmtree(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            lig = factory.create_ligand(
+                ligand_file=p,
+                index=idx,
+                output_dir=target_dir.as_posix(),
+                # set to a generic name
+                ligand_name="lig",
+                retain_lig_prot=retain_lig_prot,
+                charge=charge_method,
+                ligand_ff=ligand_ff,
+                unique_mol_names=[],
+            )
+            meta = {
+                "hash_id": hid,
+                "input_path": str(Path(p).resolve()),
+                "aliases": [name for name, path in lig_map.items() if path == p],
+                "canonical_smiles": smi,
+                "retain_lig_prot": bool(retain_lig_prot),
+                "ligand_ff": ligand_ff,
+                "prepared_base": lig_name,
+            }
+            (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+
+            logger.info(f"Preparing {lig_name} in {lig.output_dir}")
+            try:
+                lig.prepare_ligand_parameters()
+                if not _has_complete_ligand_artifacts(target_dir, lig.name):
+                    raise RuntimeError(
+                        "parameterization returned without all required ligand artifacts"
+                    )
+                success_paths.add(p)
+            except Exception as exc:
+                if mode_lower in {"prune", "retry"}:
+                    logger.error(
+                        "[param_ligands] failed to prepare {} (hash={}): {} — skipping due to on_failure={}",
+                        lig_name,
+                        hid,
+                        exc,
+                        mode_lower,
+                    )
+                    continue
+                raise
 
     # filter outputs to successful ligands only
     if not success_paths:

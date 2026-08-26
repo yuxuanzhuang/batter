@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import multiprocessing
+import time
 from pathlib import Path
 
 import pytest
@@ -12,13 +14,22 @@ class _FakeLigand:
         self.ligand_file = ligand_file
         self.output_dir = output_dir
         self._fail = fail
-        self.name = Path(ligand_file).stem
+        self.name = "lig"
 
     def prepare_ligand_parameters(self) -> None:
         if self._fail:
             raise RuntimeError("boom")
-        # minimal marker to mimic cached params
-        Path(self.output_dir, "lig.prmtop").write_text("ok")
+        for suffix in (
+            "sdf",
+            "mol2",
+            "frcmod",
+            "lib",
+            "prmtop",
+            "inpcrd",
+            "pdb",
+            "json",
+        ):
+            Path(self.output_dir, f"lig.{suffix}").write_text("ok")
 
 
 class _FakeFactory:
@@ -174,3 +185,42 @@ def test_batch_ligand_process_does_not_reuse_incomplete_cache(
 
     assert hashes == []
     assert unique == {}
+
+
+def test_ligand_parameter_lock_serializes_same_hash_across_processes(
+    tmp_path: Path,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    output_root = tmp_path / "params"
+    first_acquired = context.Event()
+    release_first = context.Event()
+    second_attempting = context.Event()
+    second_acquired = context.Event()
+
+    def hold_first_lock() -> None:
+        with ligand_mod._ligand_parameter_lock(output_root, "abc123"):
+            first_acquired.set()
+            assert release_first.wait(timeout=5)
+
+    def acquire_second_lock() -> None:
+        assert first_acquired.wait(timeout=5)
+        second_attempting.set()
+        with ligand_mod._ligand_parameter_lock(output_root, "abc123"):
+            second_acquired.set()
+
+    first = context.Process(target=hold_first_lock)
+    second = context.Process(target=acquire_second_lock)
+    first.start()
+    second.start()
+
+    assert second_attempting.wait(timeout=5)
+    time.sleep(0.1)
+    assert not second_acquired.is_set()
+
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert first.exitcode == 0
+    assert second.exitcode == 0
+    assert second_acquired.is_set()

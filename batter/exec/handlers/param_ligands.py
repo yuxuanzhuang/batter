@@ -16,6 +16,7 @@ from batter.param.ligand import (
     _convert_mol_name_to_unique,
     _hash_id,
     _has_complete_ligand_artifacts,
+    _ligand_parameter_lock,
     _rdkit_load,
     _canonical_payload,
     batch_ligand_process,
@@ -383,11 +384,26 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     for name, path in apo_lig_map.items():
         hid = _hash_id(_APO_DUMMY_PAYLOAD, ligand_ff=ligand_ff, retain_h=retain)
-        _prepare_apo_dummy_params(
-            outdir / hid,
-            ligand_ff=ligand_ff,
-            retain_lig_prot=retain,
-        )
+        with _ligand_parameter_lock(outdir, hid):
+            target_dir = outdir / hid
+            if _has_complete_ligand_artifacts(target_dir):
+                logger.info("Reusing cached apo dummy ligand @ {}", hid)
+            else:
+                if target_dir.exists():
+                    logger.warning(
+                        "[param_ligands] Rebuilding incomplete apo ligand cache @ {}",
+                        hid,
+                    )
+                    shutil.rmtree(target_dir)
+                _prepare_apo_dummy_params(
+                    target_dir,
+                    ligand_ff=ligand_ff,
+                    retain_lig_prot=retain,
+                )
+                if not _has_complete_ligand_artifacts(target_dir):
+                    raise RuntimeError(
+                        "Apo ligand parameterization returned without all required artifacts"
+                    )
         unique[str(path)] = (hid, _APO_DUMMY_PAYLOAD)
         hashes.append(hid)
 
