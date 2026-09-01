@@ -55,12 +55,6 @@ Clone the repository, initialize submodules, and create the environment:
    # Install batter (editable)
    pip install -e .
 
-To keep the environment inside the checkout instead, replace the two Conda
-commands above with::
-
-   conda env create -p ./.conda-env -f environment.yml
-   conda activate ./.conda-env
-
 The Conda environment installs the bundled ``extern/*`` dependencies through its
 ``pip`` section. Run the environment command from the repository root so the
 relative editable paths resolve correctly.
