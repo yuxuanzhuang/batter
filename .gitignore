@@ -94,6 +94,7 @@ celerybeat-schedule
 .env
 
 # virtualenv
+.conda-env/
 .venv
 venv/
 ENV/
