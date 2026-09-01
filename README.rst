@@ -49,15 +49,14 @@ Clone the repository, initialize submodules, and create the environment:
    cd batter
    git submodule update --init --recursive
 
-   conda create -n batter -y python=3.12
-   conda env update -f environment.yml -n batter
+   conda env create -f environment.yml
    conda activate batter
 
    # Install batter (editable)
    pip install -e .
 
 The Conda environment installs the bundled ``extern/*`` dependencies through its
-``pip`` section. Run the environment update from the repository root so the
+``pip`` section. Run the environment command from the repository root so the
 relative editable paths resolve correctly.
 
 For the full setup checklist and links to the main workflow docs, see the

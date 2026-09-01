@@ -4,13 +4,24 @@ channels:
   - defaults
 dependencies:
   # Conda dependencies
-  - python >=3.11
+  # Keep this aligned with the installation instructions. Newer Python/NumPy/JAX
+  # combinations are not compatible with all AmberTools dependencies yet.
+  - python =3.12
   - pip
+  # rocklinc still imports pkg_resources, which setuptools 81+ removed.
+  - setuptools <81
   - ambertools >=23.6
   - openbabel
-  - numpy >=1.26,<2.3
-  - pandas >=2.2,<3
+  - numpy >=1.26,<2
+  - pandas >=2.2,!=2.3.3,<3
   - pillow >=9,<12.3
+  # Compatibility constraints required by proprep/pdb2pqr.
+  - biopython >=1.83,<1.86
+  - pdb2pqr >=3.5
+  - docutils <0.18
+  # Install alchemlyb's compiled dependency from Conda instead of building it
+  # from PyPI on platforms without a matching wheel.
+  - pyarrow
   - prettypyplot
   - seaborn
   - loguru
@@ -20,7 +31,8 @@ dependencies:
   - libgl
   - apbs
   - MDAnalysis >=2.9.0
-  - jax
+  - jax >=0.4,<0.5
+  - jaxlib >=0.4,<0.5
   - pymbar >4.0
   - scipy >=1.11,<1.17
   # dask distributed for analysis
