@@ -166,11 +166,6 @@ if [[ -z "${MPI_FLAGS}" ]]; then
 fi
 MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
 
-if [[ -f ${PFOLDER}/FINISHED ]]; then
-    echo "REMD is complete."
-    exit 0
-fi
-
 if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
@@ -197,34 +192,89 @@ target_dt_ps=$(parse_target_dt_ps "$tmpl0")
 chunk_steps=$(parse_nstlim "$tmpl0")
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-production_start_marker="${PFOLDER}/${WIN0}/production-start.ps"
-start_ps=$(production_start_ps "$production_start_marker" "${PFOLDER}/${WIN0}/eq.rst7")
+mark_remd_finished() {
+    local i win
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "$COMP" "$i")
+        [[ -f "${PFOLDER}/${win}/FINISHED" ]] || echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
+    done
+    [[ -f "${PFOLDER}/FINISHED" ]] || echo "FINISHED" > "${PFOLDER}/FINISHED"
+    echo "[INFO] ${PFOLDER_ABS}: REMD complete (window zero, 100 ps tolerance)."
+}
+window0_is_complete() {
+    production_is_complete "$current_ps" "$total_ps" "$dt_ps" ||
+        awk -v cur="$current_ps" -v total="$total_ps" 'BEGIN {exit !(total>=100 && total-cur<=100+1e-6)}'
+}
+start_ps=$(production_start_ps "${PFOLDER}/${WIN0}/production-start.ps" "${PFOLDER}/${WIN0}/eq.rst7")
 restart_name=$(select_window_restart_name "${PFOLDER}/${WIN0}" "$start_ps" "$retry") || exit 1
-if [[ ! -s "${PFOLDER}/${WIN0}/${restart_name}" ]]; then
-    echo "[ERROR] Missing restart file ${WIN0}/${restart_name}; cannot continue."
-    exit 1
-fi
 restart_ps=$(completed_time_ps_from_rst "${PFOLDER}/${WIN0}/${restart_name}")
-[[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
-[[ -z $current_ps ]] && current_ps=0
-
-last_idx=$(latest_md_index "${PFOLDER}/${WIN0}/md-*.out")
-[[ $last_idx -lt 0 ]] && last_idx=0
-restart_seg_idx=0
-if parsed_restart_seg_idx=$(md_segment_index_from_restart "$restart_name" 2>/dev/null); then
-    restart_seg_idx=$parsed_restart_seg_idx
+if [[ -f "${PFOLDER}/FINISHED" ]] || window0_is_complete; then
+    mark_remd_finished
+    exit 0
 fi
-(( restart_seg_idx > last_idx )) && last_idx=$restart_seg_idx
+
+# Read every replica before deciding progress or launching a segment.
+# Small offsets retain their real timestamps; run length follows the slowest replica.
+scan_replica_progress() {
+    local output_restart=${1:-}
+    local i win tmpl selected t start elapsed interval ntwr idx target
+    local min_time= max_time= checkpoint_ps=
+    current_ps=
+    last_idx=0
+    restart_names=()
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "$COMP" "$i")
+        tmpl="${PFOLDER}/${win}/mdin-remd-template"
+        [[ -f "$tmpl" ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
+        target=$(awk -v n="$(parse_total_steps "$tmpl")" -v d="$(parse_target_dt_ps "$tmpl")" 'BEGIN {printf "%.10f", n*d}')
+        if ! awk -v a="$target" -v b="$total_ps" -v d="$(parse_dt_ps "$tmpl")" -v expected="$dt_ps" 'BEGIN {exit !(a==b && d==expected)}'; then
+            echo "[ERROR] ${PFOLDER_ABS}: inconsistent production target or timestep in ${win}" >&2
+            return 1
+        fi
+        start=$(production_start_ps "${PFOLDER}/${win}/production-start.ps" "${PFOLDER}/${win}/eq.rst7")
+        if [[ -n "$output_restart" ]]; then
+            selected=$output_restart
+        else
+            selected=$(select_window_restart_name "${PFOLDER}/${win}" "$start" "$retry") || return 1
+        fi
+        [[ -s "${PFOLDER}/${win}/${selected}" ]] || { echo "[ERROR] Missing restart ${win}/${selected}" >&2; return 1; }
+        t=$(completed_time_ps_from_rst "${PFOLDER}/${win}/${selected}")
+        if [[ ! "$t" =~ ^[+-]?[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?$ ]]; then
+            echo "[ERROR] Invalid restart time in ${win}/${selected}" >&2
+            return 1
+        fi
+        elapsed=$(production_elapsed_ps "$t" "$start")
+        current_ps=$(awk -v a="$current_ps" -v b="$elapsed" 'BEGIN {printf "%.10f", (a=="" || b<a) ? b : a}')
+        min_time=$(awk -v a="$min_time" -v b="$t" 'BEGIN {printf "%.10f", (a=="" || b<a) ? b : a}')
+        max_time=$(awk -v a="$max_time" -v b="$t" 'BEGIN {printf "%.10f", (a=="" || b>a) ? b : a}')
+        # ntwr may be negative (numbered checkpoints); use its magnitude.
+        ntwr=$(sed -nE 's/^[[:space:]]*ntwr[[:space:]]*=[[:space:]]*(-?[0-9]+).*/\1/p' "$tmpl" | head -1)
+        interval=$(awk -v n="${ntwr:-0}" -v d="$dt_ps" 'BEGIN {if(n<0)n=-n; print n*d}')
+        checkpoint_ps=$(awk -v a="$checkpoint_ps" -v b="$interval" 'BEGIN {printf "%.10f", (a=="" || b<a) ? b : a}')
+        restart_names[i]=$selected
+        idx=$(latest_md_index "${PFOLDER}/${win}/md-*.out")
+        (( idx > last_idx )) && last_idx=$idx
+        idx=$(md_segment_index_from_restart "$selected" 2>/dev/null) || idx=0
+        (( idx > last_idx )) && last_idx=$idx
+    done
+    if ! awk -v lo="$min_time" -v hi="$max_time" -v interval="$checkpoint_ps" -v dt="$dt_ps" 'BEGIN {tol=dt*0.5; if(tol<1e-6)tol=1e-6; exit !(hi-lo<=interval+tol)}'; then
+        echo "[ERROR] ${PFOLDER_ABS}: Restart time mismatch exceeds one checkpoint interval (${checkpoint_ps} ps): ${min_time}–${max_time} ps" >&2
+        return 1
+    fi
+    restart_ps=$min_time
+    start_ps=$(production_start_ps "${PFOLDER}/${WIN0}/production-start.ps" "${PFOLDER}/${WIN0}/eq.rst7")
+    restart_name=${restart_names[0]}
+    if awk -v lo="$min_time" -v hi="$max_time" -v dt="$dt_ps" 'BEGIN {exit !(hi-lo>dt*0.5+1e-6)}'; then
+        echo "[INFO] ${PFOLDER_ABS}: accepting staggered checkpoints (${min_time}–${max_time} ps); progress uses the slowest replica."
+    fi
+}
+scan_replica_progress || exit 1
 
 echo "${PFOLDER_ABS}: Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
-if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
-    remaining_steps=0
-    current_ps="$total_ps"
-fi
 
 if (( remaining_steps > 0 )); then
     run_steps=$remaining_steps
@@ -255,25 +305,7 @@ if (( remaining_steps > 0 )); then
         dumpave_file="${win}/${cmass_file}"
         write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" "$dumpave_file" > "$current_mdin"
 
-        window_start_ps=$(production_start_ps "${PFOLDER}/${win}/production-start.ps" "${PFOLDER}/${win}/eq.rst7")
-        rst_in=$(select_window_restart_name "${PFOLDER}/${win}" "$window_start_ps" "$retry") || exit 1
-        if [[ ! -s "${win}/${rst_in}" ]]; then
-            echo "[ERROR] Missing restart file ${win}/${rst_in}; cannot continue."
-            exit 1
-        fi
-        window_restart_ps=$(completed_time_ps_from_rst "${win}/${rst_in}")
-        if ! awk -v got="$window_restart_ps" -v expected="$restart_ps" -v dt="$dt_ps" '
-            BEGIN {
-                delta = got - expected
-                if (delta < 0) delta = -delta
-                tol = dt * 0.5
-                if (tol < 1e-6) tol = 1e-6
-                exit !(delta <= tol)
-            }
-        '; then
-            echo "[ERROR] Restart time mismatch for ${win}/${rst_in}: ${window_restart_ps} ps; expected ${restart_ps} ps."
-            exit 1
-        fi
+        rst_in=${restart_names[i]}
 
         echo "-O -i ${win}/mdin-remd-current -p ${win_00}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/${rst_out} -x ${win}/${out_tag}.nc -ref ${win_00}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
     done
@@ -306,21 +338,14 @@ if (( remaining_steps > 0 )); then
         exit 1
     fi
     restart_ps=$(completed_time_ps_from_rst "${PFOLDER}/${WIN0}/${rst_out}")
-    [[ -z $restart_ps ]] && restart_ps=0
+    start_ps=$(production_start_ps "${PFOLDER}/${WIN0}/production-start.ps" "${PFOLDER}/${WIN0}/eq.rst7")
     current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
-    [[ -z $current_ps ]] && current_ps=0
 else
     current_ps="$total_ps"
 fi
 
-if production_is_complete "$current_ps" "$total_ps" "$dt_ps"; then
-    echo "FINISHED" > ${PFOLDER}/FINISHED
-    echo "[INFO] REMD complete; writing per-window FINISHED markers."
-    for ((i = 0; i < N_WINDOWS; i++)); do
-        win=$(printf "%s%02d" "${COMP}" "$i")
-        echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
-        echo "[INFO] ${win}: FINISHED"
-    done
+if window0_is_complete; then
+    mark_remd_finished
     exit 0
 fi
 echo "[INFO] Not finished yet; rerun to continue."
