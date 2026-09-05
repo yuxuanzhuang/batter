@@ -893,7 +893,6 @@ def _run_remd_batch(
         "  fi",
         "  local next_attempt=$((attempt + 1))",
         '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
-        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
         "}",
         "",
         "run_remd_task() {",
@@ -1090,7 +1089,7 @@ def _run_remd_batch(
 @click.option(
     "--max-resubmit-count",
     type=int,
-    default=4,
+    default=6,
     show_default=True,
     help="Maximum total submissions (including the first run) when auto-resubmitting.",
 )
@@ -1334,7 +1333,6 @@ def batch(
         "  fi",
         "  local next_attempt=$((attempt + 1))",
         '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
-        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
         "}",
         "",
         "run_batch_task() {",

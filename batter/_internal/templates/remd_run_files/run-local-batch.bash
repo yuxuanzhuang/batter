@@ -56,9 +56,8 @@ select_window_restart_name() {
     )
 }
 
-# Echo commands before executing them so the full invocation is visible
+# Execute the command without echoing the launch line
 print_and_run() {
-    echo "$@"
     eval "$@"
 }
 
@@ -157,7 +156,7 @@ if parsed_restart_seg_idx=$(md_segment_index_from_restart "$restart_name" 2>/dev
 fi
 (( restart_seg_idx > last_idx )) && last_idx=$restart_seg_idx
 
-echo "Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
+echo "${PFOLDER_ABS}: Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
