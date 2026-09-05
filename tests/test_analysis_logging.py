@@ -324,7 +324,9 @@ def test_boresch_analysis_selects_ligand_specific_tag(
 
 
 def test_boresch_fe_int_uses_numpy_trapezoid_without_trapz(monkeypatch) -> None:
-    real_trapezoid = analysis_mod.np.trapezoid
+    real_trapezoid = getattr(analysis_mod.np, "trapezoid", None)
+    if real_trapezoid is None:
+        real_trapezoid = analysis_mod.np.trapz
     calls = 0
 
     def _trapezoid(y, x):
@@ -332,7 +334,7 @@ def test_boresch_fe_int_uses_numpy_trapezoid_without_trapz(monkeypatch) -> None:
         calls += 1
         return real_trapezoid(y, x)
 
-    monkeypatch.setattr(analysis_mod.np, "trapezoid", _trapezoid)
+    monkeypatch.setattr(analysis_mod.np, "trapezoid", _trapezoid, raising=False)
     monkeypatch.delattr(analysis_mod.np, "trapz", raising=False)
 
     result = analysis_mod.BoreschAnalysis.fe_int(
