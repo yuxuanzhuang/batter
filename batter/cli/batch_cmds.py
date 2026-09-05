@@ -499,31 +499,11 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                 )
                 continue
 
-            finish_time = _remd_finished_time(comp_dir, comp)
-            total_ps = _remd_total_ps(comp_dir, comp) if finish_time else None
-            is_finished = finished_marker.exists()
-            if not is_finished and finish_time and total_ps is not None:
-                try:
-                    remaining_ps = total_ps - float(finish_time)
-                except Exception:
-                    remaining_ps = None
-                if (
-                    remaining_ps is not None
-                    and total_ps >= 100.0
-                    and remaining_ps <= 100.0
-                ):
-                    is_finished = True
-            status_note = "finished" if is_finished else "pending"
-            if finish_time:
-                logger.debug(
-                    f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
-                )
-            else:
-                logger.debug(
-                    f"[remd-batch] {comp_dir} window0 time unavailable ({status_note})."
-                )
-
-            if is_finished:
+            if finished_marker.exists() or _remd_window0_complete(comp_dir, comp):
+                for directory in [comp_dir, *_component_window_dirs(comp_dir, comp)]:
+                    marker = directory / "FINISHED"
+                    if not marker.exists():
+                        marker.write_text("FINISHED\n")
                 logger.debug(f"[remd-batch] {comp_dir} already finished; skipping.")
                 continue
 
@@ -641,6 +621,26 @@ def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
     return None
 
 
+def _remd_window0_complete(comp_dir: Path, comp: str) -> bool:
+    """Use window zero's production time, allowing up to 100 ps remaining."""
+    try:
+        time = float(_remd_finished_time(comp_dir, comp))
+        total = _remd_total_ps(comp_dir, comp)
+        if total is None:
+            return False
+        win0 = comp_dir / f"{comp}00"
+        marker = win0 / "production-start.ps"
+        start = float(marker.read_text()) if marker.exists() else float(
+            _remd_time_from_rst(win0 / "eq.rst7")
+        )
+        remaining = total - (time - start)
+        return all(math.isfinite(v) for v in (time, total, start)) and (
+            remaining <= 1e-6 or (total >= 100.0 and remaining <= 100.0 + 1e-6)
+        )
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:
     tmpl = comp_dir / f"{comp}00" / "mdin-remd-template"
     if not tmpl.is_file():
@@ -668,6 +668,12 @@ def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:
             dt = float(dt_match.group(1).replace("d", "e").replace("D", "e"))
         except Exception:
             dt = 0.001
+    target_match = re.search(
+        r"^[!#]\s*target_dt\s*=\s*([-+0-9.eEdD]+)", text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if target_match:
+        dt = float(target_match.group(1).replace("D", "e").replace("d", "e"))
     return total_steps * dt
 
 
@@ -893,7 +899,6 @@ def _run_remd_batch(
         "  fi",
         "  local next_attempt=$((attempt + 1))",
         '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
-        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
         "}",
         "",
         "run_remd_task() {",
@@ -1090,7 +1095,7 @@ def _run_remd_batch(
 @click.option(
     "--max-resubmit-count",
     type=int,
-    default=4,
+    default=6,
     show_default=True,
     help="Maximum total submissions (including the first run) when auto-resubmitting.",
 )
@@ -1334,7 +1339,6 @@ def batch(
         "  fi",
         "  local next_attempt=$((attempt + 1))",
         '  printf "%s\\n" "$next_attempt" > "$attempt_file"',
-        '  echo "[INFO] ${dir}: advanced job_attempt.txt ${attempt} -> ${next_attempt}"',
         "}",
         "",
         "run_batch_task() {",

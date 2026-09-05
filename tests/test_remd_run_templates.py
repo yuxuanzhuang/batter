@@ -525,3 +525,91 @@ def test_run_local_remd_caps_dumpfreq_to_exchange_block(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     text = (win0 / "mdin-remd-current").read_text()
     assert "type='DUMPFREQ', istep1=200" in text
+
+
+@pytest.mark.parametrize("lag, short_output", [(0.0, False), (10.0, False), (10.1, False), (10.0, True)])
+def test_remd_staggered_restart_uses_slowest_replica(tmp_path, lag, short_output):
+    comp, w0, tmpl = _prepare_component(
+        tmp_path, script_name="run-local-remd.bash",
+        template_name="mdin-remd-template", total_steps=2500000,
+        dt=0.004, nstlim=1000,
+    )
+    script = comp / "run-local-remd.bash"
+    script.write_text(script.read_text().replace("N_WINDOWS=1", "N_WINDOWS=2"))
+    tmpl.write_text(tmpl.read_text().replace("ntwr = 10", "ntwr = 2500"))
+    w1 = comp / "z01"
+    w1.mkdir()
+    (w1 / tmpl.name).write_text(tmpl.read_text())
+    for w, time in [(w0, 7500.0), (w1, 7500.0 - lag)]:
+        (w / "eq.rst7").write_text(_restart_text(50))
+        (w / "production-start.ps").write_text("50\n")
+        (w / "md-01.rst7").write_text(_restart_text(time))
+        (w / "md-01.out").write_text("interrupted\n")
+    # Successful engine stub advances each input's own timestamp by requested MD.
+    engine = tmp_path / "engine.py"
+    _write_exe(engine, '''#!/usr/bin/env python3
+import pathlib, re, shlex, sys
+args = sys.argv
+p = pathlib.Path(args[args.index('-groupfile')+1])
+for line in p.read_text().splitlines():
+    args = shlex.split(line)
+    get = lambda flag: pathlib.Path(args[args.index(flag)+1])
+    mdin = get('-i').read_text()
+    value = lambda name: float(re.search(r'\\b'+name+r'\\s*=\\s*([0-9.]+)', mdin)[1])
+    time = float(get('-c').read_text().splitlines()[1].split()[1])
+    time += value('dt')*value('nstlim')*value('numexchg')
+    get('-r').write_text(f'restart\\n1 {time:.8f}\\n 0.0 0.0 0.0\\n')
+    get('-o').write_text('done\\n')
+''')
+    if short_output:
+        engine.write_text(engine.read_text().replace(
+            "time += value('dt')*value('nstlim')*value('numexchg')",
+            "time += 5.0",
+        ))
+    env = dict(os.environ, PMEMD_MPI_EXEC=str(engine), MPI_EXEC="env", MPI_FLAGS=" ", RETRY_COUNT="1")
+    result = subprocess.run(["bash", str(script)], cwd=comp, env=env, text=True, capture_output=True)
+    if lag > 10:
+        assert result.returncode != 0
+        assert "exceeds one checkpoint interval" in result.stderr
+        assert not (comp / "FINISHED").exists()
+        assert not (comp / "remd/mdin.in.remd.groupfile").exists()
+    elif short_output:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not (comp / "FINISHED").exists()
+        assert not (w1 / "FINISHED").exists()
+        assert "Not finished yet" in result.stdout
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (comp / "FINISHED").exists()
+        assert (w1 / "FINISHED").exists()
+        if lag:
+            assert "accepting staggered checkpoints" in result.stdout
+            assert "7440.0000000000 ps / 10000" in result.stdout
+            assert "numexchg = 640," in (w1 / "mdin-remd-current").read_text()
+            assert float((w1 / "md-02.rst7").read_text().splitlines()[1].split()[1]) >= 10050
+        else:
+            assert (w1 / "mdin-remd-current").exists()
+
+
+@pytest.mark.parametrize("already_marked", [False, True])
+def test_remd_window_zero_shortcut_writes_missing_markers(tmp_path, already_marked):
+    comp, w0, _ = _prepare_component(
+        tmp_path, script_name="run-local-remd.bash",
+        template_name="mdin-remd-template", total_steps=2500000,
+        dt=0.004, nstlim=1000,
+    )
+    script = comp / "run-local-remd.bash"
+    script.write_text(script.read_text().replace("N_WINDOWS=1", "N_WINDOWS=2"))
+    w1 = comp / "z01"
+    w1.mkdir()  # Completion must not need another replica's restart or template.
+    (w0 / "eq.rst7").write_text(_restart_text(50))
+    (w0 / "production-start.ps").write_text("50\n")
+    (w0 / "md-01.rst7").write_text(_restart_text(9950))
+    (w0 / "md-01.out").write_text("interrupted\n")
+    if already_marked:
+        (comp / "FINISHED").write_text("FINISHED\n")
+    result = subprocess.run(["bash", str(script)], cwd=comp, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    for directory in (comp, w0, w1):
+        assert (directory / "FINISHED").read_text() == "FINISHED\n"
+    assert not (comp / "remd/mdin.in.remd.groupfile").exists()

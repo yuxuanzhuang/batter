@@ -250,3 +250,32 @@ def test_batch_cli_remd_explains_missing_rbfe_transformations(tmp_path: Path) ->
     assert "missing" in result.output
     assert "simulations/transformations" in result.output
     assert "fe/x" in result.output
+
+
+
+def test_collect_remd_marks_finished_using_only_window_zero(tmp_path, monkeypatch):
+    execution = tmp_path / "executions/rep1"
+    comp = _setup_abfe_component(execution, ligand="L1", comp="z")
+    (comp / "run-local-remd.bash").write_text("N_WINDOWS=2\n")
+    (comp / "z01").mkdir()
+    w0 = comp / "z00"
+    (w0 / "mdin-remd-template").write_text(
+        "! total_steps=2500000\n! target_dt=0.004\n dt=0.002,\n"
+    )
+    (w0 / "production-start.ps").write_text("50\n")
+    restart = w0 / "md-01.rst7"
+    monkeypatch.setattr(batch_cmds, "components_under", lambda _: ["z"])
+    monkeypatch.setattr(batch_cmds, "_remd_time_from_rst", lambda p: p.read_text())
+    # 9899 ps production: still pending, despite including 50 ps equilibration.
+    restart.write_text("9949")
+    assert len(batch_cmds._collect_remd_tasks(execution)) == 1
+    assert not (comp / "FINISHED").exists()
+    # 9900 ps production: within 100 ps, even without any z01 restart.
+    restart.write_text("9950")
+    assert batch_cmds._collect_remd_tasks(execution) == []
+    for directory in (comp, w0, comp / "z01"):
+        assert (directory / "FINISHED").read_text() == "FINISHED\n"
+    # Existing component completion also repairs a missing window marker.
+    (comp / "z01/FINISHED").unlink()
+    assert batch_cmds._collect_remd_tasks(execution) == []
+    assert (comp / "z01/FINISHED").exists()

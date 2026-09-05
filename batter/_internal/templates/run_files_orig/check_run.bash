@@ -30,7 +30,6 @@ archive_existing_log_file() {
     fi
 
     mv -f "$log_path" "$archived_path"
-    echo "[INFO] Archived existing log file to ${archived_path}"
 }
 
 archive_failed_job_files() {
@@ -1264,7 +1263,6 @@ archive_failed_md_segment() {
 
         if (( moved_any )); then
             append_attempt_failed_archive "$archive_dir"
-            echo "[INFO] Archived failed grouped MD files to ${archive_dir}"
         else
             rmdir "$archive_dir" 2>/dev/null || true
             rmdir "${window_dir}/WRONG_FAIL" 2>/dev/null || true
