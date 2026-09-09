@@ -16,6 +16,7 @@ from importlib import util as importlib_util
 import json
 import smtplib
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Sequence
 from smtplib import SMTPException
@@ -24,6 +25,7 @@ import yaml
 
 from loguru import logger
 
+from batter import __version__ as batter_version
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
 from batter.exec.local import LocalBackend
@@ -423,6 +425,93 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
         shutil.copy2(yaml_path, dst)
     except Exception as exc:
         logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
+
+
+def _git_output(source_root: Path, *args: str) -> str | None:
+    """Return Git output without making Git a runtime requirement."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(source_root), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    return output or None
+
+
+def _batter_provenance() -> dict[str, Any]:
+    """Describe the installed BATTER package and, for a checkout, its exact revision."""
+    source_root = Path(__file__).resolve().parents[2]
+    provenance: dict[str, Any] = {
+        "version": str(batter_version),
+        "source_path": str(source_root),
+    }
+
+    git_root = _git_output(source_root, "rev-parse", "--show-toplevel")
+    if git_root is None:
+        return provenance
+
+    provenance["git_root"] = git_root
+    provenance["git_revision"] = _git_output(source_root, "rev-parse", "HEAD")
+    provenance["git_describe"] = _git_output(
+        source_root, "describe", "--tags", "--always", "--dirty"
+    )
+    status = _git_output(source_root, "status", "--porcelain")
+    provenance["git_dirty"] = bool(status)
+    return provenance
+
+
+def _store_run_metadata(
+    run_dir: Path,
+    *,
+    protocol: str,
+    backend: str,
+    system_name: str,
+    run_id: str,
+) -> None:
+    """Persist run identity and version provenance for every invocation."""
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    run_meta_path = config_dir / "run_meta.json"
+
+    metadata: dict[str, Any] = {}
+    if run_meta_path.exists():
+        try:
+            loaded = json.loads(run_meta_path.read_text())
+            if isinstance(loaded, dict):
+                metadata = loaded
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                f"Could not read existing run metadata at {run_meta_path}: {exc}"
+            )
+
+    provenance = {
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        **_batter_provenance(),
+    }
+    history = metadata.get("batter_invocations")
+    if not isinstance(history, list):
+        history = []
+    history.append(provenance)
+
+    metadata.update(
+        {
+            "protocol": protocol,
+            "backend": backend,
+            "system_name": system_name,
+            "run_id": run_id,
+            "batter_version": provenance["version"],
+            "batter_provenance": provenance,
+            "batter_invocations": history,
+        }
+    )
+    run_meta_path.write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 def _clear_failure_markers(run_dir: Path) -> None:
@@ -1259,6 +1348,13 @@ def _run_from_yaml_impl(
     _preflight_rbfe_mapping_files(rc, run_dir)
 
     _store_run_yaml_copy(run_dir, path)
+    _store_run_metadata(
+        run_dir,
+        protocol=rc.protocol,
+        backend=rc.backend,
+        system_name=rc.create.system_name,
+        run_id=run_id,
+    )
 
     # Ligands
     lig_original_names: Dict[str, str] = {}
@@ -1501,19 +1597,6 @@ def _run_from_yaml_impl(
     from batter.config.io import write_yaml_config
 
     write_yaml_config(sim_cfg_updated, config_dir / "sim.resolved.yaml")
-
-    run_meta_path = config_dir / "run_meta.json"
-    run_meta_path.write_text(
-        json.dumps(
-            {
-                "protocol": rc.protocol,
-                "backend": rc.backend,
-                "system_name": rc.create.system_name,
-                "run_id": run_id,
-            },
-            indent=2,
-        )
-    )
 
     per_lig = _build_per_ligand_pipeline(tpl, sim_cfg_updated)
     phase_prepare_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["prepare_equil"])

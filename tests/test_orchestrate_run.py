@@ -76,6 +76,66 @@ def test_preflight_required_python_packages_passes_when_available(
     run_mod._preflight_required_python_packages()
 
 
+def test_store_run_metadata_records_version_and_git_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provenance = {
+        "version": "1.2.3+4.gabc1234.dirty",
+        "source_path": "/src/batter",
+        "git_root": "/src/batter",
+        "git_revision": "abc1234",
+        "git_describe": "v1.2.3-4-gabc1234-dirty",
+        "git_dirty": True,
+    }
+    monkeypatch.setattr(run_mod, "_batter_provenance", lambda: provenance)
+
+    run_mod._store_run_metadata(
+        tmp_path,
+        protocol="abfe",
+        backend="local",
+        system_name="sys",
+        run_id="rep1",
+    )
+
+    metadata = json.loads(
+        (tmp_path / "artifacts" / "config" / "run_meta.json").read_text()
+    )
+    assert metadata["batter_version"] == provenance["version"]
+    assert metadata["batter_provenance"]["git_revision"] == "abc1234"
+    assert metadata["batter_provenance"]["git_dirty"] is True
+    assert len(metadata["batter_invocations"]) == 1
+
+
+def test_store_run_metadata_preserves_invocation_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    versions = iter(
+        [
+            {"version": "1.0.0", "source_path": "/first"},
+            {"version": "2.0.0", "source_path": "/second"},
+        ]
+    )
+    monkeypatch.setattr(run_mod, "_batter_provenance", lambda: next(versions))
+    kwargs = {
+        "protocol": "abfe",
+        "backend": "local",
+        "system_name": "sys",
+        "run_id": "rep1",
+    }
+
+    run_mod._store_run_metadata(tmp_path, **kwargs)
+    run_mod._store_run_metadata(tmp_path, **kwargs)
+
+    metadata = json.loads(
+        (tmp_path / "artifacts" / "config" / "run_meta.json").read_text()
+    )
+    assert metadata["batter_version"] == "2.0.0"
+    assert [item["version"] for item in metadata["batter_invocations"]] == [
+        "1.0.0",
+        "2.0.0",
+    ]
+
+
 def test_analysis_inner_workers_avoids_nested_parallelism() -> None:
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=6) == 1
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=1) == 8
