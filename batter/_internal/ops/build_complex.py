@@ -41,6 +41,10 @@ from batter._internal.ops.helpers import (
     save_anchors,
 )
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
+from batter.systemprep.artifacts import (
+    resolve_docked_system_pdb,
+    resolve_ligand_pdb,
+)
 
 
 _INITIAL_SALT_BRIDGE_DISTANCE_CUTOFF = 4.0
@@ -2823,10 +2827,12 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Bring the input ligand + reference files
     all_ligand_folder = ctx.system_root / "all-ligands"
+    docked_system_pdb = resolve_docked_system_pdb(ctx.system_root, system_name)
+    staged_ligand_pdb = resolve_ligand_pdb(ctx.system_root, ligand)
     shutil.copy2(all_ligand_folder / "reference.pdb", build_dir / "reference.pdb")
-    shutil.copy2(all_ligand_folder / f"{system_name}.pdb", build_dir / "rec_file.pdb")
-    shutil.copy2(all_ligand_folder / f"{ligand}.pdb", build_dir / f"{ligand}.pdb")
-    shutil.copy2(all_ligand_folder / f"{ligand}.pdb", work / f"{ligand}.pdb")
+    shutil.copy2(docked_system_pdb, build_dir / "rec_file.pdb")
+    shutil.copy2(staged_ligand_pdb, build_dir / f"{ligand}.pdb")
+    shutil.copy2(staged_ligand_pdb, work / f"{ligand}.pdb")
 
     # Ensure ligand atom names match antechamber mol2 (ligand.ff prepared earlier)
     shutil.copy2(work.parent / "params" / f"{mol}.mol2", build_dir / f"{mol}.mol2")
@@ -3830,8 +3836,7 @@ def build_complex_x(ctx) -> bool:
     # Stage alternate-ligand inputs alongside build files for downstream RBFE steps.
     build_dir = ctx.build_dir
     sys_root = ctx.system_root
-    all_ligs = sys_root / "all-ligands"
-    alt_pdb = all_ligs / f"{lig_alt}.pdb"
+    alt_pdb = resolve_ligand_pdb(sys_root, lig_alt)
     if alt_pdb.exists():
         shutil.copy2(alt_pdb, build_dir / alt_pdb.name)
     else:
@@ -3866,7 +3871,6 @@ def build_complex_lig(ctx) -> bool:
     ligand = ctx.ligand
     mol = ctx.residue_name
     sys_root = ctx.system_root
-    all_ligand_folder = sys_root / "all-ligands"
     ff_dir = sys_root / "simulations" / ligand / "params"
     param_json = ff_dir / f"{mol}.json"
     apo_ligand = _is_apo_ligand_build(param_json, ligand, mol)
@@ -3874,13 +3878,13 @@ def build_complex_lig(ctx) -> bool:
     shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
 
     # Inputs
-    ligand_pdb = all_ligand_folder / f"{ligand}.pdb"
+    ligand_pdb = resolve_ligand_pdb(sys_root, ligand)
     if not ligand_pdb.exists():
         raise FileNotFoundError(f"[build_complex_y] Missing ligand pdb: {ligand_pdb}")
 
     # Copy <pose>.pdb into build_dir
     shutil.copy2(ligand_pdb, build_dir / f"{ligand}.pdb")
-    shutil.copy2(all_ligand_folder / f"{ligand}.pdb", work / f"{ligand}.pdb")
+    shutil.copy2(ligand_pdb, work / f"{ligand}.pdb")
 
     # Ensure ligand atom names match antechamber mol2 (ligand.ff prepared earlier)
     shutil.copy2(ff_dir / f"{mol}.mol2", build_dir / f"{mol}.mol2")

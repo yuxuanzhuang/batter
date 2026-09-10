@@ -37,6 +37,10 @@ from batter.pipeline.payloads import StepPayload
 
 from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository
+from batter.systemprep.artifacts import (
+    resolve_docked_system_pdb,
+    resolve_ligand_pdb,
+)
 
 from batter.exec.slurm_mgr import SlurmJobManager
 from batter._internal.ops.cleanup import cleanup_fe_equil_after_success
@@ -162,24 +166,31 @@ def _load_json_mapping(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _ligand_pdb_exists(stage_dir: Path, ligand: str) -> bool:
-    return any(
-        (stage_dir / f"{candidate}.pdb").exists()
-        for candidate in (ligand, ligand.upper())
-    )
-
-
 def _system_prep_missing_ligands(run_dir: Path, lig_map: Dict[str, Path]) -> List[str]:
     stage_dir = run_dir / "all-ligands"
     manifest = _load_json_mapping(stage_dir / "manifest.json")
     manifest_ligands = manifest.get("ligands") if manifest else None
     present = set(manifest_ligands) if isinstance(manifest_ligands, dict) else set()
+    docked_pdb = resolve_docked_system_pdb(
+        run_dir,
+        str(manifest.get("system_name") or "") if manifest else None,
+        manifest=manifest,
+    )
     missing: List[str] = []
     for name in lig_map:
         if name not in present and name.upper() not in present:
             missing.append(name)
             continue
-        if not _ligand_pdb_exists(stage_dir, name):
+        ligand_pdb = resolve_ligand_pdb(run_dir, name, manifest=manifest)
+        if not ligand_pdb.is_file():
+            missing.append(name)
+            continue
+        if ligand_pdb.resolve() == docked_pdb.resolve():
+            logger.warning(
+                "System-prep manifest maps system and ligand '{}' to the same PDB; "
+                "forcing system preparation to run again.",
+                name,
+            )
             missing.append(name)
     return missing
 

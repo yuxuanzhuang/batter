@@ -25,6 +25,11 @@ from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
+from batter.systemprep.artifacts import (
+    docked_system_pdb_path,
+    ligand_pdb_path,
+    manifest_artifact_path,
+)
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import (
     find_anchor_atoms,
@@ -1029,7 +1034,9 @@ class _SystemPrepRunner:
             new_name = charmm_2_std_resname_map.get((atom.resname, atom.name), atom.name)
             atom.name = new_name
 
-        u_merged.atoms.write(f"{self.ligands_folder}/{self.system_name}.pdb")
+        docked_path = docked_system_pdb_path(self.output_dir)
+        docked_path.parent.mkdir(parents=True, exist_ok=True)
+        u_merged.atoms.write(docked_path)
         protein_ref = u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         protein_ref.write(f"{self.ligands_folder}/reference.pdb")
 
@@ -1068,10 +1075,11 @@ class _SystemPrepRunner:
 
             logger.debug(f"Processing ligand {i}: {ligand_path}")
             self._align_2_system(u.atoms)
-            out_ligand = f"{self.ligands_folder}/{name}.pdb"
+            out_ligand = ligand_pdb_path(self.output_dir, name)
+            out_ligand.parent.mkdir(parents=True, exist_ok=True)
             u.atoms.write(out_ligand)
 
-            new_ligand_dict[name] = out_ligand
+            new_ligand_dict[name] = str(out_ligand)
         self.ligand_dict = new_ligand_dict
 
     # -----------------------
@@ -1259,10 +1267,16 @@ class _SystemPrepRunner:
 
         # manifest for downstream steps
         manifest = {
+            "layout_version": 2,
             "system_name": self._system_name,
             "reference": str(self.ligands_folder / "reference.pdb"),
-            "docked": str(self.ligands_folder / f"{self._system_name}.pdb"),
-            "ligands": dict(self.ligand_dict),
+            "docked": manifest_artifact_path(
+                self.output_dir, docked_system_pdb_path(self.output_dir)
+            ),
+            "ligands": {
+                name: manifest_artifact_path(self.output_dir, path)
+                for name, path in self.ligand_dict.items()
+            },
             "dssp": dssp_result,
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
             "anchor_atom_selections": list(self.anchor_atoms),
@@ -1347,7 +1361,7 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
 
     outputs = [
         system.root / "all-ligands" / "reference.pdb",
-        system.root / "all-ligands" / f"{sys_params['system_name']}.pdb",
+        docked_system_pdb_path(system.root),
     ]
     updates = {
         "p1": manifest["anchors"]["p1"],
