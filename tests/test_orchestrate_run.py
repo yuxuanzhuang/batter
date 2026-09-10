@@ -1162,6 +1162,54 @@ def test_abfe_diff_pipeline_uses_pre_fe_equil_before_final_fe() -> None:
     assert pipeline.dependencies("prepare_fe") == ["pre_fe_equil"]
 
 
+def test_dd_pipeline_uses_normal_abfe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "dd",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "dd",
+                "components": ["e", "v", "f", "w"],
+                "dic_n_steps": {
+                    comp: 100_000 for comp in ("e", "v", "f", "w")
+                },
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
+
+
+def test_uno_dd_pipeline_uses_normal_abfe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "uno_dd",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "uno_dd",
+                "components": ["z", "y"],
+                "dic_n_steps": {comp: 100_000 for comp in ("z", "y")},
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
+
+
 def test_ligand_rest_pipeline_uses_normal_single_ligand_fe_flow() -> None:
     from batter.orchestrate.pipeline_utils import select_pipeline
 
@@ -1431,6 +1479,10 @@ def test_resolve_signature_conflict_raises_on_mismatch(tmp_path: Path) -> None:
 def test_select_system_builder_validates_system_type() -> None:
     builder = rs.select_system_builder("abfe", system_type=None)
     assert builder is not None
+    dd_builder = rs.select_system_builder("dd", system_type=None)
+    assert dd_builder is not None
+    uno_dd_builder = rs.select_system_builder("uno-dd", system_type=None)
+    assert uno_dd_builder is not None
     abfe_diff_builder = rs.select_system_builder("ABFE-diff", system_type=None)
     assert abfe_diff_builder is not None
     ligand_rest_builder = rs.select_system_builder("ligand-rest", system_type=None)

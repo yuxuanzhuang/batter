@@ -34,6 +34,14 @@ class ABFEDiff(ABFE):
     name = "abfe_diff"
 
 
+class DD(ABFE):
+    name = "dd"
+
+
+class UnoDD(ABFE):
+    name = "uno_dd"
+
+
 class LigandRest(ABFE):
     name = "ligand_rest"
 
@@ -103,6 +111,8 @@ class RBFESeptop(RBFE):
 # One-time registration
 from .protocols import register_protocol
 register_protocol(ABFE())
+register_protocol(DD())
+register_protocol(UnoDD())
 register_protocol(ABFEDiff())
 register_protocol(LigandRest())
 register_protocol(ASFE())

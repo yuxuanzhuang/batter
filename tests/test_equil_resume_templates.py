@@ -367,6 +367,41 @@ def test_run_equil_skips_existing_steps(tmp_path: Path) -> None:
     assert "eqnpt_appear.out" in calls
 
 
+def test_run_equil_dd_skips_sdr_alchemical_handoff(tmp_path: Path) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["BATTER_RUN_ALCHEMICAL_HANDOFF"] = "0"
+    for name in [
+        "mini.rst7",
+        "mini2.rst7",
+        "eqnvt.rst7",
+        "eqnpt_pre.rst7",
+        "eqnpt00.rst7",
+        "eqnpt01.rst7",
+        "eqnpt02.rst7",
+        "eqnpt03.rst7",
+        "eqnpt04.rst7",
+        "eqnpt_eq.rst7",
+    ]:
+        _write_file(tmp_path / name, "rst\n")
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "eqnpt_disappear.out" not in calls
+    assert "eqnpt_appear.out" not in calls
+    assert (tmp_path / "eqnpt_appear.rst7").read_bytes() == (
+        tmp_path / "eqnpt_eq.rst7"
+    ).read_bytes()
+    assert "DD protocol: skipped the SDR alchemical handoff" in result.stdout
+
+
 def test_run_equil_reruns_existing_steps_after_failure_when_enabled(tmp_path: Path) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
     env["RERUN_EQ_STEPS_AFTER_FAILURE"] = "1"

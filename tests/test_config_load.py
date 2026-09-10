@@ -826,6 +826,10 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     normalized_protocol = protocol.lower().replace("-", "_")
     if normalized_protocol == "abfe":
         n_steps = {"z": 300_000}
+    elif normalized_protocol == "dd":
+        n_steps = {comp: 300_000 for comp in ("e", "v", "f", "w")}
+    elif normalized_protocol == "uno_dd":
+        n_steps = {comp: 300_000 for comp in ("z", "y")}
     elif normalized_protocol == "abfe_diff":
         n_steps = {"d": 300_000}
     elif normalized_protocol == "ligand_rest":
@@ -857,6 +861,8 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     [
         ("asfe", "asfe"),
         ("abfe", "uno_rest"),
+        ("dd", "dd"),
+        ("uno_dd", "uno_dd"),
         ("ABFE_diff", "uno_rest_diff"),
         ("ligand-rest", "ligand_rest"),
         ("rbfe-septop", "relative_septop"),

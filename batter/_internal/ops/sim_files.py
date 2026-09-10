@@ -1552,6 +1552,252 @@ def _sim_files_d_sdr_charge_transfer(
     )
 
 
+@register_sim_files("e")
+@register_sim_files("f")
+@register_sim_files("v")
+@register_sim_files("w")
+def sim_files_dd(ctx: BuildContext, lambdas: Sequence[float]) -> None:
+    """Write the four traditional double-decoupling component inputs.
+
+    Components ``e``/``f`` are the bound/solvent charge legs and use a
+    two-copy linear transformation.  Components ``v``/``w`` are the
+    corresponding single-topology soft-core Lennard-Jones legs.
+    """
+    sim = ctx.sim
+    comp = ctx.comp.lower()
+    if sim.dec_method != "dd":
+        raise ValueError(
+            f"Traditional component {comp!r} requires dec_method='dd', got {sim.dec_method!r}."
+        )
+    if comp not in {"e", "f", "v", "w"}:
+        raise ValueError(f"Unsupported traditional DD component: {comp!r}")
+
+    windows_dir = ctx.window_dir
+    amber_dir = ctx.amber_dir
+    mol = ctx.residue_name
+    win = ctx.win
+    temperature = sim.temperature
+    ntwx = int(sim.ntwx)
+    total_steps = int(sim.dic_n_steps[comp])
+    weight = float(lambdas[win if win != -1 else 0])
+    charge_leg = comp in {"e", "f"}
+    bound_leg = comp in {"e", "v"}
+
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ligand_resids = _ligand_resids_from_pdb(vac_pdb, mol)
+    expected_copies = 2 if charge_leg else 1
+    if len(ligand_resids) != expected_copies:
+        raise ValueError(
+            f"DD component {comp!r} requires {expected_copies} {mol!r} residue "
+            f"copy/copies, found {ligand_resids} in {vac_pdb}."
+        )
+    mk1 = ligand_resids[0]
+    mk2 = ligand_resids[1] if charge_leg else None
+    template_name = "mdin-ch-dd" if charge_leg else "mdin-lj-dd"
+    mini_name = "mini-ch-dd" if charge_leg else "mini-lj-dd"
+    template = amber_dir / template_name
+    mini_template = amber_dir / mini_name
+    ntwprt_atoms = _fe_ntwprt_atom_count(windows_dir, sim.all_atoms)
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=2) if bound_leg else ""
+
+    def render_dynamic_input(
+        destination: Path,
+        *,
+        steps: int,
+        chunk_steps: int,
+        seed: bool,
+    ) -> None:
+        with template.open("rt") as fin, destination.open("wt") as fout:
+            if not seed:
+                fout.write(f"! total_steps={steps}\n")
+            for line in fin:
+                if seed and "ntx = 5" in line:
+                    line = "  ntx = 1,\n"
+                elif seed and "irest = 1" in line:
+                    line = "  irest = 0,\n"
+                elif seed and "dt = " in line:
+                    line = "  dt = 0.002,\n"
+                elif seed and "ntwx = " in line and win == -1:
+                    line = f"  ntwx = {chunk_steps},\n"
+                elif seed and "ntwprt = " in line and win == -1:
+                    # Scaffold trajectories are converted into full-system
+                    # restart files for each lambda window.  A reduced
+                    # trajectory cannot be read with the full topology.
+                    line = "\n"
+                elif not bound_leg and "nmropt = " in line:
+                    line = "  nmropt = 0,\n"
+                elif not bound_leg and "ntr = " in line:
+                    line = "  ntr = 1,\n"
+                elif "restraintmask" in line:
+                    if bound_leg and seed:
+                        line = (
+                            "  restraintmask = "
+                            f"'((@CA & {non_loop_mask}) | :{mol}) & !@H=',\n"
+                        )
+                    elif not bound_leg:
+                        line = f"  restraintmask = ':{mol}',\n"
+
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                    .replace("_num-atoms_", str(ntwprt_atoms))
+                    .replace("_num-steps_", str(steps if seed else chunk_steps))
+                    .replace("lbd_val", f"{weight:6.5f}")
+                    .replace("mk1", str(mk1))
+                )
+                if mk2 is not None:
+                    line = line.replace("mk2", str(mk2))
+                fout.write(line)
+
+        with destination.open("a") as mdin:
+            if seed and win == -1:
+                mdin.write("  ntwv = -1,\n")
+                mdin.write(f"  dynlmb = {1.0 / (DEFAULT_FE_SEED_LAMBDA_STATES - 1)},\n")
+                mdin.write(f"  ntave = {chunk_steps},\n")
+            if bound_leg and not seed:
+                mcwat_mask = ":" + ",".join(str(x) for x in ligand_resids)
+                _write_mcwat_fe_block(mdin, sim, mcwat_mask)
+            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write("  mbar_lambda =")
+            for lbd in lambdas:
+                mdin.write(f" {lbd:6.5f},")
+            mdin.write("\n  infe = 0,\n /\n")
+            if bound_leg:
+                _write_cmass_dump_block(mdin, istep1=ntwx)
+            else:
+                mdin.write(" &wt type='END', /\n")
+
+        if seed and win != -1 and bound_leg:
+            _apply_fe_handoff_restraint(
+                destination,
+                restraint_mask=_ligand_handoff_restraint_mask(
+                    window_dir=windows_dir,
+                    vac_pdb=vac_pdb,
+                    ligand_resids=ligand_resids,
+                ),
+                total_steps=steps,
+            )
+        _apply_restraintmask_length_limit(
+            destination,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag=(
+                _fe_eq_cache_tag(comp, win)
+                if seed
+                else f"{comp}-mdin-template"
+            ),
+            cache_master=cache_master,
+        )
+
+    seed_chunk, _seed_states, _dynlmb, seed_steps = (
+        build_dyna_steps_run_per_lambda()
+    )
+    if win != -1:
+        seed_steps = fe_window_equil_steps(0.002)
+        seed_chunk = seed_steps
+    render_dynamic_input(
+        windows_dir / "eq.in",
+        steps=int(seed_steps),
+        chunk_steps=int(seed_chunk),
+        seed=True,
+    )
+    render_dynamic_input(
+        windows_dir / "mdin-template",
+        steps=total_steps,
+        chunk_steps=_fe_production_chunk_steps(total_steps),
+        seed=False,
+    )
+
+    with mini_template.open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+        for line in fin:
+            line = _force_softcore_mini_constraints(line)
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("lbd_val", f"{weight:6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("_lig_name_", mol)
+            )
+            if mk2 is not None:
+                line = line.replace("mk2", str(mk2))
+            fout.write(line)
+
+    with (amber_dir / "mini.in").open("rt") as fin, (
+        windows_dir / "mini_eq.in"
+    ).open("wt") as fout:
+        for line in fin:
+            fout.write(_force_fe_mini_constraints(line).replace("_lig_name_", mol))
+
+    # The DD charge topology contains two coincident ligand copies.  Amber's
+    # TI machinery excludes the cross-topology interaction, while a plain
+    # minimization sees the overlap as an infinite Lennard-Jones clash.  Keep
+    # TI active from the very first minimization for the charge legs.
+    if charge_leg:
+        shutil.copy2(windows_dir / "mini.in", windows_dir / "mini_eq.in")
+
+    def enable_charge_ti_for_equil(path: Path) -> None:
+        if not charge_leg:
+            return
+        lines = path.read_text().splitlines(keepends=True)
+        if any(re.search(r"\bicfe\s*=", line) for line in lines):
+            return
+        ti_block = [
+            "  icfe = 1, clambda = 0.0,\n",
+            f"  timask1 = ':{mk1}', timask2 = ':{mk2}',\n",
+            "  ifsc = 0,\n",
+            f"  crgmask = ':{mk2}',\n",
+            "  gti_cut = 1, gti_output = 1, gti_add_sc = 25,\n",
+            "  gti_scale_beta = 1,\n",
+            "  gti_cut_sc_on = 7, gti_cut_sc_off = 9,\n",
+            "  gti_ele_exp = 2, gti_vdw_exp = 2,\n",
+            "  gti_chg_keep = 1,\n",
+        ]
+        for index, line in enumerate(lines):
+            if line.strip() == "/":
+                lines[index:index] = ti_block
+                path.write_text("".join(lines))
+                return
+        raise ValueError(f"Could not find &cntrl terminator in DD equil input: {path}")
+
+    if bound_leg:
+        ordinary_inputs = (
+            ("eqnpt0-uno.in", "eqnpt0.in"),
+            ("eqnpt-uno.in", "eqnpt.in"),
+            ("eqnpt-uno-eq.in", "eqnpt_eq.in"),
+        )
+    else:
+        ordinary_inputs = (
+            ("eqnpt0-lig.in", "eqnpt0.in"),
+            ("eqnpt-lig.in", "eqnpt.in"),
+            ("eqnpt-lig.in", "eqnpt_eq.in"),
+        )
+    for source_name, destination_name in ordinary_inputs:
+        with (amber_dir / source_name).open("rt") as fin, (
+            windows_dir / destination_name
+        ).open("wt") as fout:
+            for line in fin:
+                if "mcwat" in line:
+                    line = "  mcwat = 0,\n"
+                line = line.replace("_temperature_", str(temperature)).replace(
+                    "_lig_name_", mol
+                )
+                if bound_leg:
+                    line = line.replace("_non_loop_", non_loop_mask)
+                fout.write(line)
+        enable_charge_ti_for_equil(windows_dir / destination_name)
+
+    logger.debug(
+        "[sim_files_dd] wrote {} leg inputs for comp={!r}, win={}, weight={:.5f}",
+        "bound" if bound_leg else "solvent",
+        comp,
+        win,
+        weight,
+    )
+
+
 @register_sim_files("d")
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
@@ -1743,7 +1989,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(ntwprt_atoms))
-                    .replace("_num-steps_", n_steps_run)
+                    .replace("_num-steps_", str(n_steps_run))
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
                     .replace("mk2", str(mk2))
@@ -1810,7 +2056,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        n_steps_run = fe_window_equil_steps(0.002)
+        n_steps_run_per_lambda, _, dynlmb, n_steps_run = (
+            build_dyna_steps_run_per_lambda()
+        )
+        if win != -1:
+            n_steps_run = fe_window_equil_steps(0.002)
+            n_steps_run_per_lambda = n_steps_run
         eq_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
@@ -1820,6 +2071,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
+                elif "ntwx = " in line:
+                    line = f"ntwx = {n_steps_run_per_lambda},\n"
+                elif win == -1 and "ntwprt = " in line:
+                    # Seed extraction uses the full topology with cpptraj, so
+                    # the scaffold trajectory must contain every atom.
+                    line = "\n"
                 elif "restraint_wt = " in line:
                     line = "restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
@@ -1838,12 +2095,16 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(ntwprt_atoms))
-                    .replace("_num-steps_", n_steps_run)
+                    .replace("_num-steps_", str(n_steps_run))
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
                 )
                 fout.write(line)
         with eq_path.open("a") as mdin:
+            if win == -1:
+                mdin.write(" ntwv = -1,\n")
+                mdin.write(f" dynlmb = {dynlmb},\n")
+                mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             mdin.write(f" \n mbar_states = {len(lambdas)}\n")
             mdin.write("  mbar_lambda =")
             for lbd in lambdas:
@@ -2614,7 +2875,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             line = _force_fe_mini_constraints(line)
             fout.write(line.replace("_lig_name_", mol))
 
-    # eqnpt.in / eqnpt0.in from ligand templates
+    # eqnpt.in / eqnpt0.in / eqnpt_eq.in from ligand templates
     with (
         (amber_dir / "eqnpt-lig.in").open("rt") as fin,
         (windows_dir / "eqnpt.in").open("wt") as fout,
@@ -2635,10 +2896,28 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     "_lig_name_", mol
                 )
             )
+    with (
+        (amber_dir / "eqnpt-lig.in").open("rt") as fin,
+        (windows_dir / "eqnpt_eq.in").open("wt") as fout,
+    ):
+        for line in fin:
+            fout.write(
+                line.replace("_temperature_", str(temperature)).replace(
+                    "_lig_name_", mol
+                )
+            )
 
     template = amber_dir / "mdin-unorest-lig"
 
     # short equilibration input
+    seed_steps_per_state, _, seed_dynlmb, seed_total_steps = (
+        build_dyna_steps_run_per_lambda()
+    )
+    eq_steps = (
+        seed_total_steps
+        if ctx.win == -1
+        else fe_window_equil_steps(0.001)
+    )
     eq_path = windows_dir / "eq.in"
     with template.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -2648,6 +2927,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  irest = 0,\n"
             elif "dt = " in line:
                 line = "  dt = 0.001,\n"
+            elif ctx.win == -1 and "ntwx = " in line:
+                line = f"  ntwx = {seed_steps_per_state},\n"
             elif "restraintmask" in line:
                 rm = (
                     line.split("=", 1)[1]
@@ -2661,7 +2942,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
-                .replace("_num-steps_", str(fe_window_equil_steps(0.001)))
+                .replace("_num-steps_", str(eq_steps))
                 .replace("lbd_val", f"{float(weight):6.5f}")
                 .replace("mk1", str(mk1))
                 .replace("disang_file", "disang")
@@ -2670,6 +2951,10 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with eq_path.open("a") as mdin:
+        if ctx.win == -1:
+            mdin.write("  ntwv = -1,\n")
+            mdin.write(f"  dynlmb = {seed_dynlmb},\n")
+            mdin.write(f"  ntave = {seed_steps_per_state},\n")
         mdin.write(f" \n  mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:

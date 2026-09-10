@@ -868,6 +868,7 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
         comp="z",
         window_dir=windows_dir,
         residue_name="LIG",
+        sim=types.SimpleNamespace(dec_method="sdr"),
     )
 
     written = restraints._append_bulk_ligand_z_restraint(ctx, disang)
@@ -882,6 +883,29 @@ def test_bulk_ligand_z_restraint_uses_site_and_bulk_first_atoms(tmp_path: Path) 
     assert "rk2=10.0, rk3=10.0," in text
     assert "igr1=2,0," in text
     assert "igr2=4,0," in text
+
+
+def test_bulk_ligand_z_restraint_is_not_used_for_unified_dd(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "z00"
+    windows_dir.mkdir()
+    (windows_dir / "vac.pdb").write_text(
+        "HETATM    1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    2  C1  LIG A   2      30.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    disang = windows_dir / "disang.rest"
+    disang.write_text("# base restraints\n")
+    ctx = types.SimpleNamespace(
+        comp="z",
+        window_dir=windows_dir,
+        residue_name="LIG",
+        sim=types.SimpleNamespace(dec_method="dd"),
+    )
+
+    written = restraints._append_bulk_ligand_z_restraint(ctx, disang)
+
+    assert written == 0
+    assert disang.read_text() == "# base restraints\n"
 
 
 def test_ion_guard_can_be_disabled(tmp_path: Path) -> None:

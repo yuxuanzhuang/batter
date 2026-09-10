@@ -60,6 +60,45 @@ def test_default_fe_seed_schedule_uses_ten_states(tmp_path: Path) -> None:
     ) in run_local
 
 
+@pytest.mark.parametrize(
+    ("component", "expected_default"),
+    [("e", "pmemd.cuda_DPFP"), ("f", "pmemd.cuda_DPFP"),
+     ("v", "pmemd.cuda_DPFP"), ("w", "pmemd.cuda_DPFP"),
+     ("z", "pmemd.cuda_DPFP"), ("y", "pmemd.cuda_DPFP")],
+)
+def test_dd_run_files_default_to_dpfp(
+    tmp_path: Path, component: str, expected_default: str
+) -> None:
+    window_dir = tmp_path / f"{component}-1"
+    ctx = SimpleNamespace(
+        window_dir=window_dir,
+        ligand="lig",
+        comp=component,
+        win=-1,
+        sim=SimpleNamespace(
+            hmr="yes", system_name="sys", dec_method="dd",
+            fe_type="uno_dd" if component in {"z", "y"} else "dd",
+        ),
+    )
+
+    runfiles.write_fe_run_file(ctx, [0.0, 1.0])
+
+    text = (window_dir / "run-local.bash").read_text()
+    assert f"PMEMD_EXEC=${{PMEMD_EXEC:-{expected_default}}}" in text
+    assert "-ref $production_reference" in text
+    if component == "y":
+        assert 'if [[ "y" == "y" ]]' in text
+    else:
+        assert f'if [[ "{component}" == "y" ]]' in text
+    if component in {"f", "w", "y"}:
+        assert "PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:--AllowSmallBox}" in text
+        assert "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O" in text
+        assert "$PMEMD_DPFP_EXEC $PMEMD_GPU_FLAGS -O" in text
+    else:
+        assert "PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:-}" in text
+        assert "PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:--AllowSmallBox}" not in text
+
+
 def test_fe_window_equilibration_defaults_to_fifty_ps() -> None:
     assert sim_files.fe_window_equil_steps(0.002) == 25_000
     assert sim_files.fe_window_equil_steps(0.001) == 50_000
@@ -788,9 +827,10 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     (amber_dir / "eqnpt0-lig.in").write_text("_temperature_ _lig_name_\n")
     (amber_dir / "mdin-unorest-lig").write_text(
         "&cntrl\n"
-        "  ntx = 5,\n"
-        "  irest = 1,\n"
-        "  nstlim = _num-steps_,\n"
+            "  ntx = 5,\n"
+            "  irest = 1,\n"
+            "  ntwx = 250,\n"
+            "  nstlim = _num-steps_,\n"
         "  dt = _step_,\n"
         "  nmropt = 1,\n"
         "  restraintmask = ':1',\n"
@@ -822,9 +862,25 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert "restraintmask = '(:1 | @3) & !@H='" in template_text
     assert "nmropt = 0" in template_text
 
+    scaffold_dir = tmp_path / "y-1"
+    scaffold_dir.mkdir()
+    (scaffold_dir / "vac.pdb").write_text((windows_dir / "vac.pdb").read_text())
+    ctx.window_dir = scaffold_dir
+    ctx.win = -1
+    sim_files.sim_files_y(ctx, [0.0, 1.0])
 
+    scaffold_eq = (scaffold_dir / "eq.in").read_text()
+    assert (scaffold_dir / "eqnpt_eq.in").exists()
+    assert "nstlim = 100000" in scaffold_eq
+    assert "ntwx = 10000" in scaffold_eq
+    assert "dynlmb = 0.1111111111111111" in scaffold_eq
+    assert "ntave = 10000" in scaffold_eq
+    assert "ntwprt" not in scaffold_eq
+
+
+@pytest.mark.parametrize("dec_method", ["sdr", "dd"])
 def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
-    tmp_path: Path,
+    tmp_path: Path, dec_method: str,
 ) -> None:
     windows_dir = tmp_path / "z00"
     amber_dir = tmp_path / "amber"
@@ -864,10 +920,16 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
         "  restraintmask = ':1-2',\n"
         "/\n"
     )
+    (amber_dir / "mdin-unorest-dd").write_text(
+        (amber_dir / "mdin-unorest").read_text()
+    )
     (amber_dir / "mini-unorest").write_text(
         "&cntrl\n"
         "  restraintmask = '(@CA,C,N,P31,Na+,Cl- | :_lig_name_ | :2) & !@H=',\n"
         "/\n"
+    )
+    (amber_dir / "mini-unorest-dd").write_text(
+        (amber_dir / "mini-unorest").read_text()
     )
     (amber_dir / "mini.in").write_text("_lig_name_\n")
     (amber_dir / "eqnpt0-uno.in").write_text("_temperature_ _lig_name_\n")
@@ -889,7 +951,7 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
             dic_n_steps={"z": 4000},
             ntwx=250,
             all_atoms="no",
-            dec_method="sdr",
+            dec_method=dec_method,
             mcwat_fe="yes",
         ),
     )
@@ -909,7 +971,11 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
     assert "@CA" not in eq_text
     assert "nstlim = 5000" in eq_text
     assert "ntwx = 0" in eq_text
-    _assert_fe_handoff(windows_dir, steps=25_000, dum_weight=10.0)
+    _assert_fe_handoff(
+        windows_dir,
+        steps=25_000,
+        dum_weight=10.0 if dec_method == "sdr" else 0.2,
+    )
 
     assert "restraintmask = ':1-2'," in template_text
     assert "@5" not in template_text
@@ -924,6 +990,21 @@ def test_sim_files_z_keeps_bulk_ligand_first_atom_out_of_mdin_template(
 
     assert ":LIG" in mini_text
     assert "@5" not in mini_text
+
+    scaffold_dir = tmp_path / f"z-{dec_method}-1"
+    scaffold_dir.mkdir()
+    for name in ("vac.pdb", "full.pdb"):
+        (scaffold_dir / name).write_text((windows_dir / name).read_text())
+    ctx.window_dir = scaffold_dir
+    ctx.win = -1
+    sim_files.sim_files_z(ctx, [0.0, 1.0])
+
+    scaffold_eq = (scaffold_dir / "eq.in").read_text()
+    assert "nstlim = 100000" in scaffold_eq
+    assert "ntwx = 10000" in scaffold_eq
+    assert "dynlmb = 0.1111111111111111" in scaffold_eq
+    assert "ntave = 10000" in scaffold_eq
+    assert "ntwprt" not in scaffold_eq
 
 
 def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(

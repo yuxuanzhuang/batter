@@ -9,6 +9,7 @@ SANDER_EXEC=${SANDER_EXEC:-sander}
 MPI_EXEC=${MPI_EXEC:-mpirun}
 MPI_FLAGS=${MPI_FLAGS:-}
 CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
+PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:-}
 
 # Define constants for filenames
 PRMTOP="full_merged.prmtop"
@@ -149,7 +150,7 @@ run_minimization_cuda() {
     local rst_file=$3
     local nc_file=$4
     local coord=$5
-    print_and_run "$PMEMD_DPFP_EXEC -O -i $mdin -p $PRMTOP_MERGED -c $coord -o $out_file -r $rst_file -x $nc_file -ref $coord >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_DPFP_EXEC $PMEMD_GPU_FLAGS -O -i $mdin -p $PRMTOP_MERGED -c $coord -o $out_file -r $rst_file -x $nc_file -ref $coord >> \"$log_file\" 2>&1"
 }
 
 archive_existing_log_file "$log_file"
@@ -211,7 +212,7 @@ if [[ $only_eq -eq 1 ]]; then
 
     if ! should_skip_eq_step "Equilibration stage 0" "eqnpt00.rst7"; then
         require_nonempty_file_or_attempt_fail "eqnpt_pre.rst7" "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."
-        print_and_run "$PMEMD_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
     fi
 
@@ -223,13 +224,13 @@ if [[ $only_eq -eq 1 ]]; then
             continue
         fi
         require_nonempty_file_or_attempt_fail "$prev" "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."
-        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev" "$retry"
     done
 
     if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
         require_nonempty_file_or_attempt_fail "eqnpt04.rst7" "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."
-        print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
     fi
 
@@ -239,14 +240,14 @@ if [[ $only_eq -eq 1 ]]; then
             require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to FEP minimization."
             fep_mini_input="mini.in"
             fep_noshake_mini_input="mini_noshake.in"
-            print_and_run "$PMEMD_DPFP_EXEC -O -i $fep_mini_input -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_DPFP_EXEC $PMEMD_GPU_FLAGS -O -i $fep_mini_input -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             if minimization_failed_for_noshake_retry "mini.in.out" "mini.in.rst7"; then
                 echo "[WARN] FEP minimization with ntc=2 failed; retrying with ntc=1."
                 archive_failed_job_files "$retry" "$log_file" mini.in.rst7
                 rm -f "$log_file" mini.in.rst7 mini.in.nc mini.in.out
                 write_noshake_minimization_input "$fep_mini_input" "$fep_noshake_mini_input"
                 fep_mini_input="$fep_noshake_mini_input"
-                print_and_run "$PMEMD_DPFP_EXEC -O -i $fep_mini_input -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+                print_and_run "$PMEMD_DPFP_EXEC $PMEMD_GPU_FLAGS -O -i $fep_mini_input -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             fi
             check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
@@ -258,7 +259,7 @@ if [[ $only_eq -eq 1 ]]; then
         if ! should_skip_eq_step "Equilibration for window seeds" "eq.rst7"; then
             require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to window-seed equilibration."
             # run one long equilbration with dynamically changed lambda value
-            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
             seed_eq_ran=1
         fi
@@ -400,6 +401,13 @@ fi
 
 last_rst="$rst_in"
 win_00=../COMPONENT00
+production_reference="${win_00}/eq.rst7"
+if [[ "COMPONENT" == "y" ]]; then
+    # Ligand-only windows restrain their dummy frame. Dynamic-lambda seeding
+    # gives each endpoint a distinct dummy-frame position, so using y00 as a
+    # cross-window reference injects a large artificial restraint energy.
+    production_reference="$production_initial_rst"
+fi
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
@@ -435,7 +443,7 @@ if (( remaining_steps > 0 )); then
     }
     rm -f .write_test.$$
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC $PMEMD_GPU_FLAGS -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref $production_reference >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the explicit segment restart.
