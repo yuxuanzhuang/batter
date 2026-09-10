@@ -19,7 +19,7 @@ The run YAML file is divided into three sections grouped inside
     notification preferences, and artifact destination. ``run.output_folder`` is
     required and becomes the base path for ``<run.output_folder>/executions/<run_id>/``.
     ``run.system_type`` optionally overrides the builder selection inferred from the
-    protocol (``MABFE`` for ABFE/RBFE/MD-family runs, ``MASFE`` for ASFE). This
+    protocol (``MABFE`` for ABFE/DD/UNO-DD/RBFE/MD-family runs, ``MASFE`` for ASFE). This
     section is validated by :class:`batter.config.run.RunSection`. Set
     ``run.clean_failures: true`` to remove ``FAILED`` sentinels,
     ``job_attempt.txt`` retry counters, and progress caches before rerunning an
@@ -60,8 +60,10 @@ Per-component steps and lambdas
 Component steps are supplied via ``fe_sim.n_steps`` as dicts keyed by the
 single-letter component (e.g. ``z: 100000``). Keys like ``y_n_steps`` are also
 accepted and folded into this map automatically. Each FE protocol enforces the
-components it needs: ABFE requires ``z``, standard and SEPTOP RBFE require ``x``,
-and ASFE requires ``y``/``m``. Set the corresponding ``<comp>_n_steps`` or
+components it needs: single-leg ABFE requires ``z``, traditional DD requires
+``e``/``v``/``f``/``w``, unified ``uno_dd`` requires ``z``/``y``, standard and
+SEPTOP RBFE require ``x``, and ASFE requires ``y``/``m``. Set the corresponding
+``<comp>_n_steps`` or
 ``fe_sim.n_steps`` entry explicitly in production YAMLs.
 
 Lambda schedules can be customized per component using ``fe_sim.component_lambdas``

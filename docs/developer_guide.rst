@@ -138,10 +138,13 @@ Systems and Builders
 Binding (ABFE) components
 -------------------------
 
-ABFE simulations decouple the ligand from the bound complex using the ``z`` component
-(restraints + decoupling in complex). Provide total production steps via
-``fe_sim.n_steps`` (or ``z_n_steps``). Ensure the restraints and lambdas in the run YAML
-align with your chosen decoupling scheme.
+Single-leg ABFE simulations decouple the ligand from the bound complex using the
+``z`` component (restraints + decoupling in complex). The double-decoupling
+``dd`` protocol instead uses the ``e``/``v`` bound legs and ``f``/``w`` solvent
+legs. The unified double-decoupling ``uno_dd`` protocol uses the SDR-like
+``z`` bound leg and ``y`` solvent leg. Provide total production steps for every active component via
+``fe_sim.n_steps`` (or the corresponding ``<comp>_n_steps`` fields). Ensure the
+restraints and lambdas in the run YAML align with your chosen decoupling scheme.
 
 Solvation (ASFE) components
 ---------------------------

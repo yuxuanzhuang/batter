@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from batter.config.simulation import SimulationConfig
 from batter.pipeline.pipeline import Pipeline
 
-ProtocolName = Literal["abfe", "abfe_diff", "ligand_rest", "rbfe", "rbfe_septop", "asfe", "md"]
+ProtocolName = Literal["abfe", "dd", "uno_dd", "abfe_diff", "ligand_rest", "rbfe", "rbfe_septop", "asfe", "md"]
 
 
 class ProtocolContext(BaseModel):

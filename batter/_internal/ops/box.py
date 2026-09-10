@@ -2559,7 +2559,9 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
 
 
 @register_create_box("d")
+@register_create_box("e")
 @register_create_box("l")
+@register_create_box("v")
 @register_create_box("z")
 def create_box(ctx: BuildContext) -> None:
     """
@@ -3321,7 +3323,10 @@ def create_box(ctx: BuildContext) -> None:
     ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
 
     lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
-    if dec_method == "dd" or comp in {"q", "l"}:
+    if dec_method == "dd" and comp == "e":
+        ligands_p = ligand_p_1 + ligand_p_1
+        ligands_p.coordinates = lig_inp
+    elif dec_method == "dd" or comp in {"q", "l"}:
         ligands_p = ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["z", "o", "s", "v"] and dec_method == "sdr":
@@ -3698,6 +3703,8 @@ def create_box_x(ctx: BuildContext) -> None:
 
 
 @register_create_box("y")
+@register_create_box("f")
+@register_create_box("w")
 def create_box_y(ctx: BuildContext) -> None:
     """
     Create the box for ligand-only (solvation FE) systems.
@@ -3748,7 +3755,10 @@ def create_box_y(ctx: BuildContext) -> None:
             )
 
     # --- stage required ligand artifacts into window_dir ---
-    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
+    # ``create_simulation_dir_lig`` already staged the pose-derived PDB with
+    # the residue name expected by the MOL2 unit.  Do not overwrite it with
+    # the parameterizer's generic ``lig``-named PDB here.
+    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
         src = param_dir / f"{mol}.{ext}"
         if src.exists():
             _cp(src, window_dir / src.name)
@@ -3930,11 +3940,22 @@ def create_box_y(ctx: BuildContext) -> None:
     dum_p = pmd.load_file(
         str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd")
     )
-    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
-    ligand_p.residues[0].name = mol
-    lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
-    ligand_p.coordinates = lig_inp
-    ligand_p.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
+    # Load the topology produced from ``solvate_pre_lig.pdb`` directly.  In
+    # particular, this preserves both DD charge-leg ligand copies and their
+    # renamed residue labels.  Reconstructing it with ``single + single`` from
+    # the parameterizer prmtop silently restores that file's generic ``lig``
+    # residue label in ParmEd.
+    ligand_p = pmd.load_file(
+        str(window_dir / "solvate_ligands.prmtop"),
+        str(window_dir / "solvate_ligands.inpcrd"),
+    )
+    expected_ligand_copies = 2 if comp == "f" else 1
+    if len(ligand_p.residues) != expected_ligand_copies:
+        raise ValueError(
+            f"[create_box_y] component {comp!r} expected "
+            f"{expected_ligand_copies} ligand residue(s), found "
+            f"{len(ligand_p.residues)}."
+        )
 
     others = pmd.load_file(
         str(window_dir / "solvate_others.prmtop"),
@@ -3952,6 +3973,11 @@ def create_box_y(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
+    # Ligand-only solvent boxes have no receptor/lipid fragments to merge,
+    # but run-file generation consistently targets ``full_merged.prmtop``.
+    # Preserve the topology (including HMR when requested) under that common
+    # name so scaffold and copied window directories are self-contained.
+    shutil.copy2(full_prmtop, window_dir / "full_merged.prmtop")
     return
 
 

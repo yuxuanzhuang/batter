@@ -3,10 +3,36 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from batter._internal.ops.helpers import rewrite_prmtop_reference
+from batter._internal.ops.runfiles import write_equil_run_files
+
+
+@pytest.mark.parametrize("dec_method, expected", [("dd", 0), ("sdr", 1)])
+def test_equil_run_file_sets_protocol_handoff_default(
+    tmp_path: Path, dec_method: str, expected: int
+) -> None:
+    ctx = SimpleNamespace(
+        sim=SimpleNamespace(
+            hmr="yes",
+            dec_method=dec_method,
+            system_name="sys",
+            rng=1,
+            ring_penetration_fix_mode="auto",
+        ),
+        ligand="lig",
+        residue_name="LIG",
+        working_dir=tmp_path,
+    )
+
+    write_equil_run_files(ctx, stage="equil")
+
+    text = (tmp_path / "run-local.bash").read_text()
+    assert f"default_run_alchemical_handoff={expected}" in text
+    assert "__BATTER_RUN_ALCHEMICAL_HANDOFF__" not in text
 
 
 def _write_stub_exe(path: Path, body: str) -> None:
@@ -296,7 +322,7 @@ def test_production_md_uses_expected_reference_restart() -> None:
     template_dir = repo_root / "batter" / "_internal" / "templates" / "run_files_orig"
 
     expected_refs = {
-        "run-local.bash": "${win_00}/eq.rst7",
+        "run-local.bash": "$production_reference",
         "run-local-rbfe.bash": "${win_00}/eq.rst7",
         "run-local-vacuum.bash": "$rst_in",
         "run-equil.bash": "$rst_in",
@@ -308,6 +334,11 @@ def test_production_md_uses_expected_reference_restart() -> None:
             "-c $rst_in -o ${out_tag}.out -r $rst_out "
             f"-x ${{out_tag}}.nc -ref {expected_ref}"
         ) in text
+
+    abfe_text = (template_dir / "run-local.bash").read_text()
+    assert 'production_reference="${win_00}/eq.rst7"' in abfe_text
+    assert 'if [[ "COMPONENT" == "y" ]]' in abfe_text
+    assert 'production_reference="$production_initial_rst"' in abfe_text
 
 
 def test_abfe_local_template_uses_merged_prmtop_for_cpptraj_restart_split() -> None:

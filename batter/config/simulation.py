@@ -28,6 +28,8 @@ MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
+    "dd": "dd",
+    "uno_dd": "uno_dd",
     "abfe_diff": "uno_rest_diff",
     "rbfe": "relative",
     "rbfe_septop": "relative_septop",
@@ -171,6 +173,8 @@ class SimulationConfig(BaseModel):
 
         required_components = {
             "abfe": ["z"],
+            "dd": ["e", "v", "f", "w"],
+            "uno_dd": ["z", "y"],
             "abfe_diff": ["d"],
             "asfe": ["y", "m"],
             "ligand_rest": ["l"],
