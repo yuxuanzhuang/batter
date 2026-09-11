@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import string
+import tempfile
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
@@ -709,8 +710,30 @@ class _SystemPrepRunner:
         dssp_json = self.ligands_folder / "protein_input_dssp.json"
         try:
             u_prot = mda.Universe(self._protein_input)
-            protein_atoms = u_prot.select_atoms(_DSSP_PROTEIN_SELECTION)
-            dssp_array = _run_dssp_by_chain_fragments(protein_atoms)
+            _, normalized_residue_count = _protein_segid_overrides(u_prot)
+            if normalized_residue_count:
+                # PDBs produced by some membrane builders assign a segid only to
+                # heavy atoms. MDAnalysis then represents each physical residue as
+                # separate heavy-atom and hydrogen-only residues, which breaks the
+                # chain fragments passed to DSSP. Reuse the same normalization used
+                # for aligned structures and reload the corrected topology first.
+                with tempfile.TemporaryDirectory(prefix="batter-dssp-") as tmpdir:
+                    normalized_path = Path(tmpdir) / "protein.pdb"
+                    _write_pdb_with_normalized_protein_segids(
+                        u_prot, normalized_path
+                    )
+                    normalized_protein = mda.Universe(normalized_path)
+                    protein_atoms = normalized_protein.select_atoms(
+                        _DSSP_PROTEIN_SELECTION
+                    )
+                    dssp_array = _run_dssp_by_chain_fragments(protein_atoms)
+                logger.debug(
+                    "Detected mixed per-atom protein segid assignments; normalized "
+                    f"segids for {normalized_residue_count} residue(s) before DSSP."
+                )
+            else:
+                protein_atoms = u_prot.select_atoms(_DSSP_PROTEIN_SELECTION)
+                dssp_array = _run_dssp_by_chain_fragments(protein_atoms)
         except Exception as exc:
             logger.warning(
                 f"Failed to run DSSP on protein input {self._protein_input}: {exc}. No secondary-structure conditioned restraints. "
