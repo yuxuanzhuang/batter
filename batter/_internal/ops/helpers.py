@@ -122,9 +122,9 @@ def select_protein_com_atoms(
     if max_atoms <= 0:
         raise ValueError("max_atoms must be a positive integer")
 
-    protein_atoms = universe.select_atoms("protein and not resname NMA ACE")
+    protein_atoms = universe.select_atoms("protein and not resname NMA NME ACE")
     calphas = universe.select_atoms(
-        "protein and not resname NMA ACE and name CA"
+        "protein and not resname NMA NME ACE and name CA"
     )
     if calphas.n_atoms == 0:
         calphas = universe.select_atoms(PROTEIN_COM_ATOM_SELECTION)
@@ -155,13 +155,19 @@ def select_protein_com_atoms(
             if dssp.ndim > 1:
                 dssp = dssp[-1]
             dssp = np.atleast_1d(dssp)
-            protein_residues = protein_atoms.residues
-            if dssp.size != protein_residues.n_residues:
+            # DSSP has one assignment per amino-acid residue.  Prepared systems
+            # can also contain terminal caps (for example one NME per chain)
+            # that MDAnalysis classifies as protein despite having no CA atom.
+            # Map DSSP against CA-bearing residues so those caps cannot shift or
+            # invalidate the residue-to-secondary-structure correspondence.
+            calpha_residues = calphas.residues
+            if dssp.size != calpha_residues.n_residues:
                 logger.warning(
-                    "[protein-com] DSSP/protein residue counts differ ({} vs {}); "
+                    "[protein-com] DSSP/CA-bearing protein residue counts differ "
+                    "({} vs {}); "
                     "using all {} protein C-alpha atom(s).",
                     dssp.size,
-                    protein_residues.n_residues,
+                    calpha_residues.n_residues,
                     calphas.n_atoms,
                 )
             else:
@@ -171,7 +177,7 @@ def select_protein_com_atoms(
                     trim_structure_ends=0,
                 )
                 allowed_resindices = {
-                    int(protein_residues[idx].resindex)
+                    int(calpha_residues[idx].resindex)
                     for idx in non_loop_positions
                 }
                 non_loop_calphas = calphas[
