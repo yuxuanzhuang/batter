@@ -255,6 +255,40 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     assert json.loads(dssp_json.read_text()) == [["H", "E"]]
 
 
+def test_run_input_protein_dssp_normalizes_mixed_protein_segids(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    protein = tmp_path / "protein_mixed_segid.pdb"
+    _make_mixed_segid_protein_pdb(protein)
+    runner._protein_input = str(protein)
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    unnormalized = mda.Universe(str(protein)).select_atoms("protein")
+    assert unnormalized.n_residues == 4
+
+    calls: list[tuple[int, ...]] = []
+
+    class DummyDSSP:
+        def __init__(self, atoms):
+            self.residues = list(atoms.residues)
+            self.results = {}
+            calls.append(tuple(int(residue.resid) for residue in self.residues))
+
+        def run(self):
+            self.results["dssp"] = np.array([["H", "E"]], dtype="<U1")
+            return self
+
+    monkeypatch.setattr(system_prep_mod, "DSSP", DummyDSSP)
+
+    result = runner._run_input_protein_dssp()
+
+    assert calls == [(1, 2)]
+    assert result["shape"] == [1, 2]
+    assert result["results"] == [["H", "E"]]
+
+
 def test_run_input_protein_dssp_splits_chains_and_skips_incomplete_residues(
     monkeypatch, tmp_path: Path
 ) -> None:
