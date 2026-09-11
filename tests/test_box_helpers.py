@@ -161,6 +161,54 @@ def test_select_protein_com_atoms_uses_non_loop_calpha_subset(tmp_path: Path) ->
     np.testing.assert_allclose(selected.center_of_mass(), [3.5, 0.0, 0.0])
 
 
+def test_select_protein_com_atoms_ignores_terminal_caps_without_calpha(
+    tmp_path: Path,
+) -> None:
+    system_root = tmp_path / "execution"
+    manifest_dir = system_root / "all-ligands"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(
+            {"dssp": {"results": [["H", "H", "H", "H", "-", "-", "-", "-"]]}}
+        )
+    )
+    pdb = tmp_path / "capped_protein_com.pdb"
+    lines: list[str] = []
+    serial = 1
+    for chain, x_offset in (("A", 0.0), ("B", 10.0)):
+        for resid in range(1, 5):
+            lines.append(
+                _pdb_atom(
+                    serial,
+                    "CA",
+                    "ALA",
+                    chain,
+                    resid,
+                    x_offset + float(resid),
+                    0.0,
+                    0.0,
+                    "C",
+                )
+            )
+            serial += 1
+        lines.extend(
+            [
+                _pdb_atom(serial, "N", "NME", chain, 5, 0.0, 0.0, 0.0, "N"),
+                _pdb_atom(serial + 1, "C", "NME", chain, 5, 0.0, 0.0, 0.0, "C"),
+            ]
+        )
+        serial += 2
+    pdb.write_text("".join(lines + ["END\n"]))
+
+    selected = select_protein_com_atoms(
+        mda.Universe(str(pdb)),
+        system_root=system_root,
+    )
+
+    assert selected.n_atoms == 4
+    assert selected.chainIDs.tolist() == ["A", "A", "A", "A"]
+
+
 def test_select_protein_com_atoms_falls_back_on_dssp_count_mismatch(
     tmp_path: Path,
 ) -> None:
