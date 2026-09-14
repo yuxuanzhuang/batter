@@ -279,3 +279,26 @@ def test_collect_remd_marks_finished_using_only_window_zero(tmp_path, monkeypatc
     (comp / "z01/FINISHED").unlink()
     assert batch_cmds._collect_remd_tasks(execution) == []
     assert (comp / "z01/FINISHED").exists()
+
+
+def test_restart_time_read_without_ncdump(tmp_path, monkeypatch):
+    from scipy.io import netcdf_file
+
+    restart = tmp_path / "md-01.rst7"
+    with netcdf_file(restart, "w", version=2) as nc:
+        time = nc.createVariable("time", "d", ())
+        time[...] = 7490.0
+    monkeypatch.setattr(batch_cmds.shutil, "which", lambda _: None)
+    assert float(batch_cmds._remd_time_from_rst(restart)) == 7490.0
+    restart.write_bytes(b"CDF\x02")
+    assert batch_cmds._remd_time_from_rst(restart) is None
+
+
+def test_component_windows_filter_files_and_pre_window(tmp_path):
+    comp = tmp_path / "z"
+    comp.mkdir()
+    for name in ("z00", "z01", "z-1", "remd", "zbad"):
+        (comp / name).mkdir()
+    (comp / "z02").touch()
+    assert [p.name for p in batch_cmds._component_window_dirs(comp, "z")] == ["z00", "z01"]
+    assert batch_cmds._count_component_windows(comp, "z") == 2
