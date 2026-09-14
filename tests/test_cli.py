@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -48,6 +49,17 @@ def test_slurm_env_capture_prefers_invoked_batter_script(
     assert f"BATTER_ENV_BIN={invoked_batter.parent}" in (
         cli_shared._batter_path_export_block()
     )
+
+
+def test_manager_command_block_preserves_failure_status() -> None:
+    from batter.cli import shared as cli_shared
+
+    block = cli_shared._manager_command_with_status("bash -c 'exit 23'")
+    result = subprocess.run(["bash", "-c", block], text=True, capture_output=True)
+
+    assert result.returncode == 23
+    assert "Job completed." not in result.stdout
+    assert "BATTER manager failed with status 23." in result.stderr
 
 
 def test_cli_run_invokes_run_from_yaml(

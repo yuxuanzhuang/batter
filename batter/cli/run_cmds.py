@@ -15,6 +15,7 @@ from batter.api import run_from_yaml
 from batter.cli.root import cli
 from batter.cli.shared import (
     _batter_path_export_block,
+    _manager_command_with_status,
     _upsert_sbatch_option,
     _which_batter,
 )
@@ -421,10 +422,7 @@ def cmd_run(
                     )
                 )
             else:
-                f.write(run_cmd)
-                f.write("\n")
-                f.write("echo 'Job completed.'\n")
-                f.write("\n")
+                f.write(_manager_command_with_status(run_cmd))
 
         # submit slurm job
         result = subprocess.run(
@@ -630,10 +628,7 @@ def cmd_run_exec(
                     )
                 )
             else:
-                f.write(run_cmd)
-                f.write("\n")
-                f.write("echo 'Job completed.'\n")
-                f.write("\n")
+                f.write(_manager_command_with_status(run_cmd))
 
         result = subprocess.run(
             ["sbatch", f"{run_hash}_job_manager.sbatch"],

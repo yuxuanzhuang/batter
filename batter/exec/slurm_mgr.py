@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import os
@@ -42,6 +43,13 @@ SLURM_SUBMIT_RATE_LIMIT_PATTERNS = (
     "job violates accounting/qos policy",
     "job submit limit",
 )
+SHARED_FILESYSTEM_ERRNOS = {
+    errno.EIO,
+    errno.EPIPE,
+    errno.ESTALE,
+    getattr(errno, "ENOTCONN", 107),
+    getattr(errno, "ESHUTDOWN", 108),
+}
 
 
 # ---------- atomic registry append ----------
@@ -89,6 +97,10 @@ def _read_text(p: Path) -> Optional[str]:
     """Return stripped file contents or ``None`` if the file is unreadable."""
     try:
         return p.read_text().strip()
+    except OSError as exc:
+        if exc.errno in SHARED_FILESYSTEM_ERRNOS:
+            raise
+        return None
     except Exception:
         return None
 
@@ -400,6 +412,10 @@ class SlurmJobManager:
         Cap on concurrent jobs for the user (checked via one `squeue -u` call).
     partition : str, optional
         Partition filter used by max_active_jobs checks.
+    filesystem_retry_limit : int, optional
+        Number of retries after a transient shared-filesystem error.
+    filesystem_retry_delay_s : float, optional
+        Delay in seconds between shared-filesystem retries.
 
     Other Parameters
     ----------------
@@ -422,6 +438,8 @@ class SlurmJobManager:
         submit_retry_delay_s: float = 60.0,
         max_active_jobs: Optional[int] = None,
         partition: Optional[str] = None,
+        filesystem_retry_limit: int = 2,
+        filesystem_retry_delay_s: float = 5.0,
         # --- compatibility kwargs ---
         batch_mode: bool = False,
         batch_gpus: Optional[int] = None,
@@ -446,6 +464,8 @@ class SlurmJobManager:
         if self.max_active_jobs is not None and self.max_active_jobs <= 0:
             raise ValueError("max_active_jobs must be positive or None")
         self.partition = partition
+        self.filesystem_retry_limit = max(0, int(filesystem_retry_limit))
+        self.filesystem_retry_delay_s = max(0.0, float(filesystem_retry_delay_s))
 
         # compatibility settings (stored; not implemented)
         self.batch_mode = bool(batch_mode)
@@ -464,6 +484,33 @@ class SlurmJobManager:
         self.n_active: int = 0
         self._active_jobs_synced: bool = False
         self._last_active_sync_s: float = 0.0
+
+    def _filesystem_operation(self, operation, *, context: str):
+        """Retry a transient Oak/Lustre operation before failing clearly."""
+        retries = 0
+        while True:
+            try:
+                return operation()
+            except OSError as exc:
+                if exc.errno not in SHARED_FILESYSTEM_ERRNOS:
+                    raise
+                if retries >= self.filesystem_retry_limit:
+                    raise RuntimeError(
+                        f"Shared filesystem remained unavailable while {context} "
+                        f"after {retries + 1} attempt(s). The manager cannot inspect "
+                        "or resubmit worker jobs until filesystem access is restored."
+                    ) from exc
+                retries += 1
+                logger.warning(
+                    "[SLURM] Shared filesystem error while {}: {}; retrying "
+                    "({}/{}) in {:.0f}s.",
+                    context,
+                    exc,
+                    retries,
+                    self.filesystem_retry_limit,
+                    self.filesystem_retry_delay_s,
+                )
+                time.sleep(self.filesystem_retry_delay_s)
 
     # ---------- stage API ----------
     def set_stage(self, stage: Optional[str]) -> None:
@@ -669,6 +716,8 @@ class SlurmJobManager:
             try:
                 return self._submit_once(spec)
             except Exception as exc:
+                if isinstance(exc, OSError) and exc.errno in SHARED_FILESYSTEM_ERRNOS:
+                    raise
                 if self.submit_retry_limit == 0 or attempts >= self.submit_retry_limit:
                     raise RuntimeError(
                         f"SLURM submission failed for {spec.workdir} after {attempts + 1} attempt(s) "
@@ -786,7 +835,10 @@ class SlurmJobManager:
         -----
         This method does not register specs; it's a one-off submit-if-needed.
         """
-        done, status = self._sentinel_done(spec)
+        done, status = self._filesystem_operation(
+            lambda: self._sentinel_done(spec),
+            context=f"checking sentinels in {spec.workdir}",
+        )
         if done:
             logger.debug(
                 f"[SLURM] {_format_workdir_label(spec.workdir)}: already {status}; not submitting"
@@ -801,7 +853,10 @@ class SlurmJobManager:
     # ---------- global wait ----------
     def wait_all(self) -> None:
         """Submit/monitor all registered jobs and block until completion."""
-        specs_map = self._load_registry_specs()
+        specs_map = self._filesystem_operation(
+            self._load_registry_specs,
+            context="loading the Slurm job registry",
+        )
         specs_map.update(self._inmem_specs)
         if self._stage:
             specs_map = {
@@ -820,7 +875,10 @@ class SlurmJobManager:
             return
 
         self._wait_loop(list(specs_map.values()))
-        self.clear()
+        self._filesystem_operation(
+            self.clear,
+            context="clearing the completed Slurm job registry",
+        )
 
     def wait_until_done(self, specs: Iterable[SlurmJobSpec]) -> None:
         """Legacy interface: monitor a given set until complete."""
@@ -849,8 +907,15 @@ class SlurmJobManager:
         for s in submit_iter:
             try:
                 # do not resubmit here; just ensure it has a JOBID if needed
-                if not _read_text(s.jobid_path()):
-                    self.ensure_running(s)
+                job_id = self._filesystem_operation(
+                    lambda: _read_text(s.jobid_path()),
+                    context=f"reading the job ID in {s.workdir}",
+                )
+                if not job_id:
+                    self._filesystem_operation(
+                        lambda: self.ensure_running(s),
+                        context=f"submitting the job in {s.workdir}",
+                    )
             except Exception as e:
                 logger.error(f"[SLURM] submit failed for {s.workdir}: {e}")
                 raise
@@ -878,7 +943,10 @@ class SlurmJobManager:
                 pass
 
         for s in specs:
-            done, status = self._sentinel_done(s)
+            done, status = self._filesystem_operation(
+                lambda: self._sentinel_done(s),
+                context=f"checking sentinels in {s.workdir}",
+            )
             if done:
                 completed.add(s.workdir)
                 if status == "FAILED":
@@ -908,7 +976,10 @@ class SlurmJobManager:
             wd_jobid: Dict[Path, str] = {}
             jobids: List[str] = []
             for wd, sp in pending.items():
-                jid = _read_text(sp.jobid_path())
+                jid = self._filesystem_operation(
+                    lambda: _read_text(sp.jobid_path()),
+                    context=f"reading the job ID in {sp.workdir}",
+                )
                 if jid:
                     wd_jobid[wd] = jid
                     jobids.append(jid)
@@ -931,7 +1002,10 @@ class SlurmJobManager:
             for wd, sp in list(pending.items()):
                 wd_label = _format_workdir_label(wd)
                 # sentinel checks first (no slurm calls)
-                done, st = self._sentinel_done(sp)
+                done, st = self._filesystem_operation(
+                    lambda: self._sentinel_done(sp),
+                    context=f"checking sentinels in {sp.workdir}",
+                )
                 if done:
                     done_now[wd] = st or "FINISHED"
                     continue
@@ -990,7 +1064,10 @@ class SlurmJobManager:
 
                 time.sleep(self.resubmit_backoff_s)
                 try:
-                    self._submit(sp)
+                    self._filesystem_operation(
+                        lambda: self._submit(sp),
+                        context=f"resubmitting the job in {sp.workdir}",
+                    )
                     if not scheduler_interrupt_state and not completed_state:
                         retries[wd] = r + 1
                         self._retries[wd] = retries[wd]
