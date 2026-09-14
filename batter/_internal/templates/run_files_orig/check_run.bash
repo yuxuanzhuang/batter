@@ -1589,7 +1589,9 @@ apply_retry_dt_reduction() {
         sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$desired_dt"
     fi
 
-    echo "[INFO] Applied retry dt in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
+    if [[ ${DT_REDUCTION_LOG:-1} == 1 ]]; then
+        echo "[INFO] Applied retry dt in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
+    fi
 }
 
 rewrite_mdin_dt_file() {
@@ -1676,7 +1678,9 @@ reduce_dt_on_failure() {
           md-*.mden md*.mden \
           md-*.mdinfo md*.mdinfo \
           cmass.txt cmass-*.txt
-    echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
+    if [[ ${DT_REDUCTION_LOG:-1} == 1 ]]; then
+        echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
+    fi
 }
 
 completed_time_ps_from_out() {

@@ -307,40 +307,27 @@ def _extract_n_windows_from_run_script(run_script: Path) -> int | None:
 
 
 def _count_component_windows(comp_dir: Path, comp: str) -> int:
-    if not comp_dir.is_dir():
-        return 0
-
-    count = 0
-    for entry in comp_dir.iterdir():
-        if not entry.is_dir():
-            continue
-        name = entry.name
-        if not name.startswith(comp):
-            continue
-        tail = name[len(comp) :]
-        if tail.startswith("-"):
-            continue
-        if tail.isdigit():
-            count += 1
-    return count
+    return sum(
+        path.name[len(comp):].isdigit()
+        for path in _component_window_dirs(comp_dir, comp)
+    )
 
 
 def _component_window_dirs(comp_dir: Path, comp: str) -> List[Path]:
-    if not comp_dir.is_dir():
-        return []
-
     out: List[Path] = []
-    for entry in comp_dir.iterdir():
-        if not entry.is_dir():
-            continue
-        name = entry.name
-        if name == f"{comp}-1":
-            continue
-        if not name.startswith(comp):
-            continue
-        tail = name[len(comp) :]
-        if tail and tail.lstrip("-").isdigit():
-            out.append(entry)
+    try:
+        with os.scandir(comp_dir) as entries:
+            for entry in entries:
+                name = entry.name
+                if name == f"{comp}-1" or not name.startswith(comp):
+                    continue
+                tail = name[len(comp):]
+                # Filter names before any metadata lookup. DirEntry also reuses
+                # the file type returned by the directory listing when available.
+                if tail and tail.lstrip("-").isdigit() and entry.is_dir():
+                    out.append(Path(entry.path))
+    except (FileNotFoundError, NotADirectoryError):
+        return []
     return sorted(out)
 
 
@@ -582,6 +569,16 @@ def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
 def _remd_time_from_rst(rst_path: Path) -> str | None:
     if not rst_path.is_file():
         return None
+    # Amber's classic NetCDF restarts can be read in-process. Mapping the file
+    # reads the scalar time without loading coordinates or spawning ncdump.
+    try:
+        from scipy.io import netcdf_file
+
+        with netcdf_file(rst_path, "r", mmap=True) as restart:
+            time = float(restart.variables["time"].data.item())
+        return str(time) if math.isfinite(time) else None
+    except (ImportError, OSError, ValueError, TypeError, KeyError, IndexError, EOFError):
+        pass  # Retain ncdump support for other NetCDF formats.
     ncdump = shutil.which("ncdump")
     if not ncdump:
         return None

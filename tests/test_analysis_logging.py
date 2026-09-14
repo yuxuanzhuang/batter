@@ -956,3 +956,27 @@ def test_silence_alchemlyb_only_sets_python_loggers_to_warning() -> None:
         assert amber_logger.level == logging.INFO
     finally:
         amber_logger.setLevel(prev_level)
+
+
+def test_remd_mbar_uses_reported_times_instead_of_bar_interval(tmp_path):
+    path = tmp_path / "md-01.out"
+    path.write_text(
+        " TEMP0 = 298.15 REPNUM = 1 EXCHANGE# = 1\n"
+        " NSTEP = 3750 TIME(PS) = 65.000\n"
+        "MBAR Energy analysis:\nEnergy at 0.0 = -5\n"
+        " NSTEP = 5000 TIME(PS) = 70.000\n"
+        " NSTEP = 8750 TIME(PS) = 85.000\n"
+        "MBAR Energy analysis:\nEnergy at 0.0 = -6\n"
+        " NSTEP = 10000 TIME(PS) = 90.000\n"
+    )
+    df = pd.DataFrame({0.0: [-5., -6.]}, index=pd.MultiIndex.from_arrays(
+        [[54., 58.], [0., 0.]], names=["time", "lambdas"]
+    ))
+    corrected = analysis_mod._restore_remd_mbar_times(str(path), df)
+    assert list(corrected.index.get_level_values("time")) == [70., 90.]
+    assert list(corrected[0.0]) == [-5., -6.]
+    assert list(df.index.get_level_values("time")) == [54., 58.]
+    # Truncation after the last energy block does not invent another timestamp.
+    path.write_text(path.read_text().rsplit(" NSTEP = 10000", 1)[0])
+    corrected = analysis_mod._restore_remd_mbar_times(str(path), df)
+    assert list(corrected.index.get_level_values("time")) == [70.]

@@ -150,7 +150,7 @@ reduce_dt_for_remd_windows() {
         win=$(printf "%s%02d" "${COMP}" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
         [[ -f "$tmpl" ]] || continue
-        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
+        DT_REDUCTION_LOG=$((i == 0)) reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
     done
 }
 
@@ -183,7 +183,7 @@ fi
 
 for ((i = 0; i < N_WINDOWS; i++)); do
     win=$(printf "%s%02d" "${COMP}" "$i")
-    apply_retry_dt_reduction "${PFOLDER}/${win}/mdin-remd-template" "$retry" 0.001 "REMD startup"
+    DT_REDUCTION_LOG=$((i == 0)) apply_retry_dt_reduction "${PFOLDER}/${win}/mdin-remd-template" "$retry" 0.001 "REMD startup"
 done
 
 total_steps=$(parse_total_steps "$tmpl0")

@@ -613,3 +613,29 @@ def test_remd_window_zero_shortcut_writes_missing_markers(tmp_path, already_mark
     for directory in (comp, w0, w1):
         assert (directory / "FINISHED").read_text() == "FINISHED\n"
     assert not (comp / "remd/mdin.in.remd.groupfile").exists()
+
+
+def test_remd_reduces_all_windows_but_logs_only_window_zero(tmp_path):
+    comp, w0, tmpl = _prepare_component(
+        tmp_path, script_name="run-local-remd.bash",
+        template_name="mdin-remd-template", total_steps=20,
+        dt=0.004, nstlim=10,
+    )
+    script = comp / "run-local-remd.bash"
+    script.write_text(script.read_text().replace("N_WINDOWS=1", "N_WINDOWS=2"))
+    w1 = comp / "z01"
+    w1.mkdir()
+    (w1 / tmpl.name).write_text(tmpl.read_text())
+    (w1 / "eq.rst7").write_text((w0 / "eq.rst7").read_text())
+    engine = tmp_path / "fail.sh"
+    _write_failure_pmemd_stub(engine)
+    env = dict(os.environ, PMEMD_MPI_EXEC=str(engine), MPI_EXEC="/bin/bash", MPI_FLAGS=" ", RETRY_COUNT="3")
+    result = subprocess.run(["bash", str(script)], cwd=comp, env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert _extract_dt(tmpl) == pytest.approx(0.002)
+    assert _extract_dt(w1 / tmpl.name) == pytest.approx(0.002)
+    assert result.stdout.count("Reduced dt in") == 1
+    assert result.stdout.count("Applied retry dt in") == 1
+    for line in result.stdout.splitlines():
+        if "Reduced dt in" in line or "Applied retry dt in" in line:
+            assert "./z00/" in line
