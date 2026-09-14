@@ -30,7 +30,8 @@ class MASFEBuilder(SystemBuilder):
 
     Directory layout (relative to ``system.root``)::
 
-        inputs/           # canonical copies of user-provided ligand inputs
+        inputs/
+          ligands/        # canonical copies of user-provided ligand inputs
         artifacts/        # files produced by builders
         simulations/
           <LIG1>/inputs/ligand.<ext>
@@ -67,8 +68,11 @@ class MASFEBuilder(SystemBuilder):
             logger.warning("overwrite=True — wiping and re-preparing artifacts under {}", artifacts_dir)
             self._clean_dir(artifacts_dir)
 
-        # Stage ligands with <NAME>.<ext>
-        staged_ligs = self._stage_ligands_named(inputs_dir, args.ligand_paths)
+        # Namespace ligand inputs so resume logic never confuses them with
+        # other shared inputs.
+        staged_ligs = self._stage_ligands_named(
+            inputs_dir / "ligands", args.ligand_paths
+        )
 
         marker.touch()
 
@@ -100,10 +104,21 @@ class MASFEBuilder(SystemBuilder):
         lig_dir = parent.root / "simulations"
         lig_dir.mkdir(parents=True, exist_ok=True)
 
-        children: Dict[str, SimSystem] = {}
+        normalized: List[tuple[Path, str]] = []
+        seen_names: set[str] = set()
         for src in lig_paths:
             p = Path(src)
             name = p.stem.upper()
+            if name in seen_names:
+                raise ValueError(
+                    f"Multiple ligand paths normalize to subsystem name {name!r}. "
+                    "Use unique ligand filenames or explicit ligand mapping keys."
+                )
+            seen_names.add(name)
+            normalized.append((p, name))
+
+        children: Dict[str, SimSystem] = {}
+        for p, name in normalized:
             sub_root = lig_dir / name
 
             # ensure layout
@@ -207,11 +222,16 @@ class MASFEBuilder(SystemBuilder):
         Re-assemble a MASFE SimSystem referencing already-staged ligands.
         (No protein/topology/coordinates are restored.)
         """
-        ligands = (
-            sorted(inputs_dir.glob("*.sdf"))
-            + sorted(inputs_dir.glob("*.mol2"))
-            + sorted(inputs_dir.glob("*.pdb"))
-        )
+        ligands: List[Path] = []
+        for name, source in args.ligand_paths.items():
+            suffix = Path(source).suffix
+            candidates = (
+                inputs_dir / "ligands" / f"{name}{suffix}",
+                inputs_dir / f"{name}{suffix}",  # legacy flat layout
+            )
+            staged = self._first_existing(candidates)
+            if staged is not None:
+                ligands.append(staged)
         return system.with_artifacts(
             protein=None,
             topology=None,

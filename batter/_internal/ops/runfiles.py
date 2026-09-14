@@ -25,6 +25,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
     hmr = str(ctx.sim.hmr).lower() == "yes"
+    run_alchemical_handoff = int(str(ctx.sim.dec_method).lower() != "dd")
     source_root = Path(__file__).resolve().parents[3]
 
     logger.debug(f"[Equil] Creating run scripts in {work}")
@@ -49,6 +50,10 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
                 .replace("__BATTER_SOURCE_ROOT__", str(source_root))
+                .replace(
+                    "default_run_alchemical_handoff=1 # __BATTER_RUN_ALCHEMICAL_HANDOFF__",
+                    f"default_run_alchemical_handoff={run_alchemical_handoff}",
+                )
                 .replace("__BATTER_LIGAND_RESNAME__", repr(str(ctx.residue_name)))
                 .replace("__BATTER_LIGAND_LABEL__", repr(str(ctx.ligand)))
                 .replace(
@@ -142,6 +147,24 @@ def write_fe_run_file(
            .replace("LAMBDA_SET_LIST", lambda_string)
            .replace("LAMBDA_EQ_LIST", lambda_sim_string)
     )
+    if str(getattr(ctx.sim, "dec_method", "")).lower() == "dd" and comp in {"e", "f", "v", "w", "z", "y"}:
+        # Amber24's SPFP TI neighbour-list kernel fails for DD charge and
+        # Lennard-Jones legs on realistic protein systems.  DPFP
+        # uses the stable TI path and remains overridable through PMEMD_EXEC.
+        txt = txt.replace(
+            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}",
+            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda_DPFP}",
+            1,
+        )
+        if comp in {"f", "w", "y"}:
+            # DD solvent legs use compact ligand-only boxes. Amber
+            # CUDA refuses boxes with <=2 neighbour-list cells in any
+            # dimension unless this explicit safety override is supplied.
+            txt = txt.replace(
+                "PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:-}",
+                "PMEMD_GPU_FLAGS=${PMEMD_GPU_FLAGS:--AllowSmallBox}",
+                1,
+            )
     txt = rewrite_prmtop_reference(txt, hmr=hmr)
 
     out_local.write_text(txt)

@@ -12,6 +12,7 @@ from loguru import logger
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
+from batter.systemprep.artifacts import ligand_pdb_path, manifest_artifact_path
 from batter.systems.core import SimSystem
 
 
@@ -59,7 +60,7 @@ class _MASFESystemPrepRunner:
     """
     Minimal system_prep for MASFE (solvation FE):
       - No protein/topology/coordinates
-      - Stage ligands into all-ligands/ as <NAME>.pdb (convert if needed)
+      - Stage ligands into all-ligands/ligands/ as <NAME>.pdb (convert if needed)
       - Write a manifest for downstream handlers
     """
 
@@ -67,6 +68,9 @@ class _MASFESystemPrepRunner:
         self.system = system
         self.output_dir = system.root
         self.ligand_stage_dir = self.output_dir / "all-ligands"
+        self.ligand_conversion_dir = (
+            self.output_dir / "artifacts" / "system_prep" / "ligand_conversions"
+        )
         self.ligand_stage_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self, *, system_name: str, ligand_paths: Dict[str, str]) -> Dict[str, Any]:
@@ -77,13 +81,14 @@ class _MASFESystemPrepRunner:
             src_p = Path(src)
             if not src_p.exists():
                 raise FileNotFoundError(f"Ligand file not found: {src_p}")
-            pdb = _ensure_pdb(src_p, self.ligand_stage_dir)
-            dst = self.ligand_stage_dir / f"{name.upper()}.pdb"
+            pdb = _ensure_pdb(src_p, self.ligand_conversion_dir)
+            dst = ligand_pdb_path(self.output_dir, name.upper())
             if pdb.resolve() != dst.resolve():
                 _copy(pdb, dst)
-            staged_map[name.upper()] = str(dst)
+            staged_map[name.upper()] = manifest_artifact_path(self.output_dir, dst)
 
         manifest = {
+            "layout_version": 2,
             "system_name": system_name,
             "mode": "MASFE",
             "ligands": staged_map,

@@ -32,7 +32,7 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"abfe_diff"``, ``"ligand_rest"``, ``"rbfe"``, ``"rbfe_septop"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"dd"``, ``"uno_dd"``, ``"abfe_diff"``, ``"ligand_rest"``, ``"rbfe"``, ``"rbfe_septop"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -61,7 +61,7 @@ def select_pipeline(
     if partition:
         extra["partition"] = partition
 
-    if name == "abfe":
+    if name in {"abfe", "dd", "uno_dd"}:
         return make_abfe_pipeline(
             sim_cfg,
             sys_params=params_model,

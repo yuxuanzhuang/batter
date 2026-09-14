@@ -1257,6 +1257,8 @@ def _copy_abfe_diff_pre_fe_reference_parts(
 
 
 @register_create_simulation("d")
+@register_create_simulation("e")
+@register_create_simulation("v")
 @register_create_simulation("z")
 def create_simulation_dir_z(ctx: BuildContext) -> None:
     """
@@ -1299,8 +1301,13 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     ]:
         _copy_if_exists(s, d)
 
-    # copy ff files (ligand + dum)
+    # Copy FF files (ligand + dum).  Keep the pose-derived PDB staged above:
+    # parameterization also emits ``<mol>.pdb``, but that file can retain the
+    # generic ``lig`` residue name and therefore cannot be matched to the
+    # renamed MOL2 template by tleap.
     for p in ff_dir.glob(f"{mol}.*"):
+        if p.suffix.lower() == ".pdb":
+            continue
         _copy_if_exists(p, dest_dir / p.name)
     for p in build_dir.glob("dum.*"):
         _copy_if_exists(p, dest_dir / p.name)
@@ -1349,6 +1356,19 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         )
 
     if comp == "d" and sim.dec_method == "sdr":
+        extra_ligand_shift = []
+        extra_ligand_offsets = None
+        extra_ligand_source_pdbs = None
+        extra_ligand_target_indices = None
+    elif sim.dec_method == "dd" and comp == "e":
+        # The linear charge leg is a dual-topology transformation.  The two
+        # ligand copies begin with identical coordinates and are selected by
+        # timask1/timask2 in the DD charge input.
+        extra_ligand_shift = [False]
+        extra_ligand_offsets = [(0.0, 0.0, 0.0)]
+        extra_ligand_source_pdbs = None
+        extra_ligand_target_indices = None
+    elif sim.dec_method == "dd":
         extra_ligand_shift = []
         extra_ligand_offsets = None
         extra_ligand_source_pdbs = None
@@ -1793,6 +1813,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
 @register_create_simulation("y")
 @register_create_simulation("m")
+@register_create_simulation("f")
+@register_create_simulation("w")
 def create_simulation_dir_lig(ctx: BuildContext) -> None:
     mol = ctx.residue_name
     ligand = ctx.ligand
@@ -1820,8 +1842,12 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
     ]:
         _copy_if_exists(s, d)
 
-    # copy ff files (ligand + dum)
+    # Keep the pose-derived, residue-renamed PDB copied above.  The
+    # parameterizer's PDB may still call the residue ``lig`` even though the
+    # matching MOL2 unit has been renamed to ``mol``.
     for p in ff_dir.glob(f"{mol}.*"):
+        if p.suffix.lower() == ".pdb":
+            continue
         _copy_if_exists(p, dest_dir / p.name)
     for p in build_dir.glob("dum.*"):
         _copy_if_exists(p, dest_dir / p.name)
@@ -1839,6 +1865,13 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
     with mda.Writer(dest_dir / "build.pdb", n_atoms=u_lig.atoms.n_atoms + 1) as W:
         W.write(u_dum)
         W.write(u_lig)
+
+    if ctx.comp == "f":
+        # Match the bound charge leg: charge annihilation uses two identical,
+        # overlapping ligand topologies.  The solvent LJ leg needs one copy.
+        _append_ligand_to_build(
+            dest_dir / "build.pdb", dest_dir / f"{mol}.pdb", resname=mol
+        )
 
 
 # ---------------------- window copier ----------------------

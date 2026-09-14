@@ -100,6 +100,7 @@ def test_create_simulation_dir_lig_places_dum_at_first_ligand_atom(tmp_path):
     ctx = SimpleNamespace(
         residue_name="LIG",
         ligand="lig",
+        comp="y",
         system_root=system_root,
         build_dir=build_dir,
         amber_dir=amber_dir,

@@ -76,6 +76,66 @@ def test_preflight_required_python_packages_passes_when_available(
     run_mod._preflight_required_python_packages()
 
 
+def test_store_run_metadata_records_version_and_git_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    provenance = {
+        "version": "1.2.3+4.gabc1234.dirty",
+        "source_path": "/src/batter",
+        "git_root": "/src/batter",
+        "git_revision": "abc1234",
+        "git_describe": "v1.2.3-4-gabc1234-dirty",
+        "git_dirty": True,
+    }
+    monkeypatch.setattr(run_mod, "_batter_provenance", lambda: provenance)
+
+    run_mod._store_run_metadata(
+        tmp_path,
+        protocol="abfe",
+        backend="local",
+        system_name="sys",
+        run_id="rep1",
+    )
+
+    metadata = json.loads(
+        (tmp_path / "artifacts" / "config" / "run_meta.json").read_text()
+    )
+    assert metadata["batter_version"] == provenance["version"]
+    assert metadata["batter_provenance"]["git_revision"] == "abc1234"
+    assert metadata["batter_provenance"]["git_dirty"] is True
+    assert len(metadata["batter_invocations"]) == 1
+
+
+def test_store_run_metadata_preserves_invocation_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    versions = iter(
+        [
+            {"version": "1.0.0", "source_path": "/first"},
+            {"version": "2.0.0", "source_path": "/second"},
+        ]
+    )
+    monkeypatch.setattr(run_mod, "_batter_provenance", lambda: next(versions))
+    kwargs = {
+        "protocol": "abfe",
+        "backend": "local",
+        "system_name": "sys",
+        "run_id": "rep1",
+    }
+
+    run_mod._store_run_metadata(tmp_path, **kwargs)
+    run_mod._store_run_metadata(tmp_path, **kwargs)
+
+    metadata = json.loads(
+        (tmp_path / "artifacts" / "config" / "run_meta.json").read_text()
+    )
+    assert metadata["batter_version"] == "2.0.0"
+    assert [item["version"] for item in metadata["batter_invocations"]] == [
+        "1.0.0",
+        "2.0.0",
+    ]
+
+
 def test_analysis_inner_workers_avoids_nested_parallelism() -> None:
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=6) == 1
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=1) == 8
@@ -139,6 +199,45 @@ def test_existing_ligand_input_guard_rejects_changed_ligand_path(
             stored_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
             current_payload={"config": {"create": {"ligand_input": "ligands.json"}}},
         )
+
+
+def test_system_prep_ligand_check_uses_manifest_namespaced_path(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    staged = run_dir / "all-ligands" / "ligands" / "7LD4.pdb"
+    staged.parent.mkdir(parents=True)
+    staged.write_text("ligand\n")
+    manifest = run_dir / "all-ligands" / "manifest.json"
+    manifest.write_text(
+        json.dumps({"ligands": {"7LD4": "ligands/7LD4.pdb"}})
+    )
+
+    assert run_mod._system_prep_missing_ligands(
+        run_dir, {"7LD4": tmp_path / "adenosine.sdf"}
+    ) == []
+
+
+def test_system_prep_ligand_check_rejects_legacy_system_ligand_collision(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    collided = run_dir / "all-ligands" / "7LD4.pdb"
+    collided.parent.mkdir(parents=True)
+    collided.write_text("ligand overwrote system\n")
+    (run_dir / "all-ligands" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "system_name": "7LD4",
+                "docked": str(collided),
+                "ligands": {"7LD4": str(collided)},
+            }
+        )
+    )
+
+    assert run_mod._system_prep_missing_ligands(
+        run_dir, {"7LD4": tmp_path / "adenosine.sdf"}
+    ) == ["7LD4"]
 
 
 @pytest.mark.parametrize("has_results", [False])
@@ -1063,6 +1162,54 @@ def test_abfe_diff_pipeline_uses_pre_fe_equil_before_final_fe() -> None:
     assert pipeline.dependencies("prepare_fe") == ["pre_fe_equil"]
 
 
+def test_dd_pipeline_uses_normal_abfe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "dd",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "dd",
+                "components": ["e", "v", "f", "w"],
+                "dic_n_steps": {
+                    comp: 100_000 for comp in ("e", "v", "f", "w")
+                },
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
+
+
+def test_uno_dd_pipeline_uses_normal_abfe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "uno_dd",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "uno_dd",
+                "components": ["z", "y"],
+                "dic_n_steps": {comp: 100_000 for comp in ("z", "y")},
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
+
+
 def test_ligand_rest_pipeline_uses_normal_single_ligand_fe_flow() -> None:
     from batter.orchestrate.pipeline_utils import select_pipeline
 
@@ -1332,6 +1479,10 @@ def test_resolve_signature_conflict_raises_on_mismatch(tmp_path: Path) -> None:
 def test_select_system_builder_validates_system_type() -> None:
     builder = rs.select_system_builder("abfe", system_type=None)
     assert builder is not None
+    dd_builder = rs.select_system_builder("dd", system_type=None)
+    assert dd_builder is not None
+    uno_dd_builder = rs.select_system_builder("uno-dd", system_type=None)
+    assert uno_dd_builder is not None
     abfe_diff_builder = rs.select_system_builder("ABFE-diff", system_type=None)
     assert abfe_diff_builder is not None
     ligand_rest_builder = rs.select_system_builder("ligand-rest", system_type=None)

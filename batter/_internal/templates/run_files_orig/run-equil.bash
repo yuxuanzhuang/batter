@@ -22,6 +22,8 @@ INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
+default_run_alchemical_handoff=1 # __BATTER_RUN_ALCHEMICAL_HANDOFF__
+run_alchemical_handoff=${BATTER_RUN_ALCHEMICAL_HANDOFF:-$default_run_alchemical_handoff}
 retry_count=${RETRY_COUNT:-${RETRY:-}}
 if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
     rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
@@ -303,16 +305,26 @@ if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
     check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
 fi
 
-if ! should_skip_eq_step "Equilibration disappear" "eqnpt_disappear.rst7"; then
-    require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to Equilibration disappear."
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
-fi
+if [[ $run_alchemical_handoff -eq 1 ]]; then
+    if ! should_skip_eq_step "Equilibration disappear" "eqnpt_disappear.rst7"; then
+        require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to Equilibration disappear."
+        print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
+    fi
 
-if ! should_skip_eq_step "Equilibration appear" "eqnpt_appear.rst7"; then
-    require_nonempty_file_or_attempt_fail "eqnpt_disappear.rst7" "[ERROR] Missing eqnpt_disappear.rst7; cannot continue to Equilibration appear."
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP_MERGED -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
+    if ! should_skip_eq_step "Equilibration appear" "eqnpt_appear.rst7"; then
+        require_nonempty_file_or_attempt_fail "eqnpt_disappear.rst7" "[ERROR] Missing eqnpt_disappear.rst7; cannot continue to Equilibration appear."
+        print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP_MERGED -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
+    fi
+else
+    # Traditional double decoupling keeps the bound ligand fully interacting
+    # during system equilibration.  Preserve the generic downstream restart
+    # names without running the SDR disappear/relocate/appear handoff.
+    require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot complete DD equilibration."
+    cp -f eqnpt_eq.rst7 eqnpt_disappear.rst7
+    cp -f eqnpt_eq.rst7 eqnpt_appear.rst7
+    echo "[INFO] DD protocol: skipped the SDR alchemical handoff; using eqnpt_eq.rst7."
 fi
 
 if [[ $only_eq -eq 1 ]]; then

@@ -15,6 +15,7 @@ from batter.exec.handlers.system_prep import (
     _find_min_xy_box_rotation,
     _select_anchor_reference_ligand,
 )
+from batter.systemprep.artifacts import docked_system_pdb_path, ligand_pdb_path
 from batter.systems.core import SimSystem
 
 
@@ -254,6 +255,40 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
     assert json.loads(dssp_json.read_text()) == [["H", "E"]]
 
 
+def test_run_input_protein_dssp_normalizes_mixed_protein_segids(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    protein = tmp_path / "protein_mixed_segid.pdb"
+    _make_mixed_segid_protein_pdb(protein)
+    runner._protein_input = str(protein)
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    unnormalized = mda.Universe(str(protein)).select_atoms("protein")
+    assert unnormalized.n_residues == 4
+
+    calls: list[tuple[int, ...]] = []
+
+    class DummyDSSP:
+        def __init__(self, atoms):
+            self.residues = list(atoms.residues)
+            self.results = {}
+            calls.append(tuple(int(residue.resid) for residue in self.residues))
+
+        def run(self):
+            self.results["dssp"] = np.array([["H", "E"]], dtype="<U1")
+            return self
+
+    monkeypatch.setattr(system_prep_mod, "DSSP", DummyDSSP)
+
+    result = runner._run_input_protein_dssp()
+
+    assert calls == [(1, 2)]
+    assert result["shape"] == [1, 2]
+    assert result["results"] == [["H", "E"]]
+
+
 def test_run_input_protein_dssp_splits_chains_and_skips_incomplete_residues(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -347,10 +382,13 @@ def test_run_includes_dssp_in_manifest(monkeypatch, tmp_path: Path) -> None:
     def _fake_process_system(self) -> None:
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
         _make_protein_pdb(self.ligands_folder / "reference.pdb")
-        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+        path = docked_system_pdb_path(self.output_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(path)
 
     def _fake_prepare_all_ligands(self) -> None:
-        out = self.ligands_folder / "LIG1.pdb"
+        out = ligand_pdb_path(self.output_dir, "LIG1")
+        out.parent.mkdir(parents=True, exist_ok=True)
         _make_ligand_pdb(out)
         self.ligand_dict = {"LIG1": str(out)}
 
@@ -410,10 +448,13 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
     def _fake_process_system(self) -> None:
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
         _make_protein_pdb(self.ligands_folder / "reference.pdb")
-        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+        path = docked_system_pdb_path(self.output_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(path)
 
     def _fake_prepare_all_ligands(self) -> None:
-        out = self.ligands_folder / "LIG1.pdb"
+        out = ligand_pdb_path(self.output_dir, "LIG1")
+        out.parent.mkdir(parents=True, exist_ok=True)
         _make_ligand_pdb(out)
         self.ligand_dict = {"LIG1": str(out)}
 
@@ -485,10 +526,13 @@ def test_run_auto_completes_anchor_atoms_when_only_p1_provided(
     def _fake_process_system(self) -> None:
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
         _make_protein_pdb(self.ligands_folder / "reference.pdb")
-        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+        path = docked_system_pdb_path(self.output_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(path)
 
     def _fake_prepare_all_ligands(self) -> None:
-        out = self.ligands_folder / "LIG1.pdb"
+        out = ligand_pdb_path(self.output_dir, "LIG1")
+        out.parent.mkdir(parents=True, exist_ok=True)
         _make_ligand_pdb(out)
         self.ligand_dict = {"LIG1": str(out)}
 
@@ -577,11 +621,14 @@ def test_run_uses_real_ligand_as_anchor_reference_when_apo_is_present(
     def _fake_process_system(self) -> None:
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
         _make_protein_pdb(self.ligands_folder / "reference.pdb")
-        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+        path = docked_system_pdb_path(self.output_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(path)
 
     def _fake_prepare_all_ligands(self) -> None:
-        apo_out = self.ligands_folder / "APO.pdb"
-        real_out = self.ligands_folder / "PF06882961.pdb"
+        apo_out = ligand_pdb_path(self.output_dir, "APO")
+        real_out = ligand_pdb_path(self.output_dir, "PF06882961")
+        apo_out.parent.mkdir(parents=True, exist_ok=True)
         _make_ligand_pdb_at(apo_out, -10.0)
         _make_ligand_pdb_at(real_out, 10.0)
         self.ligand_dict = {
@@ -663,7 +710,7 @@ def test_get_alignment_reduces_xy_area_and_rotates_ligand_without_system_input(
     u_prot_in = mda.Universe(str(protein))
     u_prot_out = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
     u_lig_in = mda.Universe(str(ligand))
-    u_lig_out = mda.Universe(str(runner.ligands_folder / "LIG1.pdb"))
+    u_lig_out = mda.Universe(str(ligand_pdb_path(runner.output_dir, "LIG1")))
 
     assert _xy_area(u_prot_out.select_atoms("protein")) < _xy_area(
         u_prot_in.select_atoms("protein")
@@ -682,6 +729,30 @@ def test_get_alignment_reduces_xy_area_and_rotates_ligand_without_system_input(
     assert np.linalg.norm(ca_out - lig_c2_out) == pytest.approx(
         np.linalg.norm(ca_in - lig_c2_in), abs=1e-3
     )
+
+
+def test_prepare_same_named_ligand_does_not_overwrite_docked_system(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="7LD4", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    ligand = tmp_path / "adenosine.pdb"
+    _make_ligand_pdb(ligand)
+    runner._system_name = "7LD4"
+    runner.ligand_dict = {"7LD4": str(ligand)}
+    docked = docked_system_pdb_path(system.root)
+    docked.parent.mkdir(parents=True, exist_ok=True)
+    _make_protein_pdb(docked)
+    original_system = docked.read_text()
+    monkeypatch.setattr(_SystemPrepRunner, "_align_2_system", lambda *_args: None)
+
+    runner._prepare_all_ligands()
+
+    staged_ligand = ligand_pdb_path(system.root, "7LD4")
+    assert staged_ligand.is_file()
+    assert staged_ligand != docked
+    assert docked.read_text() == original_system
+    assert runner.ligand_dict == {"7LD4": str(staged_ligand)}
 
 
 def test_get_alignment_skips_xy_optimization_when_system_input_is_present(
@@ -831,7 +902,7 @@ def test_process_system_preserves_terminal_caps_outside_protein_selection(
     runner._process_system()
 
     reference_text = (runner.ligands_folder / "reference.pdb").read_text()
-    merged_text = (runner.ligands_folder / "SYS.pdb").read_text()
+    merged_text = docked_system_pdb_path(runner.output_dir).read_text()
     assert " ACE " in reference_text
     assert " NMA " in reference_text
     assert " ACE " in merged_text

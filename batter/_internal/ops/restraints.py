@@ -1298,6 +1298,11 @@ def _append_BULK_LIGAND_restraint(ctx: BuildContext, disang: Path) -> int:
     comp = str(getattr(ctx, "comp", "")).lower()
     if comp != "z":
         return 0
+    if str(getattr(ctx.sim, "dec_method", "")).lower() != "sdr":
+        # Unified DD has a single bound ligand in z; its matching unbound
+        # transformation is the separate y component.  The bulk-copy guard
+        # is specific to SDR z, where a second ligand is present in this box.
+        return 0
 
     vac_pdb = ctx.window_dir / "vac.pdb"
     if not vac_pdb.exists():
@@ -1744,7 +1749,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     if comp in ("v", "o", "z", ):
         offset = 1
     elif comp in ("e", "x"):
-        offset = 3
+        offset = 1 if ctx.sim.dec_method == "dd" else 3
     else:
         offset = 0
     hvy_h, hvy_lig = _collect_calpha_and_lig(
@@ -1803,7 +1808,9 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             anchors=PROTEIN_COM_RESTRAINT_ANCHORS,
             strengths=(rcom, rcom),
         )
-        if comp not in {"v", "o", "z"}:
+        if comp not in {"v", "o", "z"} and not (
+            comp == "e" and ctx.sim.dec_method == "dd"
+        ):
             _write_group_colvar_block(
                 cvf,
                 anchor_atom="2",
@@ -2516,7 +2523,7 @@ def _build_restraints_d(builder, ctx: BuildContext) -> None:
     )
 
 
-@register_restraints("v", "o", "z")
+@register_restraints("e", "v", "o", "z")
 def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
     _write_component_restraints(ctx, skip_lig_tr=False, lig_only=False)
 
@@ -2526,7 +2533,7 @@ def _build_restraints_l(builder, ctx: BuildContext) -> None:
     _write_ligand_dihedral_restraints(ctx)
 
 
-@register_restraints("y")
+@register_restraints("f", "w", "y")
 def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:

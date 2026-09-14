@@ -115,6 +115,20 @@ def test_abfe_window_equilibration_runs_window_eq_in() -> None:
     assert '"$PRMTOP_MERGED"' in text
 
 
+def test_fe_window_equilibration_forwards_gpu_flags() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    ).read_text()
+
+    assert check_run.count("$PMEMD_EXEC ${PMEMD_GPU_FLAGS:-} -O") == 3
+
+
 def test_fe_equil_templates_clean_transient_artifacts_before_finished_marker() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     template_dir = (

@@ -54,6 +54,8 @@ COMPONENT_DIRECTION_DICT = {
     "l": +1,
     "e": -1,
     "v": -1,
+    "f": +1,
+    "w": +1,
     "o": -1,
     "z": -1,
     "d": -1,

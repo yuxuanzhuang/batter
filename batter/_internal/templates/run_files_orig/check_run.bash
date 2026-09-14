@@ -1039,7 +1039,7 @@ run_fe_window_equilibration() {
             write_attempt_failed_marker
             return 1
         fi
-        print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $initial_restart -o eq.out -r eq.rst7 -x eq.nc -ref $initial_restart >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC ${PMEMD_GPU_FLAGS:-} -O -i eq.in -p $topology -c $initial_restart -o eq.out -r eq.rst7 -x eq.nc -ref $initial_restart >> \"$log_file\" 2>&1"
         check_sim_failure "$stage" "$log_file" eq.rst7
         return 0
     fi
@@ -1048,12 +1048,12 @@ run_fe_window_equilibration() {
         eq-handoff-[0-9][0-9].nc eq-final.nc eq.nc eq.out
     for input in "${handoff_inputs[@]}"; do
         stem=${input%.in}
-        print_and_run "$PMEMD_EXEC -O -i $input -p $topology -c $current_restart -o ${stem}.out -r ${stem}.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC ${PMEMD_GPU_FLAGS:-} -O -i $input -p $topology -c $current_restart -o ${stem}.out -r ${stem}.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
         check_sim_failure "$stage ($stem)" "$log_file" "${stem}.rst7"
         current_restart="${stem}.rst7"
     done
 
-    print_and_run "$PMEMD_EXEC -O -i eq.in -p $topology -c $current_restart -o eq.out -r eq.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC ${PMEMD_GPU_FLAGS:-} -O -i eq.in -p $topology -c $current_restart -o eq.out -r eq.rst7 -ref $initial_restart >> \"$log_file\" 2>&1"
     check_sim_failure "$stage (final)" "$log_file" eq.rst7
     SIM_COMMAND_STATUS=0
     return 0
