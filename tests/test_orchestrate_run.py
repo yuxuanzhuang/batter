@@ -1860,3 +1860,26 @@ def test_notify_run_failure_includes_error_details(
     assert sent["recipients"] == ["dest@example.com"]
     assert "Subject: BATTER run 'run1' of sys failed" in sent["message"]
     assert "Error:\nboom" in sent["message"]
+
+
+def test_notify_run_timeout_includes_resubmission_command(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    resume_command = "batter run /work/run.yaml --slurm-submit"
+
+    run_mod._notify_run_timeout(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        resume_command,
+    )
+
+    assert sent["sender"] == "config@example.com"
+    assert sent["recipients"] == ["dest@example.com"]
+    assert "manager timed out before completion" in sent["message"]
+    assert "The run is not finished yet" in sent["message"]
+    assert "Rerun the same submission command to continue:" in sent["message"]
+    assert resume_command in sent["message"]

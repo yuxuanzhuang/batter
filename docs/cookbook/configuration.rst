@@ -393,9 +393,11 @@ Run notifications
 -----------------
 
 Set ``run.email_on_completion`` to receive a best-effort email when the BATTER
-manager finishes normally or exits with an uncaught failure. BATTER sends that
-message through ``localhost`` SMTP and uses ``run.email_sender`` as the sender
-address (default: ``nobody@stanford.edu``).
+manager finishes normally, exits with an uncaught failure, or reaches its Slurm
+time limit before the workflow finishes. Manager timeout emails include the
+submission command to rerun and continue the existing execution. BATTER sends
+these messages through ``localhost`` SMTP and uses ``run.email_sender`` as the
+sender address (default: ``nobody@stanford.edu``).
 
 Bundled production jobs
 -----------------------

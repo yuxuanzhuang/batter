@@ -20,7 +20,10 @@ from batter.cli.shared import (
 )
 from batter.config.run import RunConfig, SlurmConfig
 from batter.data import job_manager
-from batter.orchestrate.run import _preflight_required_python_packages
+from batter.orchestrate.run import (
+    _notify_run_timeout,
+    _preflight_required_python_packages,
+)
 from batter.orchestrate.run_support import (
     compute_run_signature,
     generate_run_id,
@@ -103,6 +106,95 @@ def _preflight_required_packages_for_cli() -> None:
         _preflight_required_python_packages()
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+_MANAGER_TIMEOUT_SIGNAL = "B:USR1@60"
+
+
+def _manager_run_with_timeout_notification(
+    *,
+    batter_cmd: str,
+    run_cmd: str,
+    yaml_path: Path,
+    run_id: str,
+    run_dir: Path,
+    resume_command: str,
+) -> str:
+    """Wrap a manager command with a reliable pre-timeout email hook."""
+    notify_cmd = " ".join(
+        [
+            batter_cmd,
+            "_notify-run-timeout",
+            shlex.quote(str(yaml_path.resolve())),
+            "--run-id",
+            shlex.quote(run_id),
+            "--run-dir",
+            shlex.quote(str(run_dir.resolve())),
+            "--resume-command",
+            shlex.quote(resume_command),
+        ]
+    )
+    return "\n".join(
+        [
+            "# Notify before Slurm terminates an unfinished manager at its time limit.",
+            "BATTER_MANAGER_PID=''",
+            "BATTER_MANAGER_TIMEOUT_NOTIFIED=0",
+            "batter_manager_notify_timeout() {",
+            '  if [ "$BATTER_MANAGER_TIMEOUT_NOTIFIED" -eq 0 ] && '
+            '[ -n "$BATTER_MANAGER_PID" ] && '
+            'kill -0 "$BATTER_MANAGER_PID" 2>/dev/null; then',
+            "    BATTER_MANAGER_TIMEOUT_NOTIFIED=1",
+            f"    {notify_cmd} || echo 'BATTER timeout notification failed.' >&2",
+            "  fi",
+            "}",
+            "trap batter_manager_notify_timeout USR1",
+            "",
+            f"{run_cmd} &",
+            "BATTER_MANAGER_PID=$!",
+            "BATTER_MANAGER_STATUS=0",
+            "while true; do",
+            '  if wait "$BATTER_MANAGER_PID"; then',
+            "    BATTER_MANAGER_STATUS=0",
+            "  else",
+            "    BATTER_MANAGER_STATUS=$?",
+            "  fi",
+            '  if ! kill -0 "$BATTER_MANAGER_PID" 2>/dev/null; then',
+            "    break",
+            "  fi",
+            "done",
+            "trap - USR1",
+            'if [ "$BATTER_MANAGER_STATUS" -eq 0 ]; then',
+            "  echo 'Job completed.'",
+            "fi",
+            'exit "$BATTER_MANAGER_STATUS"',
+            "",
+        ]
+    )
+
+
+@cli.command("_notify-run-timeout", hidden=True)
+@click.argument(
+    "yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option("--run-id", required=True)
+@click.option(
+    "--run-dir", required=True, type=click.Path(file_okay=False, path_type=Path)
+)
+@click.option("--resume-command", required=True)
+def cmd_notify_run_timeout(
+    yaml_path: Path,
+    run_id: str,
+    run_dir: Path,
+    resume_command: str,
+) -> None:
+    """Send the internal Slurm-manager timeout notification."""
+    try:
+        rc = RunConfig.load(yaml_path)
+        _notify_run_timeout(rc, run_id, run_dir, resume_command)
+    except Exception as exc:
+        raise click.ClickException(
+            f"Could not send BATTER manager timeout notification: {exc}"
+        ) from exc
 
 
 @cli.command("run")
@@ -223,7 +315,7 @@ def cmd_run(
 
     if slurm_submit:
         _preflight_required_packages_for_cli()
-        _, run_dir = _resolve_run_dir_for_submission(
+        resolved_run_id, run_dir = _resolve_run_dir_for_submission(
             cfg_for_validation, yaml_path, run_over
         )
         run_dir_abs = run_dir.resolve()
@@ -268,6 +360,11 @@ def cmd_run(
             parts += ["--partition", shlex.quote(partition)]
 
         run_cmd = " ".join(parts)
+        resume_command = f"{run_cmd} --slurm-submit"
+        if slurm_manager_path:
+            resume_command += " --slurm-manager-path " + shlex.quote(
+                str(Path(slurm_manager_path).resolve())
+            )
 
         # create a hash based on contents of the yaml and options
         run_hash = hash_run_input(
@@ -301,14 +398,33 @@ def cmd_run(
             header_root=cfg_for_validation.run.slurm_header_dir,
         )
         manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
+        email_on_completion = getattr(
+            cfg_for_validation.run, "email_on_completion", None
+        )
+        if email_on_completion:
+            manager_code = _upsert_sbatch_option(
+                manager_code, "signal", _MANAGER_TIMEOUT_SIGNAL
+            )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
             f.write(_batter_path_export_block())
-            f.write(run_cmd)
-            f.write("\n")
-            f.write("echo 'Job completed.'\n")
-            f.write("\n")
+            if email_on_completion:
+                f.write(
+                    _manager_run_with_timeout_notification(
+                        batter_cmd=batter_cmd,
+                        run_cmd=run_cmd,
+                        yaml_path=yaml_path,
+                        run_id=resolved_run_id,
+                        run_dir=run_dir_abs,
+                        resume_command=resume_command,
+                    )
+                )
+            else:
+                f.write(run_cmd)
+                f.write("\n")
+                f.write("echo 'Job completed.'\n")
+                f.write("\n")
 
         # submit slurm job
         result = subprocess.run(
@@ -455,6 +571,11 @@ def cmd_run_exec(
             parts += ["--partition", shlex.quote(partition)]
 
         run_cmd = " ".join(parts)
+        resume_command = f"{run_cmd} --slurm-submit"
+        if slurm_manager_path:
+            resume_command += " --slurm-manager-path " + shlex.quote(
+                str(Path(slurm_manager_path).resolve())
+            )
 
         run_hash = hash_run_input(
             yaml_copy,
@@ -474,6 +595,7 @@ def cmd_run_exec(
         )
         tpl_header = base_path.with_suffix(".header")
         tpl_body = base_path.with_suffix(".body")
+        manager_cfg = base_cfg or RunConfig.load(yaml_copy)
         manager_code = render_slurm_with_header_body(
             "job_manager.header",
             tpl_header,
@@ -482,19 +604,36 @@ def cmd_run_exec(
                 "__JOB_NAME__": manager_job_name,
                 "__JOB_LOG_BASE__": log_base,
             },
-            header_root=RunConfig.load(yaml_copy).run.slurm_header_dir,
+            header_root=manager_cfg.run.slurm_header_dir,
         )
         manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
         if partition:
             manager_code = _upsert_sbatch_option(manager_code, "partition", partition)
+        email_on_completion = getattr(manager_cfg.run, "email_on_completion", None)
+        if email_on_completion:
+            manager_code = _upsert_sbatch_option(
+                manager_code, "signal", _MANAGER_TIMEOUT_SIGNAL
+            )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
             f.write(_batter_path_export_block())
-            f.write(run_cmd)
-            f.write("\n")
-            f.write("echo 'Job completed.'\n")
-            f.write("\n")
+            if email_on_completion:
+                f.write(
+                    _manager_run_with_timeout_notification(
+                        batter_cmd=batter_cmd,
+                        run_cmd=run_cmd,
+                        yaml_path=yaml_copy,
+                        run_id=exec_dir.name,
+                        run_dir=exec_dir,
+                        resume_command=resume_command,
+                    )
+                )
+            else:
+                f.write(run_cmd)
+                f.write("\n")
+                f.write("echo 'Job completed.'\n")
+                f.write("\n")
 
         result = subprocess.run(
             ["sbatch", f"{run_hash}_job_manager.sbatch"],

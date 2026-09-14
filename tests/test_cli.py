@@ -301,6 +301,7 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
                 "dry_run": False,
                 "slurm_header_dir": header_root,
                 "allow_run_id_mismatch": False,
+                "email_on_completion": "dest@example.com",
             }
             run_data = dict(default_run)
             if run:
@@ -363,6 +364,7 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     assert scripts[0].exists()
     script_text = scripts[0].read_text()
     assert "#SBATCH --job-name=fep_" in script_text
+    assert "#SBATCH --signal=B:USR1@60" in script_text
     assert "/simulations/manager" in script_text
     assert "__JOB_NAME__" not in script_text
     assert "--on-failure" not in script_text
@@ -372,6 +374,10 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     assert script_text.index("BATTER_ENV_BIN=") < script_text.index(
         str(yaml_path.resolve())
     )
+    assert "trap batter_manager_notify_timeout USR1" in script_text
+    assert "_notify-run-timeout" in script_text
+    assert "The run is not finished yet" not in script_text
+    assert f"run {yaml_path.resolve()} --slurm-submit" in script_text
     # sbatch invoked on the generated script
     assert scripts[0].name in calls["cmd"]
 
@@ -434,6 +440,53 @@ def test_cli_run_slurm_submit_checks_dependencies_before_sbatch(
     assert result.exit_code == 1
     assert "Missing required BATTER Python package(s): prolif" in result.output
     assert not list(tmp_path.glob("*_job_manager.sbatch"))
+
+
+def test_cli_internal_timeout_notification_forwards_run_details(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text("dummy: true\n")
+    run_dir = tmp_path / "work" / "executions" / "run1"
+    resume_command = f"batter run {yaml_path} --slurm-submit"
+    rc = object()
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.run_cmds.RunConfig.load", staticmethod(lambda path: rc)
+    )
+
+    def fake_notify(config, run_id, execution_dir, command):
+        called.update(
+            config=config,
+            run_id=run_id,
+            run_dir=execution_dir,
+            resume_command=command,
+        )
+
+    monkeypatch.setattr("batter.cli.run_cmds._notify_run_timeout", fake_notify)
+
+    result = runner.invoke(
+        cli,
+        [
+            "_notify-run-timeout",
+            str(yaml_path),
+            "--run-id",
+            "run1",
+            "--run-dir",
+            str(run_dir),
+            "--resume-command",
+            resume_command,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called == {
+        "config": rc,
+        "run_id": "run1",
+        "run_dir": run_dir,
+        "resume_command": resume_command,
+    }
 
 
 def test_cli_fe_analyze_invokes_api(

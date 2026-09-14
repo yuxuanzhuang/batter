@@ -37,7 +37,10 @@ Options:
    atom-mapping images, and selectable edge coloring by graph redundancy or
    available mapping metrics.
 ``--slurm-submit``
-   Emit an ``sbatch`` script and submit the job instead of running locally.
+   Emit an ``sbatch`` script and submit the job instead of running locally. If
+   ``run.email_on_completion`` is configured, the manager sends a pre-timeout
+   notice when it is still running at the end of its walltime. The notice
+   includes the command to resubmit and continue the same execution.
 ``--slurm-manager-path PATH``
    Optional path to a custom SLURM header/body pair for the manager submission.
 ``--partition / -p``

@@ -12,9 +12,8 @@ from loguru import logger
 
 try:
     from rdkit import Chem
-except Exception as e:  # pragma: no cover - RDKit optional at runtime
+except Exception:  # pragma: no cover - RDKit optional at runtime
     Chem = None  # type: ignore
-    logger.warning(f"RDKit not available; ligand helpers will fail if invoked. ({e})")
 
 __all__ = [
     "find_anchor_atoms",
