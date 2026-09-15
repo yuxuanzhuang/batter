@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 
 import pytest
+from rdkit import Chem
+from rdkit.Geometry import Point3D
 
 import batter.param.ligand as ligand_mod
 
@@ -57,11 +59,21 @@ def _patch_hashing(monkeypatch, fail_paths: set[Path]):
     monkeypatch.setattr(
         ligand_mod, "_canonical_payload", lambda mol: f"SMI-{Path(mol).name}"
     )
+    monkeypatch.setattr(
+        ligand_mod,
+        "_parameterization_payload",
+        lambda mol: f"SMI-{Path(mol).name}",
+    )
+    monkeypatch.setattr(
+        ligand_mod,
+        "_atom_order_payload",
+        lambda mol: f"ORDER-{Path(mol).name}",
+    )
     # simple hash function
     monkeypatch.setattr(
         ligand_mod,
         "_hash_id",
-        lambda payload, ligand_ff, retain_h: f"HASH-{payload}",
+        lambda payload, ligand_ff, retain_h, charge_method=None: f"HASH-{payload}",
     )
     monkeypatch.setattr(
         ligand_mod,
@@ -224,3 +236,68 @@ def test_ligand_parameter_lock_serializes_same_hash_across_processes(
     assert first.exitcode == 0
     assert second.exitcode == 0
     assert second_acquired.is_set()
+
+
+def test_parameterization_payload_distinguishes_atom_order_not_coordinates() -> None:
+    mol = Chem.AddHs(Chem.MolFromSmiles("C[NH2+]CCO"))
+    conformer = Chem.Conformer(mol.GetNumAtoms())
+    for index in range(mol.GetNumAtoms()):
+        conformer.SetAtomPosition(index, Point3D(float(index), 0.0, 0.0))
+    mol.AddConformer(conformer)
+
+    coordinate_variant = Chem.Mol(mol)
+    coordinate_variant.GetConformer().SetAtomPosition(0, Point3D(99.0, 1.0, 2.0))
+    reordered = Chem.RenumberAtoms(mol, list(reversed(range(mol.GetNumAtoms()))))
+
+    assert ligand_mod._canonical_payload(mol) == ligand_mod._canonical_payload(reordered)
+    assert ligand_mod._parameterization_payload(mol) == ligand_mod._parameterization_payload(
+        coordinate_variant
+    )
+    assert ligand_mod._parameterization_payload(mol) != ligand_mod._parameterization_payload(
+        reordered
+    )
+
+
+def test_parameter_cache_hash_includes_charge_method() -> None:
+    payload = ligand_mod._parameterization_payload(
+        Chem.AddHs(Chem.MolFromSmiles("CCO"))
+    )
+
+    am1bcc = ligand_mod._hash_id(payload, "openff-2.3.0", True, "am1bcc")
+    gasteiger = ligand_mod._hash_id(payload, "openff-2.3.0", True, "gasteiger")
+
+    assert am1bcc != gasteiger
+
+
+def test_batch_ligand_process_separates_reordered_isomorphic_inputs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    mol = Chem.AddHs(Chem.MolFromSmiles("CC[NH2+]CO"))
+    conformer = Chem.Conformer(mol.GetNumAtoms())
+    for index in range(mol.GetNumAtoms()):
+        conformer.SetAtomPosition(index, Point3D(float(index), 0.0, 0.0))
+    mol.AddConformer(conformer)
+    reordered = Chem.RenumberAtoms(mol, list(reversed(range(mol.GetNumAtoms()))))
+
+    first = tmp_path / "first.sdf"
+    second = tmp_path / "second.sdf"
+    for path, molecule in ((first, mol), (second, reordered)):
+        writer = Chem.SDWriter(str(path))
+        writer.write(molecule)
+        writer.close()
+
+    monkeypatch.setattr(
+        ligand_mod,
+        "LigandFactory",
+        lambda: _FakeFactory(fail_paths=set()),
+    )
+    hashes, unique = ligand_mod.batch_ligand_process(
+        {"FIRST": first, "SECOND": second},
+        output_path=tmp_path / "params",
+        ligand_ff="gaff2",
+        charge_method="bcc",
+    )
+
+    assert unique[str(first)][1] == unique[str(second)][1]
+    assert len(hashes) == 2
+    assert len(set(hashes)) == 2

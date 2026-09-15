@@ -266,9 +266,70 @@ def _canonical_payload(mol: Chem.Mol) -> str:
     return Chem.MolToSmiles(mol, isomericSmiles=True)
 
 
-def _hash_id(payload: str, ligand_ff: str, retain_h: bool) -> str:
+_LIGAND_CACHE_KEY_SCHEMA = "atom-indexed-topology-v1"
+
+
+def _atom_order_payload(mol: Chem.Mol) -> str:
+    """Return a coordinate-independent description of indexed atom topology.
+
+    Ligand parameter and coordinate files are consumed positionally downstream,
+    so graph-isomorphic inputs are only interchangeable when their atom indices
+    describe the same atoms and bonds. Coordinates are intentionally excluded
+    so conformers with an identical atom ordering can still share parameters.
     """
-    Build a short, stable content hash for (mol, ff, retain flag).
+    atoms = [
+        [
+            atom.GetAtomicNum(),
+            atom.GetIsotope(),
+            atom.GetFormalCharge(),
+            atom.GetNumRadicalElectrons(),
+            int(atom.GetChiralTag()),
+            int(atom.GetIsAromatic()),
+        ]
+        for atom in mol.GetAtoms()
+    ]
+    bonds = sorted(
+        [
+            min(bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()),
+            max(bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()),
+            str(bond.GetBondType()),
+            int(bond.GetIsAromatic()),
+            int(bond.GetStereo()),
+        ]
+        for bond in mol.GetBonds()
+    )
+    return json.dumps(
+        {
+            "schema": _LIGAND_CACHE_KEY_SCHEMA,
+            "atoms": atoms,
+            "bonds": bonds,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _parameterization_payload(mol: Chem.Mol) -> str:
+    """Return the molecular payload used to identify reusable parameters."""
+    return json.dumps(
+        {
+            "schema": _LIGAND_CACHE_KEY_SCHEMA,
+            "canonical_smiles": _canonical_payload(mol),
+            "atom_order": json.loads(_atom_order_payload(mol)),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _hash_id(
+    payload: str,
+    ligand_ff: str,
+    retain_h: bool,
+    charge_method: str | None = None,
+) -> str:
+    """
+    Build a short, stable content hash for the parameterization inputs.
 
     The final id is 12 hex chars of SHA256.
 
@@ -276,6 +337,8 @@ def _hash_id(payload: str, ligand_ff: str, retain_h: bool) -> str:
     h = hashlib.sha256()
     h.update(payload.encode("utf-8"))
     h.update(f"|ff={ligand_ff}|retain={int(retain_h)}".encode("utf-8"))
+    if charge_method is not None:
+        h.update(f"|charge={charge_method}".encode("utf-8"))
     return h.hexdigest()[:12]
 
 
@@ -1064,7 +1127,8 @@ def batch_ligand_process(
 
         <output_path>/<hash_id>/*
 
-    where ``hash_id = sha256(canonical_smiles + ligand_ff + retain).hexdigest()[:12]``.
+    where the hash includes canonical chemistry, indexed atom topology, force
+    field, charge method, and the explicit-hydrogen retention setting.
 
     Parameters
     ----------
@@ -1126,11 +1190,42 @@ def batch_ligand_process(
     # --- compute content hashes for unique physical inputs ---
     # key: path (string) → (hash_id, canonical_smiles)
     unique: Dict[str, Tuple[str, str]] = {}
+    order_fingerprints: Dict[str, str] = {}
     for alias, path in lig_map.items():
         mol = _rdkit_load(path, retain_h=retain_lig_prot)
         smi = _canonical_payload(mol)
-        hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain_lig_prot)
+        hid = _hash_id(
+            _parameterization_payload(mol),
+            ligand_ff=ligand_ff,
+            retain_h=retain_lig_prot,
+            charge_method=charge_method,
+        )
         unique[path] = (hid, smi)
+        order_fingerprints[path] = hashlib.sha256(
+            _atom_order_payload(mol).encode("utf-8")
+        ).hexdigest()
+
+    first_alias_by_path: Dict[str, str] = {}
+    for alias, path in lig_map.items():
+        first_alias_by_path.setdefault(path, alias)
+
+    chemistry_representatives: Dict[str, Tuple[str, str, str]] = {}
+    for path, (hid, smi) in unique.items():
+        alias = first_alias_by_path[path]
+        order_fingerprint = order_fingerprints[path]
+        representative = chemistry_representatives.setdefault(
+            smi, (alias, hid, order_fingerprint)
+        )
+        if representative[2] != order_fingerprint:
+            logger.info(
+                "Ligands {} and {} have the same canonical chemistry but "
+                "different atom ordering; using separate parameter caches "
+                "({} and {}).",
+                representative[0],
+                alias,
+                representative[1],
+                hid,
+            )
 
     # order by first appearance of path in input list (stable)
     ordered_paths = []
@@ -1188,8 +1283,11 @@ def batch_ligand_process(
                 "input_path": str(Path(p).resolve()),
                 "aliases": [name for name, path in lig_map.items() if path == p],
                 "canonical_smiles": smi,
+                "cache_key_schema": _LIGAND_CACHE_KEY_SCHEMA,
+                "atom_order_fingerprint": order_fingerprints[p],
                 "retain_lig_prot": bool(retain_lig_prot),
                 "ligand_ff": ligand_ff,
+                "charge_method": charge_method,
                 "prepared_base": lig_name,
             }
             (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
@@ -1229,9 +1327,11 @@ def batch_ligand_process(
     for name, p in lig_map.items():
         if p in success_paths and p in unique_filtered:
             hash_order_filtered.append(unique_filtered[p][0])
-    skipped = len(lig_map) - len(success_paths)
+    successful_aliases = sum(path in success_paths for path in lig_map.values())
+    skipped_aliases = len(lig_map) - successful_aliases
     logger.success(
-        f"Prepared {len(success_paths)} ligands into {out_root}"
-        f"{f' (skipped {skipped})' if skipped else ''}"
+        f"Prepared {len(success_paths)} unique ligand parameter set(s) for "
+        f"{successful_aliases} input alias(es) into {out_root}"
+        f"{f' (skipped {skipped_aliases} alias(es))' if skipped_aliases else ''}"
     )
     return hash_order_filtered, unique_filtered

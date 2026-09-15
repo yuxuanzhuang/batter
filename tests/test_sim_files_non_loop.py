@@ -62,11 +62,11 @@ def test_default_fe_seed_schedule_uses_ten_states(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("component", "expected_default"),
-    [("e", "pmemd.cuda_DPFP"), ("f", "pmemd.cuda_DPFP"),
-     ("v", "pmemd.cuda_DPFP"), ("w", "pmemd.cuda_DPFP"),
-     ("z", "pmemd.cuda_DPFP"), ("y", "pmemd.cuda_DPFP")],
+    [("e", "pmemd.cuda"), ("f", "pmemd.cuda"),
+     ("v", "pmemd.cuda"), ("w", "pmemd.cuda"),
+     ("z", "pmemd.cuda"), ("y", "pmemd.cuda")],
 )
-def test_dd_run_files_default_to_dpfp(
+def test_dd_run_files_default_to_standard_cuda(
     tmp_path: Path, component: str, expected_default: str
 ) -> None:
     window_dir = tmp_path / f"{component}-1"
@@ -85,6 +85,8 @@ def test_dd_run_files_default_to_dpfp(
 
     text = (window_dir / "run-local.bash").read_text()
     assert f"PMEMD_EXEC=${{PMEMD_EXEC:-{expected_default}}}" in text
+    assert f"PMEMD_DPFP_EXEC=${{PMEMD_DPFP_EXEC:-{expected_default}}}" in text
+    assert "pmemd.cuda_DPFP" not in text
     assert "-ref $production_reference" in text
     if component == "y":
         assert 'if [[ "y" == "y" ]]' in text

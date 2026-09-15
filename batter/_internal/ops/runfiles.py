@@ -152,12 +152,12 @@ def write_fe_run_file(
            .replace("LAMBDA_EQ_LIST", lambda_sim_string)
     )
     if str(getattr(ctx.sim, "dec_method", "")).lower() == "dd" and comp in {"e", "f", "v", "w", "z", "y"}:
-        # Amber24's SPFP TI neighbour-list kernel fails for DD charge and
-        # Lennard-Jones legs on realistic protein systems.  DPFP
-        # uses the stable TI path and remains overridable through PMEMD_EXEC.
+        # DD/UNO-DD runs use the standard CUDA executable for both the normal
+        # and legacy fallback command paths.  Keep the separate
+        # variables so site-specific executable overrides continue to work.
         txt = txt.replace(
-            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}",
-            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda_DPFP}",
+            "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}",
+            "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda}",
             1,
         )
         if comp in {"f", "w", "y"}:

@@ -161,6 +161,13 @@ def test_cli_seed_headers(tmp_path, monkeypatch):
     assert (dest / "SLURMM-Am.header").exists()
     assert (dest / "SLURMM-BATCH-remd.header").exists()
     assert (dest / "job_manager.header").exists()
+    for name in (
+        "SLURMM-Am.header",
+        "SLURMM-BATCH.header",
+        "SLURMM-BATCH-remd.header",
+        "job_manager.header",
+    ):
+        assert "#SBATCH --no-requeue" in (dest / name).read_text()
 
 
 def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):

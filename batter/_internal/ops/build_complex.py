@@ -151,6 +151,28 @@ def _atom_element_symbol(atom) -> str:
     return "C"
 
 
+def _indexed_bond_pairs(atoms) -> set[tuple[int, int]] | None:
+    """Return bonds expressed in atom-group positions, or ``None`` if absent."""
+    try:
+        bonds = atoms.bonds
+    except Exception:
+        return None
+
+    index_to_position = {
+        int(atom.index): position for position, atom in enumerate(atoms)
+    }
+    pairs: set[tuple[int, int]] = set()
+    for bond in bonds:
+        try:
+            first, second = (
+                index_to_position[int(atom.index)] for atom in bond.atoms
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        pairs.add((min(first, second), max(first, second)))
+    return pairs
+
+
 def _ligand_heavy_adjacency(atoms: Sequence[object]) -> dict[int, set[int]]:
     """Estimate heavy-atom connectivity from topology bonds, then distances."""
     adjacency: dict[int, set[int]] = {idx: set() for idx in range(len(atoms))}
@@ -2248,6 +2270,45 @@ def _write_ligand_pdb_with_parameter_names(
             f"Ligand atom count mismatch for {ligand_label}: "
             f"{ligand_pdb} has {lig_u.atoms.n_atoms} atom(s), but "
             f"{parameter_mol2} has {ante_mol.atoms.n_atoms} atom(s)."
+        )
+
+    pose_elements = [_atom_element_symbol(atom) for atom in output_atoms]
+    parameter_elements = [_atom_element_symbol(atom) for atom in ante_mol.atoms]
+    element_mismatches = [
+        (index + 1, pose_element, parameter_element)
+        for index, (pose_element, parameter_element) in enumerate(
+            zip(pose_elements, parameter_elements)
+        )
+        if pose_element != parameter_element
+    ]
+    if element_mismatches:
+        preview = ", ".join(
+            f"{index}:{pose_element}!={parameter_element}"
+            for index, pose_element, parameter_element in element_mismatches[:8]
+        )
+        raise ValueError(
+            f"Ligand atom ordering mismatch for {ligand_label}: pose atoms from "
+            f"{ligand_pdb} do not match parameter atoms from {parameter_mol2} "
+            f"at {len(element_mismatches)} position(s) ({preview}). Ligand "
+            "parameters cannot be assigned positionally to this pose."
+        )
+
+    pose_bonds = _indexed_bond_pairs(output_atoms)
+    parameter_bonds = _indexed_bond_pairs(ante_mol.atoms)
+    if (
+        pose_bonds is not None
+        and parameter_bonds is not None
+        and pose_bonds != parameter_bonds
+    ):
+        pose_only = sorted(pose_bonds - parameter_bonds)
+        parameter_only = sorted(parameter_bonds - pose_bonds)
+        raise ValueError(
+            f"Ligand indexed-connectivity mismatch for {ligand_label}: pose "
+            f"atoms from {ligand_pdb} and parameter atoms from {parameter_mol2} "
+            "have incompatible atom ordering "
+            f"(pose-only bonds={pose_only[:8]}, parameter-only "
+            f"bonds={parameter_only[:8]}). Ligand parameters cannot be "
+            "assigned positionally to this pose."
         )
 
     output_atoms.names = ante_mol.atoms.names
