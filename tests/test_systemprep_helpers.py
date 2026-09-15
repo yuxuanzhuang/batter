@@ -117,7 +117,10 @@ def test_find_anchor_atoms_checks_unbound_threshold_fail(tmp_path: Path) -> None
     u_prot = _make_protein(tmp_path)
     u_lig = _make_ligand(tmp_path, (20.0, 20.0, 20.0))
 
-    with pytest.raises(ValueError, match="Ligand appears unbound"):
+    with pytest.raises(
+        ValueError,
+        match="Ligand 'outside_pose' appears unbound during system prep",
+    ):
         find_anchor_atoms(
             u_prot=u_prot,
             u_lig=u_lig,
@@ -128,6 +131,7 @@ def test_find_anchor_atoms_checks_unbound_threshold_fail(tmp_path: Path) -> None
                 "resid 12 and name CG",
             ],
             unbound_threshold=8.0,
+            ligand_name="outside_pose",
         )
 
 
