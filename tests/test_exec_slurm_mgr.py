@@ -294,6 +294,44 @@ def test_submit_rebuild_prefers_newer_body_only_script_over_stale_sidecar(
     assert sidecar.read_text() == "NEW_BODY\n"
 
 
+def test_submit_rejects_empty_body_sidecar_without_truncating_script(
+    monkeypatch,
+    tmp_path,
+):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    original_script = "#!/bin/bash\n#SBATCH --job-name=test\n"
+    script.write_text(original_script)
+    (workdir / "SLURMM-run.body").write_text("")
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    (header_root / "SLURMM-Am.header").write_text("#!/bin/bash\n#SBATCH --job-name=test\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    called = False
+
+    def fake_run(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("sbatch must not run for an empty body")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="empty or contains no executable commands"):
+        manager._submit_once(spec)
+
+    assert not called
+    assert script.read_text() == original_script
+
+
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()

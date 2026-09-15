@@ -2846,7 +2846,11 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     vac_pdb = windows_dir / "vac.pdb"
     if not vac_pdb.exists():
         raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resname=mol)
+    # The solvent leg contains one DUM reference atom followed by the ligand.
+    # Keep only that fixed reference in the production Cartesian restraint;
+    # the ligand is held relative to it by the NMR distance restraint written
+    # to disang.rest.
+    dum_first_atom_mask = _first_residue_atom_mask(vac_pdb, resname="DUM")
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
@@ -2988,18 +2992,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         fout.write(f"! total_steps={n_steps}\n")
         for line in fin:
             if "nmropt = " in line:
-                line = "  nmropt = 0,\n"
+                line = "  nmropt = 1,\n"
             elif "restraintmask" in line:
-                rm = (
-                    line.split("=", 1)[1]
-                    .strip()
-                    .rstrip(",")
-                    .replace("'", "")
-                )
-                line = (
-                    "  restraintmask = "
-                    f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
-                )
+                line = f"  restraintmask = '{dum_first_atom_mask}',\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", str(chunk_steps))

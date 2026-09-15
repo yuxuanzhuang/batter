@@ -12,7 +12,11 @@ from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.fe_defaults import DEFAULT_FE_SEED_LAMBDA_STATES
 from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
-from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
+from batter.utils.slurm_templates import (
+    atomic_write_text,
+    render_slurm_with_header_body,
+    render_slurm_body,
+)
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
@@ -80,9 +84,9 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         },
     )
     out_slurm_body = work / "SLURMM-run"
-    out_slurm_body.write_text(body_txt)
+    atomic_write_text(out_slurm_body, body_txt, mode=0o755)
     out_slurm_sidecar = work / "SLURMM-run.body"
-    out_slurm_sidecar.write_text(body_txt)
+    atomic_write_text(out_slurm_sidecar, body_txt, mode=0o755)
     try:
         out_slurm_body.chmod(0o755)
         out_slurm_sidecar.chmod(0o755)
@@ -180,9 +184,9 @@ def write_fe_run_file(
         },
     )
     out_slurm_body = dst_dir / "SLURMM-run"
-    out_slurm_body.write_text(body_txt)
+    atomic_write_text(out_slurm_body, body_txt, mode=0o755)
     out_slurm_sidecar = dst_dir / "SLURMM-run.body"
-    out_slurm_sidecar.write_text(body_txt)
+    atomic_write_text(out_slurm_sidecar, body_txt, mode=0o755)
     os.chmod(out_slurm_body, 0o755)
     os.chmod(out_slurm_sidecar, 0o755)
 

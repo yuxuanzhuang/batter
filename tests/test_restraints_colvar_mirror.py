@@ -1174,22 +1174,34 @@ def test_append_x_septop_boresch_reselects_receptor_frame_to_keep_stable_l1(
     assert any(":4@CA" in expr for expr in exprs)
 
 
-def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
+def test_build_restraints_y_writes_dum_to_ligand_bulk_restraint(tmp_path: Path) -> None:
     windows_dir = tmp_path / "y00"
     windows_dir.mkdir()
-    (windows_dir / "vac.pdb").write_text("ATOM      1  C1  LIG A   2       0.000   0.000   0.000  1.00  0.00           C\nEND\n")
+    (windows_dir / "vac.pdb").write_text(
+        "HETATM    1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    2  C1  LIG A   2       0.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
 
     ctx = types.SimpleNamespace(
         window_dir=windows_dir,
         ligand="lig",
         residue_name="LIG",
+        comp="y",
     )
 
     restraints._build_restraints_y(None, ctx)
 
     assert (windows_dir / "cv.in").read_text() == "cv_file\n"
     assert "&colvar" not in (windows_dir / "cv.in").read_text()
-    assert not (windows_dir / "disang.rest").read_text().strip()
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert "# Bulk ligand flat-bottom restraint" in disang_text
+    assert "iat=-1,-1," in disang_text
+    assert "r1=-999.0, r2=0.0, r3=0.0, r4=999.0," in disang_text
+    assert "rk2=10.0, rk3=10.0," in disang_text
+    assert "igr1=1,0," in disang_text
+    assert "igr2=2,0," in disang_text
+    assert "&end #Bulk_Lig" in disang_text
 
 
 def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> None:

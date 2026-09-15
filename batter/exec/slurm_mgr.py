@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 from loguru import logger
 
+from batter.utils.slurm_templates import atomic_write_text
+
 __all__ = [
     "SlurmJobSpec",
     "SlurmJobManager",
@@ -106,9 +108,8 @@ def _read_text(p: Path) -> Optional[str]:
 
 
 def _write_text(p: Path, txt: str) -> None:
-    """Write ``txt`` to ``p`` creating parent directories as required."""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(txt)
+    """Atomically write ``txt`` to ``p`` creating parents as required."""
+    atomic_write_text(p, txt)
 
 
 def _normalize_default_gpu_constraint(header_text: str) -> str:
@@ -1154,8 +1155,9 @@ class SlurmJobManager:
         else:
             body_path = script_abs
         if not body_path.exists():
-            # no body to rebuild from
-            return
+            raise FileNotFoundError(
+                f"Cannot rebuild Slurm script {script_abs}: body file not found: {body_path}"
+            )
 
         # Read header
         header_text = ""
@@ -1183,8 +1185,10 @@ class SlurmJobManager:
         try:
             body_text = body_path.read_text()
         except Exception as exc:
-            logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
-            return
+            raise RuntimeError(
+                f"Cannot rebuild Slurm script {script_abs}: failed to read body "
+                f"{body_path}: {exc}"
+            ) from exc
 
         if body_path == script_abs and header_text:
             while body_text.startswith(header_text):
@@ -1196,13 +1200,25 @@ class SlurmJobManager:
         ]
         body_text = "\n".join(body_lines)
 
+        executable_lines = [
+            ln for ln in body_lines
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+        if not executable_lines:
+            raise RuntimeError(
+                f"Refusing to submit {script_abs}: Slurm body {body_path} is "
+                "empty or contains no executable commands. Regenerate the run "
+                "files after resolving any disk quota/filesystem error."
+            )
+
         # Persist a sidecar body file after the first reconstruction so future
         # retries/resubmissions always rebuild from body-only content.
         if body_path == script_abs:
-            try:
-                candidate.write_text(body_text + ("\n" if body_text and not body_text.endswith("\n") else ""))
-            except Exception as exc:
-                logger.debug(f"[SLURM] Could not persist body sidecar {candidate}: {exc}")
+            atomic_write_text(
+                candidate,
+                body_text + ("\n" if body_text and not body_text.endswith("\n") else ""),
+                mode=0o755,
+            )
 
         # Combine and overwrite the submit script
         combined = header_text
@@ -1212,7 +1228,4 @@ class SlurmJobManager:
         if not combined.endswith("\n"):
             combined += "\n"
 
-        try:
-            script_abs.write_text(combined)
-        except Exception as exc:
-            logger.warning(f"[SLURM] Could not write rebuilt script {script_abs}: {exc}")
+        atomic_write_text(script_abs, combined, mode=0o755)

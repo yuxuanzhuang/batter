@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import batter.utils.slurm_templates as slurm_templates
 from batter.utils.slurm_templates import (
+    atomic_write_text,
     render_slurm_with_header_body,
     seed_default_headers,
 )
@@ -14,6 +17,22 @@ MPI_FLAGS_OVERRIDE = (
     '--cpu-bind=threads --threads-per-core=1 -m block:cyclic '
     '--gpus-per-task=1 --gpu-bind=closest --exclusive"'
 )
+
+
+def test_atomic_write_text_preserves_existing_file_when_replace_fails(monkeypatch, tmp_path):
+    target = tmp_path / "SLURMM-run.body"
+    target.write_text("GOOD BODY\n")
+
+    def fail_replace(src, dst):
+        raise OSError("Disk quota exceeded")
+
+    monkeypatch.setattr(slurm_templates.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="Disk quota exceeded"):
+        atomic_write_text(target, "NEW BODY\n")
+
+    assert target.read_text() == "GOOD BODY\n"
+    assert not list(tmp_path.glob(".SLURMM-run.body.*.tmp"))
 
 
 def test_slurm_template_seeds_user_header(monkeypatch, tmp_path):

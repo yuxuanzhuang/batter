@@ -101,6 +101,72 @@ def test_prepare_fe_windows_always_writes_remd(monkeypatch, tmp_path: Path) -> N
     assert (lig_root / "fe" / "prepare_fe_windows.ok").exists()
 
 
+def test_prepare_fe_windows_honors_component_override(monkeypatch, tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    lig_root = run_root / "simulations" / "LIG"
+    (run_root / "artifacts" / "ligand_params").mkdir(parents=True)
+    (run_root / "artifacts" / "ligand_params" / "index.json").write_text(
+        '{"ligands": [{"residue_name": "LIG", "store_dir": "params/LIG"}]}'
+    )
+
+    built_components = []
+
+    class DummyBuilder:
+        def __init__(self, *, working_dir, component, win, **_kwargs):
+            self.working_dir = working_dir
+            self.component = component
+            self.win = win
+
+        def build(self):
+            built_components.append(self.component)
+            _write_required_window_files(
+                self.working_dir / f"{self.component}{self.win:02d}"
+            )
+
+    monkeypatch.setattr(prepare_fe_mod, "AlchemicalFEBuilder", DummyBuilder)
+
+    def fake_prepare_batch(workdir, comp, n_windows, **_kwargs):
+        (workdir / "run-local-batch.bash").write_text("x\n")
+        for win in range(n_windows):
+            (workdir / f"{comp}{win:02d}" / "mdin-batch-template").write_text(
+                "x\n"
+            )
+
+    def fake_prepare_remd(workdir, comp, sim, n_windows, partition=None):
+        _write_required_remd_component_files(workdir)
+
+    monkeypatch.setattr(
+        prepare_fe_mod.batch_ops, "prepare_batch_component", fake_prepare_batch
+    )
+    monkeypatch.setattr(
+        prepare_fe_mod.remd_ops, "prepare_remd_component", fake_prepare_remd
+    )
+
+    ligand_file = tmp_path / "lig.sdf"
+    ligand_file.write_text("dummy")
+    create = CreateArgs(system_name="sys", ligand_paths={"LIG": ligand_file})
+    fe_args = FESimArgs(
+        lambdas=[0.0],
+        eq_steps=100,
+        n_steps={"z": 1000, "y": 1000},
+    )
+    sim_cfg = SimulationConfig.from_sections(create, fe_args, protocol="uno_dd")
+    payload = StepPayload(sim=sim_cfg, components=["y"])
+    system = SimSystem(
+        name="sys",
+        root=lig_root,
+        meta={"ligand": "LIG", "residue_name": "LIG"},
+    )
+
+    prepare_fe_mod.prepare_fe_windows_handler(
+        Step(name="prepare_fe_windows"), system, payload
+    )
+
+    assert built_components == ["y"]
+    assert not (lig_root / "fe" / "z").exists()
+    assert (lig_root / "fe" / "y" / "y00").exists()
+
+
 def test_prepare_fe_windows_does_not_mark_complete_when_remd_files_missing(
     monkeypatch,
     tmp_path: Path,

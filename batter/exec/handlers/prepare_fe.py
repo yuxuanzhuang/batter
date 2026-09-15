@@ -315,7 +315,9 @@ def prepare_fe_windows_handler(
         )
     sim = payload.sim
     partition = payload.get("partition") or payload.get("queue") or "normal"
-    components = list(getattr(sim, "components", []) or [])
+    components = list(
+        payload.get("components") or getattr(sim, "components", []) or []
+    )
     if not components:
         raise RuntimeError(
             "No components specified in sim config for FE window preparation."

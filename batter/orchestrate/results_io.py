@@ -47,27 +47,19 @@ def parse_results_dat(
 
 
 def fallback_totals_from_json(results_dir: Path) -> Tuple[float | None, float | None]:
-    """Look for totals in JSON outputs produced by analysis.
+    """Read an explicitly aggregated JSON total, when available.
 
-    Attempts ``z_results.json`` first (for REST components), then searches for
-    ``*_results.json`` siblings that expose ``fe``/``fe_error`` keys.
+    Per-component files such as ``z_results.json`` are intentionally excluded:
+    they contain unsigned leg values and omit other legs and analytical
+    restraint corrections, so treating one as a binding free energy is unsafe.
     """
-    zjson = results_dir / "z_results.json"
-    if zjson.exists():
-        try:
-            data = json.loads(zjson.read_text())
-            fe = data.get("fe")
-            se = data.get("fe_error")
-            if fe is not None and se is not None:
-                return float(fe), float(se)
-        except Exception:
-            pass
-
-    for js in sorted(results_dir.glob("*_results.json")):
+    for js in (results_dir / "total_results.json",):
+        if not js.exists():
+            continue
         try:
             data = json.loads(js.read_text())
-            fe = data.get("fe")
-            se = data.get("fe_error")
+            fe = data.get("total_dG", data.get("fe"))
+            se = data.get("total_se", data.get("fe_error"))
             if fe is not None and se is not None:
                 return float(fe), float(se)
         except Exception:
