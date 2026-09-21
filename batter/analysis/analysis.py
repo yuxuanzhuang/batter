@@ -151,6 +151,45 @@ class SilenceAlchemlybOnly:
                 py_logger.setLevel(prev_level)
 
 
+
+def _restore_remd_mbar_times(filename: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Use reported times for Amber REMD MBAR blocks, not the input cadence.
+
+    These outputs print each MBAR block immediately before its NSTEP record.
+    The effective output cadence can differ from bar_intervall (e.g. 20 ps
+    rather than 4 ps when ntpr and bar_intervall differ).
+    """
+    times = []
+    pending = False
+    is_remd = False
+    blocks = 0
+    with open(filename) as stream:
+        for line in stream:
+            is_remd = is_remd or "EXCHANGE#" in line
+            if line.startswith("MBAR Energy analysis"):
+                blocks += 1
+                pending = True
+            elif pending and line.startswith(" NSTEP"):
+                match = re.search(r"TIME\(PS\)\s*=\s*([-+0-9.eEdD]+)", line)
+                if match:
+                    times.append(float(match.group(1).replace("D", "e").replace("d", "e")))
+                    pending = False
+    if not is_remd or not blocks:
+        return df
+    # A wall-time cutoff can leave a complete energy block without its timestamp.
+    if pending and len(df) == len(times) + 1:
+        logger.warning(f"Dropping final REMD MBAR sample without a timestamp: {filename}")
+        df = df.iloc[:-1]
+    if len(times) != len(df) or not np.all(np.isfinite(times)):
+        raise ValueError(f"Cannot align {len(df)} REMD MBAR samples with {len(times)} reported timestamps: {filename}")
+    result = df.copy()
+    result.index = pd.MultiIndex.from_arrays(
+        [times, *[df.index.get_level_values(i) for i in range(1, df.index.nlevels)]],
+        names=df.index.names,
+    )
+    return result
+
+
 def _is_incomplete_amber_out_error(exc: ValueError) -> bool:
     msg = str(exc)
     incomplete_markers = (
@@ -990,6 +1029,7 @@ class MBARAnalysis(FEAnalysisBase):
                         )
                         continue
                     raise
+                df_part = _restore_remd_mbar_times(fn, df_part)
                 dfs.append(df_part)
 
         if not dfs:

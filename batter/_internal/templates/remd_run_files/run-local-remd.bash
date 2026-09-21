@@ -149,8 +149,8 @@ reduce_dt_for_remd_windows() {
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
-        [[ -s "$tmpl" ]] || continue
-        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count" || return 1
+        [[ -f "$tmpl" ]] || continue
+        DT_REDUCTION_LOG=$((i == 0)) reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
     done
 }
 
@@ -183,16 +183,7 @@ fi
 
 for ((i = 0; i < N_WINDOWS; i++)); do
     win=$(printf "%s%02d" "${COMP}" "$i")
-    tmpl="${PFOLDER}/${win}/mdin-remd-template"
-    if [[ ! -s "$tmpl" ]]; then
-        # The window-zero completion shortcut below intentionally does not
-        # require every replica's inputs to remain present.
-        continue
-    fi
-    if ! apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "REMD startup"; then
-        echo "[ERROR] Failed to prepare mdin-remd-template in ${win}."
-        exit 1
-    fi
+    DT_REDUCTION_LOG=$((i == 0)) apply_retry_dt_reduction "${PFOLDER}/${win}/mdin-remd-template" "$retry" 0.001 "REMD startup"
 done
 
 total_steps=$(parse_total_steps "$tmpl0") || { echo "[ERROR] Failed to parse total_steps from $tmpl0"; exit 1; }
