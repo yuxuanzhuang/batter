@@ -2427,6 +2427,180 @@ def _rename_parmed_residues(
             labels[index] = residue_name
 
 
+def _residue_connectivity(
+    residue: Any,
+    *,
+    description: str,
+) -> frozenset[tuple[int, int]]:
+    """Return residue-local bond indices, rejecting cross-residue bonds."""
+    atom_indices = {id(atom): index for index, atom in enumerate(residue.atoms)}
+    bonds: set[tuple[int, int]] = set()
+    for index, atom in enumerate(residue.atoms):
+        for bond in atom.bonds:
+            partner = bond.atom2 if bond.atom1 is atom else bond.atom1
+            partner_index = atom_indices.get(id(partner))
+            if partner_index is None:
+                raise ValueError(
+                    f"[create_box_y] {description} contains a bond from ligand "
+                    f"atom {index + 1} ({atom.name!r}) to another residue."
+                )
+            if index < partner_index:
+                bonds.add((index, partner_index))
+    return frozenset(bonds)
+
+
+def _atom_element_identity(atom: Any) -> tuple[int, str]:
+    """Return the most reliable element identifiers exposed by ParmEd."""
+    atomic_number = int(getattr(atom, "atomic_number", 0) or 0)
+    try:
+        element_name = str(getattr(atom, "element_name", "") or "").upper()
+    except (AttributeError, KeyError, ValueError):
+        element_name = ""
+    return atomic_number, element_name
+
+
+def _ligand_topology_with_tleap_coordinates(
+    authoritative: pmd.Structure,
+    coordinate_carrier: pmd.Structure,
+    *,
+    expected_copies: int,
+    residue_name: str,
+) -> pmd.Structure:
+    """Copy an authoritative ligand topology onto TLeap-positioned coordinates.
+
+    TLeap is used only to place one or more copies of the ligand in the solvent
+    box.  The ligand parameters must continue to come from the parameterizer's
+    ``<mol>.prmtop``.  Exact atom names, elements, and residue-local connectivity
+    are checked before coordinates are grafted so an atom-order mismatch cannot
+    silently pair coordinates with the wrong parameters.
+    """
+    if expected_copies < 1:
+        raise ValueError(
+            f"[create_box_y] expected_copies must be positive, got {expected_copies}."
+        )
+    if len(authoritative.residues) != 1:
+        raise ValueError(
+            "[create_box_y] authoritative ligand topology must contain exactly "
+            f"one residue; found {len(authoritative.residues)}."
+        )
+    if len(coordinate_carrier.residues) != expected_copies:
+        raise ValueError(
+            f"[create_box_y] expected {expected_copies} ligand residue(s) in the "
+            "TLeap coordinate carrier; found "
+            f"{len(coordinate_carrier.residues)}."
+        )
+
+    reference_residue = authoritative.residues[0]
+    reference_atoms = list(reference_residue.atoms)
+    reference_names = tuple(str(atom.name).strip() for atom in reference_atoms)
+    reference_elements = tuple(_atom_element_identity(atom) for atom in reference_atoms)
+    reference_connectivity = _residue_connectivity(
+        reference_residue,
+        description="authoritative ligand topology",
+    )
+
+    for copy_index, carrier_residue in enumerate(coordinate_carrier.residues, start=1):
+        carrier_name = str(carrier_residue.name).strip()
+        if carrier_name != residue_name:
+            raise ValueError(
+                f"[create_box_y] TLeap ligand copy {copy_index} has residue name "
+                f"{carrier_name!r}; expected {residue_name!r}."
+            )
+
+        carrier_atoms = list(carrier_residue.atoms)
+        if len(carrier_atoms) != len(reference_atoms):
+            raise ValueError(
+                f"[create_box_y] TLeap ligand copy {copy_index} has "
+                f"{len(carrier_atoms)} atoms; authoritative topology has "
+                f"{len(reference_atoms)}."
+            )
+
+        carrier_names = tuple(str(atom.name).strip() for atom in carrier_atoms)
+        if carrier_names != reference_names:
+            mismatch = next(
+                index
+                for index, (reference, carrier) in enumerate(
+                    zip(reference_names, carrier_names), start=1
+                )
+                if reference != carrier
+            )
+            raise ValueError(
+                f"[create_box_y] TLeap ligand copy {copy_index} atom names/order "
+                f"differ at atom {mismatch}: authoritative "
+                f"{reference_names[mismatch - 1]!r}, carrier "
+                f"{carrier_names[mismatch - 1]!r}."
+            )
+
+        carrier_elements = tuple(_atom_element_identity(atom) for atom in carrier_atoms)
+        if carrier_elements != reference_elements:
+            mismatch = next(
+                index
+                for index, (reference, carrier) in enumerate(
+                    zip(reference_elements, carrier_elements), start=1
+                )
+                if reference != carrier
+            )
+            raise ValueError(
+                f"[create_box_y] TLeap ligand copy {copy_index} elements differ "
+                f"at atom {mismatch} ({reference_names[mismatch - 1]!r}): "
+                f"authoritative {reference_elements[mismatch - 1]!r}, carrier "
+                f"{carrier_elements[mismatch - 1]!r}."
+            )
+
+        carrier_connectivity = _residue_connectivity(
+            carrier_residue,
+            description=f"TLeap ligand copy {copy_index}",
+        )
+        if carrier_connectivity != reference_connectivity:
+            missing = sorted(reference_connectivity - carrier_connectivity)
+            extra = sorted(carrier_connectivity - reference_connectivity)
+            raise ValueError(
+                f"[create_box_y] TLeap ligand copy {copy_index} connectivity "
+                f"differs from the authoritative topology (missing={missing[:5]}, "
+                f"extra={extra[:5]}; atom indices are zero-based)."
+            )
+
+    coordinates = coordinate_carrier.coordinates
+    if coordinates is None:
+        raise ValueError("[create_box_y] TLeap ligand coordinate carrier has no coordinates.")
+    coordinates = np.asarray(coordinates, dtype=float)
+    expected_atom_count = len(reference_atoms) * expected_copies
+    if coordinates.shape != (expected_atom_count, 3):
+        raise ValueError(
+            "[create_box_y] TLeap ligand coordinate array has shape "
+            f"{coordinates.shape}; expected ({expected_atom_count}, 3)."
+        )
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError(
+            "[create_box_y] TLeap ligand coordinate carrier contains non-finite values."
+        )
+
+    ligand_parts = []
+    for _ in range(expected_copies):
+        ligand_part = copy.copy(authoritative)
+        _repair_parmed_molecule_table_for_combine(ligand_part)
+        ligand_parts.append(ligand_part)
+    ligand_p = ligand_parts[0]
+    for ligand_part in ligand_parts[1:]:
+        ligand_p = ligand_p + ligand_part
+    _repair_parmed_molecule_table_for_combine(ligand_p)
+
+    for index, carrier_residue in enumerate(coordinate_carrier.residues):
+        _rename_parmed_residues(
+            ligand_p,
+            [index],
+            str(carrier_residue.name).strip(),
+        )
+    ligand_p.coordinates = coordinates.copy()
+    if coordinate_carrier.box is not None:
+        ligand_p.box = np.asarray(coordinate_carrier.box, dtype=float).copy()
+    # Assigning a box to an AmberParm can recreate placeholder molecule flags
+    # (SOLVENT_POINTERS=[0, 0, 0], ATOMS_PER_MOLECULE=[0]).  Repair after the
+    # box graft so subsequent ParmEd addition/copy operations see valid tables.
+    _repair_parmed_molecule_table_for_combine(ligand_p)
+    return ligand_p
+
+
 def _make_residues_nonsteric(
     structure: pmd.Structure,
     residue_indices: list[int] | tuple[int, ...],
@@ -3940,22 +4114,21 @@ def create_box_y(ctx: BuildContext) -> None:
     dum_p = pmd.load_file(
         str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd")
     )
-    # Load the topology produced from ``solvate_pre_lig.pdb`` directly.  In
-    # particular, this preserves both DD charge-leg ligand copies and their
-    # renamed residue labels.  Reconstructing it with ``single + single`` from
-    # the parameterizer prmtop silently restores that file's generic ``lig``
-    # residue label in ParmEd.
-    ligand_p = pmd.load_file(
+    # TLeap supplies the solvent-box coordinates, but ligand force-field
+    # parameters must come from the authoritative parameterizer topology.
+    # Validate that the TLeap carrier has the same ordered chemistry before
+    # grafting its coordinates; the DD f leg requires two identical copies.
+    ligand_coordinate_carrier = pmd.load_file(
         str(window_dir / "solvate_ligands.prmtop"),
         str(window_dir / "solvate_ligands.inpcrd"),
     )
     expected_ligand_copies = 2 if comp == "f" else 1
-    if len(ligand_p.residues) != expected_ligand_copies:
-        raise ValueError(
-            f"[create_box_y] component {comp!r} expected "
-            f"{expected_ligand_copies} ligand residue(s), found "
-            f"{len(ligand_p.residues)}."
-        )
+    ligand_p = _ligand_topology_with_tleap_coordinates(
+        pmd.load_file(str(window_dir / f"{mol}.prmtop")),
+        ligand_coordinate_carrier,
+        expected_copies=expected_ligand_copies,
+        residue_name=mol,
+    )
 
     others = pmd.load_file(
         str(window_dir / "solvate_others.prmtop"),

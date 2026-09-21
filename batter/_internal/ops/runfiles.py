@@ -66,6 +66,17 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 )
         )
 
+        if str(sim.dec_method).lower() == "dd":
+            # Keep DD/UNO-DD equilibration on the same standard CUDA
+            # executable as its free-energy windows.  The template retains a
+            # separately overridable legacy command path, but DD must not
+            # default that path to the DPFP binary.
+            text = text.replace(
+                "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}",
+                "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda}",
+                1,
+            )
+
         text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 

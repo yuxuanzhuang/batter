@@ -33,6 +33,11 @@ def test_equil_run_file_sets_protocol_handoff_default(
     text = (tmp_path / "run-local.bash").read_text()
     assert f"default_run_alchemical_handoff={expected}" in text
     assert "__BATTER_RUN_ALCHEMICAL_HANDOFF__" not in text
+    if dec_method == "dd":
+        assert "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda}" in text
+        assert "pmemd.cuda_DPFP" not in text
+    else:
+        assert "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}" in text
 
 
 def _write_stub_exe(path: Path, body: str) -> None:
@@ -447,6 +452,7 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
         "irest = 1,\n"
         "ntx   = 5,\n"
         "nstlim = 10,\n"
+        "dt = 0.001,\n"
     )
 
     # stub pmemd/cpptraj that just writes requested outputs

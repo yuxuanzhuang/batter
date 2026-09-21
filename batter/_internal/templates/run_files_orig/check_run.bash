@@ -914,7 +914,15 @@ check_sim_failure() {
         local reduction_start=${1:-2}
         local tmpl
         tmpl=$(dt_reduction_template_for_failure)
-        reduce_dt_on_failure "$tmpl" 0.001 "$stage" "$retry_count" "$reduction_start"
+        if ! reduce_dt_on_failure "$tmpl" 0.001 "$stage" "$retry_count" "$reduction_start"; then
+            # Timestep reduction is best-effort recovery after the simulation
+            # has already failed.  In runners using `set -e`, propagating this
+            # secondary error would skip the ATTEMPT_FAILED marker and other
+            # failure bookkeeping, preventing the manager from retrying the
+            # original failure.
+            echo "[WARN] Could not reduce dt after ${stage} failure; continuing failure bookkeeping." >&2
+        fi
+        return 0
     }
 
     recoverable_gpu_box_grid_restart() {
@@ -1310,7 +1318,7 @@ report_progress() {
 parse_total_steps() {
     local tmpl=${1:-mdin-template}
 
-    [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
+    [[ -s $tmpl ]] || { echo "[ERROR] Missing or empty template $tmpl" >&2; return 1; }
 
     local total
     total=$(
@@ -1408,6 +1416,88 @@ parse_target_dt_ps() {
     [[ -n $dt ]] && echo "$dt" || parse_dt_ps "$tmpl"
 }
 
+# Strict production-runner variants.  The legacy parsers above intentionally
+# retain Amber's 0.001 ps default for compatibility with older helper paths,
+# but production progress accounting must never infer a duration from a
+# missing or malformed timestep.
+parse_required_dt_ps() {
+    local tmpl=${1:-mdin-template}
+    local dt
+
+    [[ -s $tmpl ]] || {
+        echo "[ERROR] Missing or empty template $tmpl while parsing required dt." >&2
+        return 1
+    }
+
+    dt=$(
+        awk '
+        BEGIN { IGNORECASE=1 }
+        {
+            if (match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?/)) {
+                value = substr($0, RSTART, RLENGTH)
+                sub(/.*dt[[:space:]]*=[[:space:]]*/, "", value)
+                gsub(/[dD]/, "e", value)
+                print value
+                exit
+            }
+        }
+        ' "$tmpl"
+    ) || return 1
+
+    if [[ -z $dt ]] || ! awk -v value="$dt" 'BEGIN { exit !(value > 0) }'; then
+        echo "[ERROR] Required positive dt not found in $tmpl" >&2
+        return 1
+    fi
+    printf '%s\n' "$dt"
+}
+
+parse_required_target_dt_ps() {
+    local tmpl=${1:-mdin-template}
+    local dt
+
+    [[ -s $tmpl ]] || {
+        echo "[ERROR] Missing or empty template $tmpl while parsing required target_dt." >&2
+        return 1
+    }
+
+    if ! grep -Eq '^[!#][[:space:]]*target_dt[[:space:]]*=' "$tmpl"; then
+        parse_required_dt_ps "$tmpl"
+        return
+    fi
+
+    dt=$(
+        awk '
+        BEGIN { IGNORECASE=1; seen=0; valid=0 }
+        /^[!#][[:space:]]*target_dt[[:space:]]*=/ {
+            seen=1
+            line=$0
+            sub(/^[!#][[:space:]]*target_dt[[:space:]]*=[[:space:]]*/, "", line)
+            if (match(line, /^[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?[[:space:]]*$/)) {
+                value=substr(line, RSTART, RLENGTH)
+                gsub(/[[:space:]]/, "", value)
+                gsub(/[dD]/, "e", value)
+                valid=1
+            } else {
+                valid=0
+            }
+        }
+        END {
+            if (!seen || !valid) exit 1
+            print value
+        }
+        ' "$tmpl"
+    ) || {
+        echo "[ERROR] Malformed target_dt marker in $tmpl" >&2
+        return 1
+    }
+
+    if ! awk -v value="$dt" 'BEGIN { exit !(value > 0) }'; then
+        echo "[ERROR] target_dt must be positive in $tmpl" >&2
+        return 1
+    fi
+    printf '%s\n' "$dt"
+}
+
 retry_count_for_template() {
     local tmpl=${1:-mdin-template}
     local explicit=${2:-}
@@ -1495,7 +1585,7 @@ sync_current_mdin_from_template() {
 
     local nstlim_value tmp dumpave_file
     if [[ $(basename -- "$current_mdin") == "mdin-remd-current" ]]; then
-        rewrite_mdin_dt_file "$current_mdin" "$(parse_dt_ps "$tmpl")"
+        rewrite_mdin_dt_file "$current_mdin" "$(parse_dt_ps "$tmpl")" || return 1
         return 0
     fi
 
@@ -1516,15 +1606,34 @@ ensure_target_dt_marker() {
     local tmpl=${1:-mdin-template}
     local target_dt=${2:-}
 
-    [[ -f "$tmpl" ]] || return 0
+    [[ -s "$tmpl" ]] || {
+        echo "[ERROR] Missing or empty template $tmpl; cannot add target_dt marker." >&2
+        return 1
+    }
     if grep -Eq '^[!#][[:space:]]*target_dt[[:space:]]*=' "$tmpl"; then
         return 0
     fi
 
     [[ -n $target_dt ]] || target_dt=$(parse_dt_ps "$tmpl")
-    printf "! target_dt=%s\n" "$target_dt" > "${tmpl}.tmp"
-    cat "$tmpl" >> "${tmpl}.tmp"
-    mv "${tmpl}.tmp" "$tmpl"
+    local tmp="${tmpl}.tmp.${BASHPID:-$$}"
+    if ! {
+        printf "! target_dt=%s\n" "$target_dt"
+        cat -- "$tmpl"
+    } > "$tmp"; then
+        rm -f -- "$tmp"
+        echo "[ERROR] Failed to write target_dt update for $tmpl; original preserved." >&2
+        return 1
+    fi
+    if [[ ! -s "$tmp" ]]; then
+        rm -f -- "$tmp"
+        echo "[ERROR] Refusing to replace $tmpl with an empty target_dt update." >&2
+        return 1
+    fi
+    if ! mv -f -- "$tmp" "$tmpl"; then
+        rm -f -- "$tmp"
+        echo "[ERROR] Failed to install target_dt update for $tmpl; original preserved." >&2
+        return 1
+    fi
 }
 
 remaining_steps_from_time() {
@@ -1563,16 +1672,20 @@ apply_retry_dt_reduction() {
     local dec=${3:-0.001}
     local stage=${4:-"retry startup"}
 
-    [[ -f "$tmpl" ]] || return 0
+    [[ -s "$tmpl" ]] || {
+        echo "[ERROR] Missing or empty template $tmpl during ${stage}." >&2
+        return 1
+    }
     retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
     [[ $retry_count =~ ^[0-9]+$ ]] || return 0
 
     local current_dt desired_dt
-    current_dt=$(parse_dt_ps "$tmpl")
+    current_dt=$(parse_required_dt_ps "$tmpl") || return 1
+    parse_required_target_dt_ps "$tmpl" >/dev/null || return 1
     if [[ $retry_count -ge 3 ]]; then
-        ensure_target_dt_marker "$tmpl" "$current_dt"
+        ensure_target_dt_marker "$tmpl" "$current_dt" || return 1
     fi
-    desired_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" "$dec" 3)
+    desired_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" "$dec" 3) || return 1
 
     if ! awk -v nd="$desired_dt" 'BEGIN{exit !(nd>0)}'; then
         echo "[WARN] dt reduction skipped for $tmpl at ${stage} (retry=${retry_count}, dec=${dec})."
@@ -1582,11 +1695,11 @@ apply_retry_dt_reduction() {
         return 0
     fi
 
-    rewrite_mdin_dt_file "$tmpl" "$desired_dt"
+    rewrite_mdin_dt_file "$tmpl" "$desired_dt" || return 1
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$desired_dt"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$desired_dt" || return 1
     fi
 
     echo "[INFO] Applied retry dt in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
@@ -1640,7 +1753,10 @@ reduce_dt_on_failure() {
     local retry_count=${4:-}
     local reduction_start=${5:-2}
 
-    [[ -f "$tmpl" ]] || { echo "[WARN] $tmpl not found; skip dt reduction."; return; }
+    [[ -s "$tmpl" ]] || {
+        echo "[ERROR] $tmpl is missing or empty; cannot reduce dt after ${stage} failure." >&2
+        return 1
+    }
     if ! awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*dt[[:space:]]*=/ {found=1; exit} END{exit !found}' "$tmpl"; then
         echo "[WARN] dt not found in $tmpl; skip dt reduction."
         return
@@ -1650,9 +1766,10 @@ reduce_dt_on_failure() {
     [[ $retry_count =~ ^[0-9]+$ ]] || return
 
     local dt new_dt
-    dt=$(parse_dt_ps "$tmpl")
-    ensure_target_dt_marker "$tmpl" "$dt"
-    new_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" "$dec" "$reduction_start")
+    dt=$(parse_required_dt_ps "$tmpl") || return 1
+    parse_required_target_dt_ps "$tmpl" >/dev/null || return 1
+    ensure_target_dt_marker "$tmpl" "$dt" || return 1
+    new_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" "$dec" "$reduction_start") || return 1
     if ! awk -v nd="$new_dt" 'BEGIN{exit !(nd>0)}'; then
         echo "[WARN] dt reduction skipped (current dt=${dt}, dec=${dec})."
         return
@@ -1661,11 +1778,11 @@ reduce_dt_on_failure() {
         return 0
     fi
 
-    rewrite_mdin_dt_file "$tmpl" "$new_dt"
+    rewrite_mdin_dt_file "$tmpl" "$new_dt" || return 1
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then
-        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$new_dt"
+        sync_current_mdin_from_template "$tmpl" "$current_mdin" "$retry_count" "$new_dt" || return 1
     fi
 
     # Remove MD output artifacts after a dt reduction, but keep restart backups
@@ -2130,7 +2247,7 @@ write_mdin_current() {
     local dumpave_file=${7:-}
     local effective_dt_override=${8:-}
 
-    [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
+    [[ -s $tmpl ]] || { echo "[ERROR] Missing or empty template $tmpl" >&2; return 1; }
 
     local text freq_key
     text=$(<"$tmpl")

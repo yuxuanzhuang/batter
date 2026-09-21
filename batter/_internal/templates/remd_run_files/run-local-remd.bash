@@ -79,8 +79,8 @@ write_mdin_remd_current() {
     local nstlim_value=$2
     local numexchg_value=$3
     local dumpave_file=${5:-}
-    if [[ ! -f $tmpl ]]; then
-        echo "[ERROR] Missing template $tmpl" >&2
+    if [[ ! -s $tmpl ]]; then
+        echo "[ERROR] Missing or empty template $tmpl" >&2
         return 1
     fi
     local text
@@ -149,8 +149,8 @@ reduce_dt_for_remd_windows() {
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
-        [[ -f "$tmpl" ]] || continue
-        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
+        [[ -s "$tmpl" ]] || continue
+        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count" || return 1
     done
 }
 
@@ -176,20 +176,29 @@ archive_existing_log_file "$log_file"
 # Determine progress from the first window
 WIN0=$(printf "%s%02d" "${COMP}" 0)
 tmpl0="${PFOLDER}/${WIN0}/mdin-remd-template"
-if [[ ! -f "$tmpl0" ]]; then
-    echo "[ERROR] Missing mdin-remd-template in ${WIN0}; cannot continue."
+if [[ ! -s "$tmpl0" ]]; then
+    echo "[ERROR] Missing or empty mdin-remd-template in ${WIN0}; cannot continue."
     exit 1
 fi
 
 for ((i = 0; i < N_WINDOWS; i++)); do
     win=$(printf "%s%02d" "${COMP}" "$i")
-    apply_retry_dt_reduction "${PFOLDER}/${win}/mdin-remd-template" "$retry" 0.001 "REMD startup"
+    tmpl="${PFOLDER}/${win}/mdin-remd-template"
+    if [[ ! -s "$tmpl" ]]; then
+        # The window-zero completion shortcut below intentionally does not
+        # require every replica's inputs to remain present.
+        continue
+    fi
+    if ! apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "REMD startup"; then
+        echo "[ERROR] Failed to prepare mdin-remd-template in ${win}."
+        exit 1
+    fi
 done
 
-total_steps=$(parse_total_steps "$tmpl0")
-dt_ps=$(parse_dt_ps "$tmpl0")
-target_dt_ps=$(parse_target_dt_ps "$tmpl0")
-chunk_steps=$(parse_nstlim "$tmpl0")
+total_steps=$(parse_total_steps "$tmpl0") || { echo "[ERROR] Failed to parse total_steps from $tmpl0"; exit 1; }
+dt_ps=$(parse_required_dt_ps "$tmpl0") || { echo "[ERROR] Failed to parse dt from $tmpl0"; exit 1; }
+target_dt_ps=$(parse_required_target_dt_ps "$tmpl0") || { echo "[ERROR] Failed to parse target_dt from $tmpl0"; exit 1; }
+chunk_steps=$(parse_nstlim "$tmpl0") || { echo "[ERROR] Failed to parse nstlim from $tmpl0"; exit 1; }
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 mark_remd_finished() {
@@ -226,9 +235,13 @@ scan_replica_progress() {
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "$COMP" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
-        [[ -f "$tmpl" ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
-        target=$(awk -v n="$(parse_total_steps "$tmpl")" -v d="$(parse_target_dt_ps "$tmpl")" 'BEGIN {printf "%.10f", n*d}')
-        if ! awk -v a="$target" -v b="$total_ps" -v d="$(parse_dt_ps "$tmpl")" -v expected="$dt_ps" 'BEGIN {exit !(a==b && d==expected)}'; then
+        [[ -s "$tmpl" ]] || { echo "[ERROR] Missing or empty template $tmpl" >&2; return 1; }
+        local replica_total_steps replica_target_dt replica_dt
+        replica_total_steps=$(parse_total_steps "$tmpl") || return 1
+        replica_target_dt=$(parse_required_target_dt_ps "$tmpl") || return 1
+        replica_dt=$(parse_required_dt_ps "$tmpl") || return 1
+        target=$(awk -v n="$replica_total_steps" -v d="$replica_target_dt" 'BEGIN {printf "%.10f", n*d}')
+        if ! awk -v a="$target" -v b="$total_ps" -v d="$replica_dt" -v expected="$dt_ps" 'BEGIN {exit !(a==b && d==expected)}'; then
             echo "[ERROR] ${PFOLDER_ABS}: inconsistent production target or timestep in ${win}" >&2
             return 1
         fi
@@ -296,8 +309,8 @@ if (( remaining_steps > 0 )); then
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
-        [[ -f "$tmpl" ]] || {
-            echo "[ERROR] Missing template $tmpl" >&2
+        [[ -s "$tmpl" ]] || {
+            echo "[ERROR] Missing or empty template $tmpl" >&2
             exit 1
         }
         current_mdin="${PFOLDER}/${win}/mdin-remd-current"
