@@ -1194,7 +1194,8 @@ class RunSection(BaseModel):
         None,
         description=(
             "Email address that should receive a notification once the run "
-            "finishes or aborts with an uncaught failure."
+            "finishes, aborts with an uncaught failure, or its SLURM manager "
+            "reaches its time limit."
         ),
     )
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)

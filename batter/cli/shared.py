@@ -81,3 +81,24 @@ def _batter_path_export_block() -> str:
         f"BATTER_ENV_BIN={shlex.quote(env_bin)}\n"
         'export PATH="$BATTER_ENV_BIN:$PATH"\n'
     )
+
+
+def _manager_command_with_status(run_cmd: str) -> str:
+    """Run a manager command without masking its status with a trailing echo."""
+    return "\n".join(
+        [
+            "BATTER_MANAGER_STATUS=0",
+            f"if {run_cmd}; then",
+            "  BATTER_MANAGER_STATUS=0",
+            "else",
+            "  BATTER_MANAGER_STATUS=$?",
+            "fi",
+            'if [ "$BATTER_MANAGER_STATUS" -eq 0 ]; then',
+            "  echo 'Job completed.'",
+            "else",
+            "  echo \"BATTER manager failed with status $BATTER_MANAGER_STATUS.\" >&2",
+            "fi",
+            'exit "$BATTER_MANAGER_STATUS"',
+            "",
+        ]
+    )

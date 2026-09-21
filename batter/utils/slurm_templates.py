@@ -1,11 +1,49 @@
 from __future__ import annotations
 
 from importlib import resources
+import os
 from pathlib import Path
+import tempfile
 import difflib
 from typing import Dict, Mapping, Optional
 
 from loguru import logger
+
+
+def atomic_write_text(path: Path, text: str, *, mode: Optional[int] = None) -> None:
+    """Atomically replace ``path`` with ``text``.
+
+    Writing through a temporary file prevents a quota or filesystem error from
+    truncating an existing Slurm script before the replacement is complete.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    previous_mode: Optional[int] = None
+    try:
+        previous_mode = path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        pass
+
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        target_mode = mode if mode is not None else previous_mode
+        if target_mode is not None:
+            tmp_path.chmod(target_mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
 
 
 def render_slurm_with_header_body(

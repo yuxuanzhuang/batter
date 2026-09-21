@@ -25,6 +25,7 @@ from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
 from batter.cli.shared import (
     _batter_path_export_block,
+    _manager_command_with_status,
     _upsert_sbatch_option,
     _which_batter,
 )
@@ -868,10 +869,7 @@ def _submit_fe_analyze_slurm(
         f.write(manager_code)
         f.write("\n")
         f.write(_batter_path_export_block())
-        f.write(run_cmd)
-        f.write("\n")
-        f.write("echo 'Job completed.'\n")
-        f.write("\n")
+        f.write(_manager_command_with_status(run_cmd))
 
     result = subprocess.run(
         ["sbatch", script_name],

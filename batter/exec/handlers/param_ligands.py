@@ -17,6 +17,7 @@ from batter.param.ligand import (
     _hash_id,
     _has_complete_ligand_artifacts,
     _ligand_parameter_lock,
+    _parameterization_payload,
     _rdkit_load,
     _canonical_payload,
     batch_ligand_process,
@@ -363,7 +364,12 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
                 try:
                     mol = _rdkit_load(path, retain_h=retain)
                     smi = _canonical_payload(mol)
-                    hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
+                    hid = _hash_id(
+                        _parameterization_payload(mol),
+                        ligand_ff=ligand_ff,
+                        retain_h=retain,
+                        charge_method=charge,
+                    )
                     cache_dir = outdir / hid
                     if _has_complete_ligand_artifacts(cache_dir):
                         unique[str(path)] = (hid, smi)

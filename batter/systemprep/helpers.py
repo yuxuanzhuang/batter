@@ -12,9 +12,8 @@ from loguru import logger
 
 try:
     from rdkit import Chem
-except Exception as e:  # pragma: no cover - RDKit optional at runtime
+except Exception:  # pragma: no cover - RDKit optional at runtime
     Chem = None  # type: ignore
-    logger.warning(f"RDKit not available; ligand helpers will fail if invoked. ({e})")
 
 __all__ = [
     "find_anchor_atoms",
@@ -1151,6 +1150,7 @@ def find_anchor_atoms(
     protein_dssp: Any = None,
     apo_ligand: bool = False,
     apo_ligand_distance: Optional[float] = None,
+    ligand_name: Optional[str] = None,
 ) -> Tuple[float, float, float, str, str, str, float]:
     """
     Identify Boresch-style anchor atoms and pocket geometry.
@@ -1181,6 +1181,8 @@ def find_anchor_atoms(
     apo_ligand
         If true, synthesize the L1 vector instead of using dummy-ligand
         coordinates.
+    ligand_name
+        User-facing ligand identifier included in validation errors.
 
     Returns
     -------
@@ -1249,8 +1251,9 @@ def find_anchor_atoms(
             ).min()
         )
         if min_anchor_dist >= float(unbound_threshold):
+            ligand_label = f" '{ligand_name}'" if ligand_name else ""
             raise ValueError(
-                "Ligand appears unbound during system prep: "
+                f"Ligand{ligand_label} appears unbound during system prep: "
                 f"minimum ligand-anchor distance ({min_anchor_dist:.3f} Å) "
                 f">= unbound threshold ({float(unbound_threshold):.3f} Å)."
             )

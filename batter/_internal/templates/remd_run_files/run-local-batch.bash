@@ -77,6 +77,31 @@ disable_mcwat_for_non_remd_batch() {
     '
 }
 
+# Prefer the path-rewritten batch input whenever it exists.  Falling back to
+# mdin-template is valid only when no batch copy was generated; an existing
+# empty/corrupt batch copy must not be silently replaced because its DISANG and
+# other relative paths differ when launched from the component directory.
+batch_template_for_window() {
+    local win=$1
+    local preferred="${PFOLDER}/${win}/mdin-batch-template"
+    local fallback="${PFOLDER}/${win}/mdin-template"
+
+    if [[ -e "$preferred" || -L "$preferred" ]]; then
+        if [[ ! -f "$preferred" || ! -s "$preferred" ]]; then
+            echo "[ERROR] Existing batch template is empty or invalid: $preferred" >&2
+            return 1
+        fi
+        printf '%s\n' "$preferred"
+        return 0
+    fi
+
+    if [[ ! -f "$fallback" || ! -s "$fallback" ]]; then
+        echo "[ERROR] Missing or empty mdin template in ${win}; cannot continue." >&2
+        return 1
+    fi
+    printf '%s\n' "$fallback"
+}
+
 reduce_dt_for_batch_windows() {
     local stage=$1
     local retry_count=${2:-${RETRY_COUNT:-${RETRY:-0}}}
@@ -89,12 +114,8 @@ reduce_dt_for_batch_windows() {
     local i win tmpl
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
-        tmpl="${PFOLDER}/${win}/mdin-batch-template"
-        if [[ ! -f "$tmpl" ]]; then
-            tmpl="${PFOLDER}/${win}/mdin-template"
-        fi
-        [[ -f "$tmpl" ]] || continue
-        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
+        tmpl=$(batch_template_for_window "$win") || return 1
+        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count" || return 1
     done
 }
 
@@ -112,28 +133,21 @@ archive_existing_log_file "$log_file"
 
 # Determine progress from the first window
 WIN0=$(printf "%s%02d" "${COMP}" 0)
-tmpl0="${PFOLDER}/${WIN0}/mdin-batch-template"
-if [[ ! -f "$tmpl0" ]]; then
-    tmpl0="${PFOLDER}/${WIN0}/mdin-template"
-fi
-if [[ ! -f "$tmpl0" ]]; then
-    echo "[ERROR] Missing mdin template in ${WIN0}; cannot continue."
-    exit 1
-fi
+tmpl0=$(batch_template_for_window "$WIN0") || exit 1
 
 for ((i = 0; i < N_WINDOWS; i++)); do
     win=$(printf "%s%02d" "${COMP}" "$i")
-    tmpl="${PFOLDER}/${win}/mdin-batch-template"
-    if [[ ! -f "$tmpl" ]]; then
-        tmpl="${PFOLDER}/${win}/mdin-template"
+    tmpl=$(batch_template_for_window "$win") || exit 1
+    if ! apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "batch startup"; then
+        echo "[ERROR] Failed to prepare mdin template in ${win}."
+        exit 1
     fi
-    apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "batch startup"
 done
 
-total_steps=$(parse_total_steps "$tmpl0")
-dt_ps=$(parse_dt_ps "$tmpl0")
-target_dt_ps=$(parse_target_dt_ps "$tmpl0")
-chunk_steps=$(scaled_nstlim_for_dt "$tmpl0" "$dt_ps")
+total_steps=$(parse_total_steps "$tmpl0") || { echo "[ERROR] Failed to parse total_steps from $tmpl0"; exit 1; }
+dt_ps=$(parse_required_dt_ps "$tmpl0") || { echo "[ERROR] Failed to parse dt from $tmpl0"; exit 1; }
+target_dt_ps=$(parse_required_target_dt_ps "$tmpl0") || { echo "[ERROR] Failed to parse target_dt from $tmpl0"; exit 1; }
+chunk_steps=$(scaled_nstlim_for_dt "$tmpl0" "$dt_ps") || { echo "[ERROR] Failed to parse nstlim from $tmpl0"; exit 1; }
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 production_start_marker="${PFOLDER}/${WIN0}/production-start.ps"
@@ -182,14 +196,7 @@ if (( remaining_steps > 0 )); then
     : > "$groupfile"
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
-        tmpl="${PFOLDER}/${win}/mdin-batch-template"
-        if [[ ! -f "$tmpl" ]]; then
-            tmpl="${PFOLDER}/${win}/mdin-template"
-        fi
-        [[ -f "$tmpl" ]] || {
-            echo "[ERROR] Missing template $tmpl" >&2
-            exit 1
-        }
+        tmpl=$(batch_template_for_window "$win") || exit 1
         current_mdin="${PFOLDER}/${win}/mdin-current"
         cmass_file=$(printf "cmass-%02d.txt" "$seg_idx")
         dumpave_file="${win}/${cmass_file}"

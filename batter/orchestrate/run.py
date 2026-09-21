@@ -2447,9 +2447,25 @@ def _notify_run_failure(
     )
 
 
+def _notify_run_timeout(
+    rc: RunConfig,
+    run_id: str | None,
+    run_dir: Path | None,
+    resume_command: str,
+) -> None:
+    """Notify the configured recipient that a Slurm manager needs resubmission."""
+    _notify_run_status(
+        rc,
+        status="timed_out",
+        run_id=run_id,
+        run_dir=run_dir,
+        resume_command=resume_command,
+    )
+
+
 def _notify_run_status(
     rc: RunConfig,
-    status: Literal["completed", "failed"],
+    status: Literal["completed", "failed", "timed_out"],
     run_id: str | None,
     run_dir: Path | None,
     failures: list[tuple[str, str, str]] | None = None,
@@ -2457,6 +2473,7 @@ def _notify_run_status(
     summary_table: str | None = None,
     fe_records_exported: bool = True,
     completion_note: str | None = None,
+    resume_command: str | None = None,
 ) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
@@ -2466,6 +2483,11 @@ def _notify_run_status(
     display_run_id = run_id or "unknown"
     if status == "failed":
         subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} failed"
+    elif status == "timed_out":
+        subject = (
+            f"BATTER run '{display_run_id}' of {rc.create.system_name} "
+            "manager timed out before completion"
+        )
     else:
         subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} completed"
     results_path = Path(rc.run.output_folder) / "results"
@@ -2490,6 +2512,19 @@ def _notify_run_status(
                 ]
             )
         body_lines.append("FE records may be incomplete because the run exited early.")
+    elif status == "timed_out":
+        body_lines.extend(
+            [
+                f"The SLURM manager for your BATTER run '{rc.create.system_name}' "
+                f"(run_id='{display_run_id}') reached its time limit at {timestamp} UTC.",
+                "The run is not finished yet; completed work remains available on disk.",
+                f"Protocol: {rc.protocol}",
+                f"Last known run path: {run_dir or rc.run.output_folder}",
+                "",
+                "Rerun the same submission command to continue:",
+                resume_command or "batter run <run.yaml> --slurm-submit",
+            ]
+        )
     else:
         body_lines.extend(
             [
@@ -2548,8 +2583,8 @@ def _notify_run_status(
     try:
         with smtplib.SMTP("localhost") as smtp:
             smtp.sendmail(sender, [recipient], message)
-        logger.info(f"Sent completion notification to {recipient}")
+        logger.info(f"Sent {status} notification to {recipient}")
     except SMTPException as exc:
-        logger.warning(f"Failed to send completion email to {recipient}: {exc}")
+        logger.warning(f"Failed to send {status} email to {recipient}: {exc}")
     except Exception as exc:  # pragma: no cover - best-effort notification
-        logger.warning(f"Unexpected error while sending completion email: {exc}")
+        logger.warning(f"Unexpected error while sending {status} email: {exc}")

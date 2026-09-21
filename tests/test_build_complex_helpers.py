@@ -318,6 +318,102 @@ def test_write_ligand_pdb_with_parameter_names_collapses_apo_dummy(
     assert "DU3" not in output
 
 
+def test_write_ligand_pdb_with_parameter_names_rejects_element_order_mismatch(
+    tmp_path: Path,
+) -> None:
+    ligand_pdb = tmp_path / "pose.pdb"
+    ligand_pdb.write_text(
+        "\n".join(
+            [
+                "HETATM    1  CL1 LIG L   1       0.000   0.000   0.000  1.00  0.00          CL",
+                "HETATM    2  C1  LIG L   1       1.800   0.000   0.000  1.00  0.00           C",
+                "END",
+                "",
+            ]
+        )
+    )
+    parameter_mol2 = tmp_path / "lig.mol2"
+    parameter_mol2.write_text(
+        "\n".join(
+            [
+                "@<TRIPOS>MOLECULE",
+                "LIG",
+                "    2     1     1     0     0",
+                "SMALL",
+                "USER_CHARGES",
+                "@<TRIPOS>ATOM",
+                "      1 C1        0.0000    0.0000    0.0000 C.3  1 LIG 0.0000",
+                "      2 Cl1       1.8000    0.0000    0.0000 Cl   1 LIG 0.0000",
+                "@<TRIPOS>BOND",
+                "      1     1     2 1",
+                "@<TRIPOS>SUBSTRUCTURE",
+                "      1 LIG         1 TEMP              0 ****  ****",
+                "",
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="Ligand atom ordering mismatch"):
+        build_complex_mod._write_ligand_pdb_with_parameter_names(
+            ligand_pdb,
+            parameter_mol2,
+            tmp_path / "out.pdb",
+            residue_name="lig",
+            ligand_label="REORDERED",
+        )
+
+
+def test_write_ligand_pdb_with_parameter_names_rejects_indexed_bond_mismatch(
+    tmp_path: Path,
+) -> None:
+    ligand_pdb = tmp_path / "pose.pdb"
+    ligand_pdb.write_text(
+        "\n".join(
+            [
+                "HETATM    1  C1  LIG L   1       0.000   0.000   0.000  1.00  0.00           C",
+                "HETATM    2  C2  LIG L   1       1.500   0.000   0.000  1.00  0.00           C",
+                "HETATM    3  C3  LIG L   1       3.000   0.000   0.000  1.00  0.00           C",
+                "CONECT    1    2",
+                "CONECT    2    1    3",
+                "CONECT    3    2",
+                "END",
+                "",
+            ]
+        )
+    )
+    parameter_mol2 = tmp_path / "lig.mol2"
+    parameter_mol2.write_text(
+        "\n".join(
+            [
+                "@<TRIPOS>MOLECULE",
+                "LIG",
+                "    3     2     1     0     0",
+                "SMALL",
+                "USER_CHARGES",
+                "@<TRIPOS>ATOM",
+                "      1 C1        0.0000    0.0000    0.0000 C.3  1 LIG 0.0000",
+                "      2 C2        1.5000    0.0000    0.0000 C.3  1 LIG 0.0000",
+                "      3 C3        3.0000    0.0000    0.0000 C.3  1 LIG 0.0000",
+                "@<TRIPOS>BOND",
+                "      1     1     3 1",
+                "      2     3     2 1",
+                "@<TRIPOS>SUBSTRUCTURE",
+                "      1 LIG         1 TEMP              0 ****  ****",
+                "",
+            ]
+        )
+    )
+
+    with pytest.raises(ValueError, match="indexed-connectivity mismatch"):
+        build_complex_mod._write_ligand_pdb_with_parameter_names(
+            ligand_pdb,
+            parameter_mol2,
+            tmp_path / "out.pdb",
+            residue_name="lig",
+            ligand_label="REORDERED_CARBONS",
+        )
+
+
 def test_write_apo_anchor_outputs_tags_fixed_anchor_file(tmp_path: Path) -> None:
     (tmp_path / "equil-APO.pdb").write_text("ATOM\n")
     (tmp_path / "APO-noh.pdb").write_text("ATOM\n")

@@ -8,6 +8,7 @@
 #SBATCH --ntasks=4 # use 4 CPUs
 #SBATCH --cpus-per-task=1
 #SBATCH -d singleton
+#SBATCH --no-requeue
 
 #SBATCH --open-mode=append 
 

@@ -1363,6 +1363,57 @@ def _append_bulk_ligand_z_restraint(ctx: BuildContext, disang: Path) -> int:
     return _append_BULK_LIGAND_restraint(ctx, disang)
 
 
+def _append_bulk_ligand_y_restraint(ctx: BuildContext, disang: Path) -> int:
+    """Anchor the solvent ligand's first atom to its single DUM reference."""
+    vac_pdb = ctx.window_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(
+            f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}"
+        )
+
+    universe = mda.Universe(vac_pdb.as_posix())
+    dum_indices = _first_ligand_atom_indices(universe, "DUM", limit=1)
+    ligand_indices = _first_ligand_atom_indices(
+        universe, ctx.residue_name, limit=1
+    )
+    if not dum_indices:
+        raise ValueError(
+            f"[restraints:y] No DUM reference atom found in {vac_pdb}"
+        )
+    if not ligand_indices:
+        raise ValueError(
+            f"[restraints:y] No {ctx.residue_name!r} ligand found in {vac_pdb}"
+        )
+
+    dum_idx = dum_indices[0]
+    ligand_idx = ligand_indices[0]
+    if dum_idx == ligand_idx:
+        raise ValueError(
+            f"[restraints:y] DUM and ligand resolved to the same atom {dum_idx} "
+            f"in {vac_pdb}"
+        )
+    existing = disang.read_text() if disang.exists() else ""
+    with disang.open("a") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        if existing.strip():
+            handle.write("\n")
+        handle.write("# Bulk ligand flat-bottom restraint\n")
+        handle.write("&rst\n")
+        handle.write("  iat=-1,-1,\n")
+        handle.write("  r1=-999.0, r2=0.0, r3=0.0, r4=999.0,\n")
+        handle.write("  rk2=10.0, rk3=10.0,\n")
+        handle.write(f"  igr1={dum_idx},0,\n")
+        handle.write(f"  igr2={ligand_idx},0,\n")
+        handle.write(f"&end #{BULK_LIGAND_RESTRAINT_TAG}\n")
+
+    logger.debug(
+        f"[restraints:y] bulk ligand restraint wrote DUM atom {dum_idx} "
+        f"to ligand atom {ligand_idx}"
+    )
+    return 1
+
+
 def _residue_ix_for_atom_indices(
     universe: mda.Universe,
     atom_indices: Sequence[int],
@@ -2537,8 +2588,9 @@ def _build_restraints_l(builder, ctx: BuildContext) -> None:
 def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:
-      - cv.in: placeholder file; ligand solvent restraint now comes from ntr
-      - disang.rest: empty (no mirrored ligand COM block)
+      - cv.in: placeholder file
+      - ntr: fixes the single DUM reference atom
+      - disang.rest: DUM-to-ligand flat-bottom positional restraint for y
       - restraints.in: minimal analysis driver (optional)
     """
     windows_dir = ctx.window_dir
@@ -2547,12 +2599,14 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
     if not vac_pdb.exists():
         raise FileNotFoundError(f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}")
 
-    # ---- cv.in (placeholder only; solvent ligand restraint is ntr-based) ----
+    # ---- cv.in (placeholder only; solvent ligand restraint is in DISANG) ----
     cv_in = windows_dir / "cv.in"
     cv_in.write_text("cv_file\n")
 
     disang = windows_dir / "disang.rest"
     disang.write_text("\n")
+    if str(getattr(ctx, "comp", "")).lower() == "y":
+        _append_bulk_ligand_y_restraint(ctx, disang)
 
     # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
@@ -2561,7 +2615,10 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote placeholder cv.in, empty disang.rest, restraints.in in {windows_dir}")
+    logger.debug(
+        f"[restraints:y] wrote placeholder cv.in, DUM-to-ligand disang.rest, "
+        f"restraints.in in {windows_dir}"
+    )
 
 @register_restraints("m")
 def _build_restraints_m(builder, ctx: BuildContext) -> None:

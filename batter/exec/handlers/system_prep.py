@@ -1281,6 +1281,7 @@ class _SystemPrepRunner:
             protein_dssp=dssp_result.get("results"),
             apo_ligand=anchor_ligand_is_apo,
             apo_ligand_distance=(float(min_adis) + float(max_adis)) / 2.0,
+            ligand_name=anchor_ligand_name,
         )
         self.anchor_atoms = resolved_anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom

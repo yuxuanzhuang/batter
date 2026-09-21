@@ -220,7 +220,7 @@ Generating Simulation Inputs
 
    Additional field that may need adjustment based on your cluster environment:
 
-   - ``run.email_on_completion`` – email address to notify when the BATTER manager finishes or aborts with an uncaught failure.
+   - ``run.email_on_completion`` – email address to notify when the BATTER manager finishes, aborts with an uncaught failure, or reaches its Slurm time limit before completion. Timeout messages include the command to resubmit the manager.
    - ``run.email_sender`` – sender address for those notifications. Defaults to ``nobody@stanford.edu``.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).

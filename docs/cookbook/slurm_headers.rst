@@ -40,5 +40,10 @@ Headers include commented examples for overriding executables:
 * ``MPI_FLAGS`` (default: inferred by the runner; an exported value is used as-is
   immediately after ``MPI_EXEC``)
 
+For DD and UNO-DD free-energy scripts, BATTER defaults both ``PMEMD_EXEC`` and
+the legacy ``PMEMD_DPFP_EXEC`` command path to ``pmemd.cuda``. This keeps all
+DD stages on the standard CUDA executable while preserving the environment
+variable as an explicit site override.
+
 Edit exports in the header files to point to site-specific binaries/modules. The packaged
 bodies will be appended during rendering; only the headers are meant for customization.

@@ -12,7 +12,11 @@ from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.fe_defaults import DEFAULT_FE_SEED_LAMBDA_STATES
 from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
-from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
+from batter.utils.slurm_templates import (
+    atomic_write_text,
+    render_slurm_with_header_body,
+    render_slurm_body,
+)
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
@@ -62,6 +66,17 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 )
         )
 
+        if str(sim.dec_method).lower() == "dd":
+            # Keep DD/UNO-DD equilibration on the same standard CUDA
+            # executable as its free-energy windows.  The template retains a
+            # separately overridable legacy command path, but DD must not
+            # default that path to the DPFP binary.
+            text = text.replace(
+                "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}",
+                "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda}",
+                1,
+            )
+
         text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 
@@ -80,9 +95,9 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         },
     )
     out_slurm_body = work / "SLURMM-run"
-    out_slurm_body.write_text(body_txt)
+    atomic_write_text(out_slurm_body, body_txt, mode=0o755)
     out_slurm_sidecar = work / "SLURMM-run.body"
-    out_slurm_sidecar.write_text(body_txt)
+    atomic_write_text(out_slurm_sidecar, body_txt, mode=0o755)
     try:
         out_slurm_body.chmod(0o755)
         out_slurm_sidecar.chmod(0o755)
@@ -148,12 +163,12 @@ def write_fe_run_file(
            .replace("LAMBDA_EQ_LIST", lambda_sim_string)
     )
     if str(getattr(ctx.sim, "dec_method", "")).lower() == "dd" and comp in {"e", "f", "v", "w", "z", "y"}:
-        # Amber24's SPFP TI neighbour-list kernel fails for DD charge and
-        # Lennard-Jones legs on realistic protein systems.  DPFP
-        # uses the stable TI path and remains overridable through PMEMD_EXEC.
+        # DD/UNO-DD runs use the standard CUDA executable for both the normal
+        # and legacy fallback command paths.  Keep the separate
+        # variables so site-specific executable overrides continue to work.
         txt = txt.replace(
-            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}",
-            "PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda_DPFP}",
+            "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}",
+            "PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda}",
             1,
         )
         if comp in {"f", "w", "y"}:
@@ -180,9 +195,9 @@ def write_fe_run_file(
         },
     )
     out_slurm_body = dst_dir / "SLURMM-run"
-    out_slurm_body.write_text(body_txt)
+    atomic_write_text(out_slurm_body, body_txt, mode=0o755)
     out_slurm_sidecar = dst_dir / "SLURMM-run.body"
-    out_slurm_sidecar.write_text(body_txt)
+    atomic_write_text(out_slurm_sidecar, body_txt, mode=0o755)
     os.chmod(out_slurm_body, 0o755)
     os.chmod(out_slurm_sidecar, 0o755)
 

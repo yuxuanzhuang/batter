@@ -80,3 +80,36 @@ def test_analyze_handler_rbfe_pair_forces_x_and_writes_summary(
     assert payload["total_dg_kcal_mol"] == 1.0
     assert payload["components"] == ["x"]
     assert "rbfe_pair_summary_json" in res.artifacts
+
+
+def test_analyze_handler_treats_rocklin_no_as_false(tmp_path: Path, monkeypatch) -> None:
+    ligand_root = tmp_path / "simulations" / "LIG"
+    (ligand_root / "fe" / "z").mkdir(parents=True)
+    (ligand_root / "fe" / "y").mkdir()
+
+    called = {}
+
+    def _fake_analyze_lig_task(**kwargs):
+        called.update(kwargs)
+        results_dir = Path(kwargs["lig_path"]) / "Results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        (results_dir / "Results.dat").write_text("Total\t-1.00\t0.10\n")
+
+    monkeypatch.setattr(
+        "batter.exec.handlers.fe_analysis.analyze_lig_task", _fake_analyze_lig_task
+    )
+
+    sim_cfg = _sim_cfg().model_copy(
+        update={"components": ["z", "y"], "rocklin_correction": "no"}
+    )
+    system = SimSystem(
+        name="sys:LIG:run",
+        root=ligand_root,
+        meta=SystemMeta.from_mapping(
+            {"ligand": "LIG", "residue_name": "LIG"}
+        ),
+    )
+
+    analyze_handler(Step(name="analyze"), system, {"sim": sim_cfg})
+
+    assert called["rocklin_correction"] is False

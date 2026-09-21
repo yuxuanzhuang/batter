@@ -39,12 +39,14 @@ API Reference
 Caching and validation
 ----------------------
 
-Ligand artifacts are content-addressed: input coordinates plus force-field/charge
-settings are hashed, so rerunning ``batch_ligand_process`` with the same inputs reuses
-cached ``mol2``/``frcmod``/``lib`` bundles instead of recomputing. Charge assignment
-errors and missing protonation states surface as exceptions; callers should surface
-those errors up the pipeline rather than silently skipping ligands. Validation also
-canonicalises SMILES so cache keys stay stable across input formats.
+Ligand artifacts are content-addressed. Cache keys include canonical chemistry,
+indexed atom topology, force-field and charge settings, and the explicit-hydrogen
+retention mode. Coordinates are excluded, so conformers with compatible atom
+ordering can reuse parameters. Graph-isomorphic files with different atom ordering
+receive separate entries because downstream AMBER files are applied positionally.
+Charge assignment errors and missing protonation states surface as exceptions;
+callers should surface those errors up the pipeline rather than silently skipping
+ligands.
 
 Writers targeting the same content hash are serialized with a file lock under
 ``<parameter-store>/.locks/``. A process that waits for another run rechecks the

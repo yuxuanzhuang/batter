@@ -11,6 +11,7 @@ from loguru import logger
 from batter._internal.ops.cleanup import cleanup_fe_after_analysis
 from batter.analysis.analysis import analyze_lig_task
 from batter.config.defaults import DEFAULT_N_BOOTSTRAPS
+from batter.config.utils import coerce_yes_no
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
@@ -104,7 +105,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
             components = list(sim_cfg.components)
         temperature = float(sim_cfg.temperature)
         water_model = str(sim_cfg.water_model).lower()
-        rocklin_correction = bool(sim_cfg.rocklin_correction)
+        rocklin_correction = coerce_yes_no(sim_cfg.rocklin_correction) == "yes"
         rest = tuple(sim_cfg.rest)
         sim_start_step = int(getattr(sim_cfg, "analysis_start_step", 0))
         sim_detect_equil = bool(getattr(sim_cfg, "detect_equil", True))
@@ -115,7 +116,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     components = list(payload.get("components", components))
     temperature = float(payload.get("temperature", temperature))
     water_model = str(payload.get("water_model", water_model)).lower()
-    rocklin_correction = bool(payload.get("rocklin_correction", rocklin_correction))
+    rocklin_override = payload.get("rocklin_correction", rocklin_correction)
+    rocklin_correction = coerce_yes_no(rocklin_override) == "yes"
     n_workers = int(payload.get("n_workers", n_workers))
 
     # RBFE pair analysis is currently x-component only.

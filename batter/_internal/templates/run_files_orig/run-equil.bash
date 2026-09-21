@@ -187,20 +187,23 @@ tmpl="mdin-template"
 mdin_current="mdin-current"
 
 # sanity check template exists
-if [[ ! -f $tmpl ]]; then
-    echo "[ERROR] Missing mdin template: $tmpl"
+if [[ ! -s $tmpl ]]; then
+    echo "[ERROR] Missing or empty mdin template: $tmpl"
     exit 1
 fi
 
 # template-driven MD params
-apply_retry_dt_reduction "$tmpl" "$retry_count" 0.001 "production startup"
+if ! apply_retry_dt_reduction "$tmpl" "$retry_count" 0.001 "production startup"; then
+    echo "[ERROR] Failed to prepare mdin template: $tmpl"
+    exit 1
+fi
 
 reset_minimization_after_failed_pre_equil
 
-dt_ps=$(parse_dt_ps "$tmpl")
-target_dt_ps=$(parse_target_dt_ps "$tmpl")
-total_steps=$(parse_total_steps "$tmpl")
-chunk_steps=$(scaled_nstlim_for_dt "$tmpl" "$dt_ps")
+dt_ps=$(parse_required_dt_ps "$tmpl") || { echo "[ERROR] Failed to parse dt from $tmpl"; exit 1; }
+target_dt_ps=$(parse_required_target_dt_ps "$tmpl") || { echo "[ERROR] Failed to parse target_dt from $tmpl"; exit 1; }
+total_steps=$(parse_total_steps "$tmpl") || { echo "[ERROR] Failed to parse total_steps from $tmpl"; exit 1; }
+chunk_steps=$(scaled_nstlim_for_dt "$tmpl" "$dt_ps") || { echo "[ERROR] Failed to parse nstlim from $tmpl"; exit 1; }
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 

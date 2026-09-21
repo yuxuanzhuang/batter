@@ -90,9 +90,11 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
 
     try:
         ok = builder.build()
-    except Exception:
+    except Exception as exc:
         _mark_prepare_equil_failed()
-        raise
+        raise RuntimeError(
+            f"[prepare_equil:{ligand}] failed for ligand '{ligand}': {exc}"
+        ) from exc
     if not ok:
         _mark_prepare_equil_failed()
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")

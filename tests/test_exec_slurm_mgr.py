@@ -294,6 +294,44 @@ def test_submit_rebuild_prefers_newer_body_only_script_over_stale_sidecar(
     assert sidecar.read_text() == "NEW_BODY\n"
 
 
+def test_submit_rejects_empty_body_sidecar_without_truncating_script(
+    monkeypatch,
+    tmp_path,
+):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    original_script = "#!/bin/bash\n#SBATCH --job-name=test\n"
+    script.write_text(original_script)
+    (workdir / "SLURMM-run.body").write_text("")
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    (header_root / "SLURMM-Am.header").write_text("#!/bin/bash\n#SBATCH --job-name=test\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    called = False
+
+    def fake_run(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("sbatch must not run for an empty body")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="empty or contains no executable commands"):
+        manager._submit_once(spec)
+
+    assert not called
+    assert script.read_text() == original_script
+
+
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()
@@ -496,6 +534,91 @@ def test_wait_loop_progress_starts_from_existing_sentinels(
     assert progress.initial == 1
     assert progress.n == 2
     assert progress.postfix["pending"] == 0
+
+
+def test_wait_loop_retries_transient_shared_filesystem_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "JOBID").write_text("21949383\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        filesystem_retry_limit=1,
+        filesystem_retry_delay_s=0.0,
+    )
+    sentinel_calls = {"count": 0}
+
+    def flaky_sentinel(_spec: SlurmJobSpec):
+        sentinel_calls["count"] += 1
+        if sentinel_calls["count"] == 1:
+            raise BrokenPipeError(108, "Cannot send after transport endpoint shutdown")
+        return True, "FINISHED"
+
+    monkeypatch.setattr(manager, "_sentinel_done", flaky_sentinel)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    manager._wait_loop([spec])
+
+    assert sentinel_calls["count"] == 2
+
+
+def test_wait_loop_reports_persistent_shared_filesystem_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "JOBID").write_text("21949383\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        filesystem_retry_limit=1,
+        filesystem_retry_delay_s=0.0,
+    )
+    sentinel_calls = {"count": 0}
+
+    def failed_sentinel(_spec: SlurmJobSpec):
+        sentinel_calls["count"] += 1
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(manager, "_sentinel_done", failed_sentinel)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="cannot inspect or resubmit worker jobs"):
+        manager._wait_loop([spec])
+
+    assert sentinel_calls["count"] == 2
+
+
+def test_wait_loop_reports_persistent_filesystem_error_outside_slurm(
+    monkeypatch, tmp_path: Path
+) -> None:
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    (workdir / "JOBID").write_text("21949383\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        filesystem_retry_limit=0,
+        filesystem_retry_delay_s=0.0,
+    )
+
+    monkeypatch.setattr(
+        manager,
+        "_sentinel_done",
+        lambda _spec: (_ for _ in ()).throw(
+            BrokenPipeError(108, "Cannot send after transport endpoint shutdown")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="cannot inspect or resubmit worker jobs"):
+        manager._wait_loop([spec])
 
 
 def test_wait_loop_failed_progress_is_red_and_logs_failed_folder(

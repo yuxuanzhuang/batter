@@ -62,11 +62,11 @@ def test_default_fe_seed_schedule_uses_ten_states(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("component", "expected_default"),
-    [("e", "pmemd.cuda_DPFP"), ("f", "pmemd.cuda_DPFP"),
-     ("v", "pmemd.cuda_DPFP"), ("w", "pmemd.cuda_DPFP"),
-     ("z", "pmemd.cuda_DPFP"), ("y", "pmemd.cuda_DPFP")],
+    [("e", "pmemd.cuda"), ("f", "pmemd.cuda"),
+     ("v", "pmemd.cuda"), ("w", "pmemd.cuda"),
+     ("z", "pmemd.cuda"), ("y", "pmemd.cuda")],
 )
-def test_dd_run_files_default_to_dpfp(
+def test_dd_run_files_default_to_standard_cuda(
     tmp_path: Path, component: str, expected_default: str
 ) -> None:
     window_dir = tmp_path / f"{component}-1"
@@ -85,6 +85,8 @@ def test_dd_run_files_default_to_dpfp(
 
     text = (window_dir / "run-local.bash").read_text()
     assert f"PMEMD_EXEC=${{PMEMD_EXEC:-{expected_default}}}" in text
+    assert f"PMEMD_DPFP_EXEC=${{PMEMD_DPFP_EXEC:-{expected_default}}}" in text
+    assert "pmemd.cuda_DPFP" not in text
     assert "-ref $production_reference" in text
     if component == "y":
         assert 'if [[ "y" == "y" ]]' in text
@@ -107,7 +109,16 @@ def test_fe_window_equilibration_defaults_to_fifty_ps() -> None:
     assert sim_files.DEFAULT_FE_HANDOFF_STAGES == 5
 
 
-def _assert_fe_handoff(window_dir: Path, *, steps: int, dum_weight: float) -> None:
+def _assert_fe_handoff(
+    window_dir: Path,
+    *,
+    steps: int,
+    dum_weight: float,
+    dum_atom_range: str = "1 2",
+    dum_atom_indices: list[int] | None = None,
+) -> None:
+    if dum_atom_indices is None:
+        dum_atom_indices = [1, 2]
     paths = sorted(window_dir.glob("eq-handoff-[0-9][0-9].in")) + [
         window_dir / "eq.in"
     ]
@@ -124,7 +135,7 @@ def _assert_fe_handoff(window_dir: Path, *, steps: int, dum_weight: float) -> No
         assert "restraintmask" not in text
         assert "type='REST'" not in text
         assert "FE constant DUM positional restraint" in text
-        assert f"\n{dum_weight:g}\nATOM 1 2\nEND\n" in text
+        assert f"\n{dum_weight:g}\nATOM {dum_atom_range}\nEND\n" in text
         if weight > 0:
             assert "FE ligand anchor/common-core handoff positional restraint" in text
         else:
@@ -136,7 +147,7 @@ def _assert_fe_handoff(window_dir: Path, *, steps: int, dum_weight: float) -> No
 
     metadata = json.loads((window_dir / "eq-handoff.json").read_text())
     assert metadata["total_steps"] == steps
-    assert metadata["dum_atom_indices"] == [1, 2]
+    assert metadata["dum_atom_indices"] == dum_atom_indices
     assert [stage["ligand_weight"] for stage in metadata["stages"]] == pytest.approx(
         expected_weights
     )
@@ -802,7 +813,7 @@ def test_maybe_extra_mask_reuses_equil_json_for_non_minus_one_windows(tmp_path: 
     assert force_const == pytest.approx(9.0)
 
 
-def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -> None:
+def test_sim_files_y_uses_only_first_dum_atom_position_restraint(tmp_path: Path) -> None:
     windows_dir = tmp_path / "y00"
     amber_dir = tmp_path / "amber"
     windows_dir.mkdir(parents=True)
@@ -810,9 +821,8 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
 
     (windows_dir / "vac.pdb").write_text(
         "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
-        "ATOM      2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
-        "ATOM      3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      4  C2  LIG A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C1  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
 
@@ -858,9 +868,16 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert "nstlim = 10000" in eq_text
     assert "restraintmask" not in eq_text
     assert "@CA" not in eq_text
-    _assert_fe_handoff(windows_dir, steps=50_000, dum_weight=10.0)
-    assert "restraintmask = '(:1 | @3) & !@H='" in template_text
-    assert "nmropt = 0" in template_text
+    _assert_fe_handoff(
+        windows_dir,
+        steps=50_000,
+        dum_weight=10.0,
+        dum_atom_range="1 1",
+        dum_atom_indices=[1],
+    )
+    assert "restraintmask = '@1'" in template_text
+    assert "@2" not in template_text
+    assert "nmropt = 1" in template_text
 
     scaffold_dir = tmp_path / "y-1"
     scaffold_dir.mkdir()

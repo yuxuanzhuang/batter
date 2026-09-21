@@ -278,6 +278,36 @@ def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     assert failure_json.exists()
 
 
+def test_save_fe_records_does_not_treat_component_json_as_total(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run1"
+    child_root = run_dir / "simulations" / "lig1"
+    results_dir = child_root / "fe" / "Results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "z_results.json").write_text(
+        json.dumps({"fe": 159.2, "fe_error": 0.2})
+    )
+
+    sim_cfg = _make_sim_cfg()
+    child = SimSystem(
+        name="sys:lig1:run1",
+        root=child_root,
+        meta=SystemMeta(ligand="lig1", residue_name="lig1"),
+    )
+    store = ArtifactStore(run_dir)
+    repo = FEResultsRepository(store)
+
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id="run1",
+        children_all=[child],
+        sim_cfg_updated=sim_cfg,
+        repo=repo,
+        protocol="uno_dd",
+    )
+
+    assert failures == [("lig1", "failed", "no_totals_found")]
+
+
 def test_save_fe_records_uses_stored_original_name_for_success(
     tmp_path: Path,
 ) -> None:
@@ -1860,3 +1890,26 @@ def test_notify_run_failure_includes_error_details(
     assert sent["recipients"] == ["dest@example.com"]
     assert "Subject: BATTER run 'run1' of sys failed" in sent["message"]
     assert "Error:\nboom" in sent["message"]
+
+
+def test_notify_run_timeout_includes_resubmission_command(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    resume_command = "batter run /work/run.yaml --slurm-submit"
+
+    run_mod._notify_run_timeout(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        resume_command,
+    )
+
+    assert sent["sender"] == "config@example.com"
+    assert sent["recipients"] == ["dest@example.com"]
+    assert "manager timed out before completion" in sent["message"]
+    assert "The run is not finished yet" in sent["message"]
+    assert "Rerun the same submission command to continue:" in sent["message"]
+    assert resume_command in sent["message"]

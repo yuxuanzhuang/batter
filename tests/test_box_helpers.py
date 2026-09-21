@@ -305,6 +305,203 @@ def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
     assert len(copy.copy(parm).atoms) == len(parm.atoms)
 
 
+def _ligand_param_structure():
+    data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
+    return pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.inpcrd"))
+
+
+def test_ligand_topology_grafts_two_copy_coordinates_but_keeps_parameters(
+    tmp_path: Path,
+) -> None:
+    authoritative = _ligand_param_structure()
+    carrier_single = copy.copy(authoritative)
+    box._rename_parmed_residues(carrier_single, [0], "MOL")
+    carrier_single.atoms[0].charge += 0.75
+    carrier_single.atoms[0].type = "BAD"
+    carrier_single.atoms[0].mass += 2.0
+    carrier_single.atoms[0].atom_type.epsilon += 0.5
+    carrier_single.atoms[0].atom_type.rmin += 0.5
+    carrier_single.atoms[0].atom_type.epsilon_14 += 0.5
+    carrier_single.atoms[0].atom_type.rmin_14 += 0.5
+    carrier_single.bonds[0].type.k += 50.0
+    carrier_single.angles[0].type.k += 50.0
+    carrier_single.dihedrals[0].type.phi_k += 50.0
+    assert carrier_single.atoms[0].charge != authoritative.atoms[0].charge
+    assert carrier_single.atoms[0].mass != authoritative.atoms[0].mass
+    assert carrier_single.atoms[0].epsilon != authoritative.atoms[0].epsilon
+    assert carrier_single.bonds[0].type.k != authoritative.bonds[0].type.k
+    assert carrier_single.angles[0].type.k != authoritative.angles[0].type.k
+    assert (
+        carrier_single.dihedrals[0].type.phi_k
+        != authoritative.dihedrals[0].type.phi_k
+    )
+
+    carrier = carrier_single + copy.copy(carrier_single)
+    box._rename_parmed_residues(carrier, [0, 1], "MOL")
+    single_coordinates = np.asarray(authoritative.coordinates, dtype=float)
+    carrier.coordinates = np.vstack(
+        (single_coordinates + 11.0, single_coordinates + 37.0)
+    )
+    carrier.box = np.array([80.0, 81.0, 82.0, 90.0, 90.0, 90.0])
+
+    ligand = box._ligand_topology_with_tleap_coordinates(
+        authoritative,
+        carrier,
+        expected_copies=2,
+        residue_name="MOL",
+    )
+
+    def bonded_parameter_groups(
+        terms,
+        *,
+        atom_offset: int,
+        atom_attributes: tuple[str, ...],
+        parameter_attributes: tuple[str, ...],
+        term_attributes: tuple[str, ...] = (),
+    ):
+        atom_count = len(authoritative.atoms)
+        groups = {}
+        for term in terms:
+            atom_indices = tuple(getattr(term, name).idx for name in atom_attributes)
+            if not all(
+                atom_offset <= index < atom_offset + atom_count
+                for index in atom_indices
+            ):
+                continue
+            local_indices = tuple(index - atom_offset for index in atom_indices)
+            local_indices = min(local_indices, local_indices[::-1])
+            key = (
+                local_indices,
+                tuple(getattr(term, name) for name in term_attributes),
+            )
+            groups.setdefault(key, []).append(
+                tuple(float(getattr(term.type, name)) for name in parameter_attributes)
+            )
+        for values in groups.values():
+            values.sort()
+        return groups
+
+    def assert_authoritative_copies(structure) -> None:
+        atom_count = len(authoritative.atoms)
+        assert [residue.name for residue in structure.residues] == ["MOL", "MOL"]
+
+        for copy_index in range(2):
+            atom_offset = copy_index * atom_count
+            for atom_index, expected in enumerate(authoritative.atoms):
+                actual = structure.atoms[atom_offset + atom_index]
+                assert actual.name == expected.name
+                assert actual.type == expected.type
+                assert actual.charge == pytest.approx(expected.charge)
+                assert actual.mass == pytest.approx(expected.mass)
+                assert actual.epsilon == pytest.approx(expected.epsilon)
+                assert actual.rmin == pytest.approx(expected.rmin)
+                assert actual.epsilon_14 == pytest.approx(expected.epsilon_14)
+                assert actual.rmin_14 == pytest.approx(expected.rmin_14)
+
+            for terms_name, atom_attributes, parameter_attributes, term_attributes in (
+                ("bonds", ("atom1", "atom2"), ("k", "req"), ()),
+                (
+                    "angles",
+                    ("atom1", "atom2", "atom3"),
+                    ("k", "theteq"),
+                    (),
+                ),
+                (
+                    "dihedrals",
+                    ("atom1", "atom2", "atom3", "atom4"),
+                    ("phi_k", "per", "phase", "scee", "scnb"),
+                    ("improper", "ignore_end"),
+                ),
+            ):
+                expected_groups = bonded_parameter_groups(
+                    getattr(authoritative, terms_name),
+                    atom_offset=0,
+                    atom_attributes=atom_attributes,
+                    parameter_attributes=parameter_attributes,
+                    term_attributes=term_attributes,
+                )
+                actual_groups = bonded_parameter_groups(
+                    getattr(structure, terms_name),
+                    atom_offset=atom_offset,
+                    atom_attributes=atom_attributes,
+                    parameter_attributes=parameter_attributes,
+                    term_attributes=term_attributes,
+                )
+                assert actual_groups.keys() == expected_groups.keys()
+                for key, expected_parameters in expected_groups.items():
+                    np.testing.assert_allclose(
+                        actual_groups[key],
+                        expected_parameters,
+                    )
+
+    assert_authoritative_copies(ligand)
+    np.testing.assert_allclose(ligand.coordinates, carrier.coordinates)
+    np.testing.assert_allclose(ligand.box, carrier.box)
+    assert ligand.parm_data["SOLVENT_POINTERS"] == [2, 2, 3]
+    assert ligand.parm_data["ATOMS_PER_MOLECULE"] == [
+        len(authoritative.atoms),
+        len(authoritative.atoms),
+    ]
+
+    ligand_copy = copy.copy(ligand)
+    assert ligand_copy.parm_data["SOLVENT_POINTERS"] == [2, 2, 3]
+    assert ligand_copy.parm_data["ATOMS_PER_MOLECULE"] == [
+        len(authoritative.atoms),
+        len(authoritative.atoms),
+    ]
+    combined = ligand + ligand_copy
+    assert len(combined.atoms) == 4 * len(authoritative.atoms)
+    assert combined.parm_data["SOLVENT_POINTERS"] == [4, 4, 5]
+    assert combined.parm_data["ATOMS_PER_MOLECULE"] == [
+        len(authoritative.atoms),
+    ] * 4
+
+    prmtop = tmp_path / "ligand.prmtop"
+    inpcrd = tmp_path / "ligand.inpcrd"
+    ligand.save(str(prmtop), overwrite=True)
+    ligand.save(str(inpcrd), overwrite=True)
+    round_tripped = pmd.load_file(str(prmtop), str(inpcrd))
+
+    assert_authoritative_copies(round_tripped)
+    np.testing.assert_allclose(round_tripped.box, carrier.box)
+    assert round_tripped.parm_data["SOLVENT_POINTERS"] == [2, 2, 3]
+    assert round_tripped.parm_data["ATOMS_PER_MOLECULE"] == [
+        len(authoritative.atoms),
+        len(authoritative.atoms),
+    ]
+    np.testing.assert_allclose(
+        round_tripped.coordinates,
+        carrier.coordinates,
+        atol=1.0e-3,
+    )
+
+
+@pytest.mark.parametrize("mismatch", ["name", "element", "connectivity"])
+def test_ligand_topology_rejects_incompatible_coordinate_carrier(
+    mismatch: str,
+) -> None:
+    authoritative = _ligand_param_structure()
+    carrier = copy.copy(authoritative)
+    box._rename_parmed_residues(carrier, [0], "MOL")
+
+    if mismatch == "name":
+        carrier.atoms[0].name = "WRONG"
+    elif mismatch == "element":
+        carrier.atoms[0].atomic_number = 7
+    else:
+        removed_bond = carrier.bonds.pop()
+        removed_bond.atom1.bonds.remove(removed_bond)
+        removed_bond.atom2.bonds.remove(removed_bond)
+
+    with pytest.raises(ValueError, match=mismatch):
+        box._ligand_topology_with_tleap_coordinates(
+            authoritative,
+            carrier,
+            expected_copies=1,
+            residue_name="MOL",
+        )
+
+
 def test_merge_first_n_and_lipid_fragments_groups_split_popc(tmp_path: Path) -> None:
     src = tmp_path / "full.prmtop"
     out = tmp_path / "full_merged.prmtop"
