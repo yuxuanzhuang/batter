@@ -38,6 +38,7 @@ from batter.utils.builder_utils import (
 )
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
+_PROTEIN_CAP_BOND_DISTANCE_CUTOFF_A = 1.9
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
 _XY_ROTATION_REFINE_DEGREES = (45.0, 15.0, 5.0, 1.0)
 _PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
@@ -47,6 +48,12 @@ _PROTEIN_WITH_TERMINAL_CAPS = (
 )
 _DSSP_PROTEIN_SELECTION = "protein and not resname NMA ACE"
 _DSSP_BACKBONE_NAME_GROUPS = (("N",), ("CA",), ("C",), ("O", "O1", "OT1"))
+_PROTEIN_CAP_LINK_ATOMS = {
+    "ACE": ("C", "N"),
+    "NMA": ("N", "C"),
+    "NME": ("N", "C"),
+    "NHE": ("N", "C"),
+}
 
 
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
@@ -465,8 +472,10 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
 
     Some input PDBs carry a segid on heavy atoms but leave hydrogens blank.
     MDAnalysis then parses those atoms as separate residues/segments on reload.
-    Compute a residue-level canonical segid so aligned intermediates can be
-    rewritten with consistent per-residue segids before they are reloaded.
+    A related case occurs when an entire terminal cap has a blank segid even
+    though it is covalently attached to a protein residue with a segid. Compute
+    residue-level canonical segids so aligned intermediates can be rewritten
+    consistently before they are reloaded.
     """
     try:
         universe.atoms.segids
@@ -477,29 +486,100 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
     if protein_atoms.n_atoms == 0:
         return {}, 0
 
-    residue_atom_indices: dict[tuple[str, int, str], list[int]] = {}
+    residue_atom_indices: dict[tuple[str, int, str, str], list[int]] = {}
     for atom in protein_atoms:
         chain_id = str(getattr(atom, "chainID", "")).strip()
-        residue_key = (chain_id, int(atom.resid), str(atom.resname).strip())
+        insertion_code = str(getattr(atom, "icode", "")).strip()
+        residue_key = (
+            chain_id,
+            int(atom.resid),
+            insertion_code,
+            str(atom.resname).strip(),
+        )
         residue_atom_indices.setdefault(residue_key, []).append(int(atom.index))
 
     segid_overrides: dict[int, str] = {}
     normalized_count = 0
-    for atom_indices in residue_atom_indices.values():
+    residue_segids: dict[tuple[str, int, str, str], str] = {}
+    ambiguous_residue_keys: set[tuple[str, int, str, str]] = set()
+    for residue_key, atom_indices in residue_atom_indices.items():
         atom_group = universe.atoms[atom_indices]
         segids = [str(segid).strip() for segid in atom_group.segids]
+        nonempty_segids = [segid for segid in segids if segid]
+        unique_nonempty_segids = set(nonempty_segids)
+        if len(unique_nonempty_segids) > 1:
+            # Extended-PDB readers can collapse different insertion-code caps
+            # onto the same fallback resid. Preserve their explicit segids
+            # rather than choosing one segment for both logical residues.
+            residue_segids[residue_key] = ""
+            ambiguous_residue_keys.add(residue_key)
+            continue
+        canonical_segid = (
+            Counter(nonempty_segids).most_common(1)[0][0]
+            if nonempty_segids
+            else ""
+        )
+        residue_segids[residue_key] = canonical_segid
+
         unique_segids = set(segids)
         if len(unique_segids) <= 1:
             continue
 
-        nonempty_segids = [segid for segid in segids if segid]
-        if nonempty_segids:
-            canonical_segid = Counter(nonempty_segids).most_common(1)[0][0]
-        else:
-            canonical_segid = segids[0]
-
         for atom_index in atom_indices:
             segid_overrides[atom_index] = canonical_segid
+        normalized_count += 1
+
+    # Some membrane builders omit the segid from a whole terminal cap. Do not
+    # group such a cap as a separate protein chain: inherit the segid from the
+    # protein residue to which its peptide C-N bond is actually connected. The
+    # distance check avoids assigning a blank cap merely because it is adjacent
+    # in PDB/residue order (chain IDs are often reused across membrane fragments).
+    for residue_key, atom_indices in residue_atom_indices.items():
+        chain_id, _, _, resname = residue_key
+        if (
+            residue_key in ambiguous_residue_keys
+            or resname not in _PROTEIN_CAP_LINK_ATOMS
+            or residue_segids[residue_key]
+        ):
+            continue
+
+        cap_atom_name, protein_atom_name = _PROTEIN_CAP_LINK_ATOMS[resname]
+        cap_atoms = universe.atoms[atom_indices].select_atoms(f"name {cap_atom_name}")
+        if cap_atoms.n_atoms == 0:
+            continue
+
+        closest: tuple[float, str] | None = None
+        for candidate_key, candidate_indices in residue_atom_indices.items():
+            candidate_chain_id, _, _, candidate_resname = candidate_key
+            candidate_segid = residue_segids[candidate_key]
+            if (
+                candidate_chain_id != chain_id
+                or candidate_resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+                or not candidate_segid
+            ):
+                continue
+
+            protein_link_atoms = universe.atoms[candidate_indices].select_atoms(
+                f"name {protein_atom_name}"
+            )
+            if protein_link_atoms.n_atoms == 0:
+                continue
+
+            distances = np.linalg.norm(
+                cap_atoms.positions[:, np.newaxis, :]
+                - protein_link_atoms.positions[np.newaxis, :, :],
+                axis=2,
+            )
+            distance = float(np.min(distances))
+            if closest is None or distance < closest[0]:
+                closest = (distance, candidate_segid)
+
+        if closest is None or closest[0] > _PROTEIN_CAP_BOND_DISTANCE_CUTOFF_A:
+            continue
+
+        for atom_index in atom_indices:
+            segid_overrides[atom_index] = closest[1]
+        residue_segids[residue_key] = closest[1]
         normalized_count += 1
 
     return segid_overrides, normalized_count
@@ -510,7 +590,7 @@ def _write_pdb_with_normalized_protein_segids(
     output_path: Path,
 ) -> int:
     """
-    Write a PDB while normalizing mixed per-atom protein segids per residue.
+    Write a PDB while normalizing incomplete or inconsistent protein segids.
     """
     segid_overrides, normalized_count = _protein_segid_overrides(universe)
     universe.atoms.write(output_path.as_posix())
@@ -728,7 +808,7 @@ class _SystemPrepRunner:
                     )
                     dssp_array = _run_dssp_by_chain_fragments(protein_atoms)
                 logger.debug(
-                    "Detected mixed per-atom protein segid assignments; normalized "
+                    "Detected incomplete or inconsistent protein segid assignments; normalized "
                     f"segids for {normalized_residue_count} residue(s) before DSSP."
                 )
             else:
@@ -835,7 +915,7 @@ class _SystemPrepRunner:
         )
         if normalized_prot_residues or normalized_sys_residues:
             logger.debug(
-                "Detected mixed per-atom protein segid assignments; normalized segids "
+                "Detected incomplete or inconsistent protein segid assignments; normalized segids "
                 f"for {normalized_prot_residues} residue(s) in the aligned protein and "
                 f"{normalized_sys_residues} residue(s) in the aligned system before grouping."
             )

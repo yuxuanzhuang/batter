@@ -1827,6 +1827,26 @@ def _order_ligand_names_with_priority(
     ]
 
 
+def _select_resnum_range_atoms(
+    universe,
+    *,
+    first_resid: str,
+    last_resid: str,
+    atom_selection: str,
+):
+    """Select an inclusive residue-number range without dropping insertions.
+
+    MDAnalysis ``resid`` ranges include insertion codes in their ordering.  As
+    a result, a numeric upper bound such as ``290`` excludes a residue whose
+    PDB identifier is ``290A``.  BATTER passes numeric receptor bounds here,
+    so ``resnum`` is the intended selector: it includes every insertion-code
+    variant at either numeric endpoint.
+    """
+    return universe.select_atoms(
+        f"(resnum {first_resid} to {last_resid}) and ({atom_selection})"
+    )
+
+
 def _python_prep_complex(
     *,
     workdir: Path,
@@ -1853,14 +1873,20 @@ def _python_prep_complex(
     """Prepare staged complex files and ligand anchor names without VMD."""
     _write_python_prep_script_marker(workdir)
     u = mda.Universe(str(workdir / "aligned_amber.pdb"))
-    receptor_backbone = u.select_atoms(
-        f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+    receptor_backbone = _select_resnum_range_atoms(
+        u,
+        first_resid=first_resid,
+        last_resid=last_resid,
+        atom_selection=f"(not resname {mol}) and name CA C N O",
     )
     if receptor_backbone.n_atoms == 0:
         raise RuntimeError("anchor not found")
 
-    core = u.select_atoms(
-        f"resid {first_resid} to {last_resid} and not water and not resname {mol} and not name H*"
+    core = _select_resnum_range_atoms(
+        u,
+        first_resid=first_resid,
+        last_resid=last_resid,
+        atom_selection=f"not water and not resname {mol} and not name H*",
     )
     lig = u.select_atoms(f"resname {mol}")
     water = u.select_atoms("resname WAT")
@@ -1928,8 +1954,11 @@ def _python_prep_complex(
     dum_atoms = dum.atoms
     dummy_center = _center_of_atoms(dum_atoms)
     receptor_center = _center_of_atoms(
-        prep_u.select_atoms(
-            f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+        _select_resnum_range_atoms(
+            prep_u,
+            first_resid=first_resid,
+            last_resid=last_resid,
+            atom_selection=f"(not resname {mol}) and name CA C N O",
         )
     )
     dum_atoms.positions = dum_atoms.positions + (receptor_center - dummy_center)

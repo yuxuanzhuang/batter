@@ -189,11 +189,43 @@ def _atom_line_with_segid(
     element: str,
     *,
     segid: str = "",
+    icode: str = "",
 ) -> str:
     line = _atom_line(serial, name, resname, chain, resid, x, y, z, element).rstrip("\n")
+    if icode:
+        line = f"{line[:26]}{icode}{line[27:]}"
     if len(line) < 76:
         line = line.ljust(76)
     return f"{line[:72]}{segid:<4}{line[76:]}\n"
+
+
+def _make_blank_segid_c_terminal_cap_pdb(path: Path) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line_with_segid(
+                1, "N", "ARG", "R", 239, 0.0, 0.0, 0.0, "N", segid="P0"
+            ),
+            _atom_line_with_segid(
+                2, "CA", "ARG", "R", 239, 1.2, 0.0, 0.0, "C", segid="P0"
+            ),
+            _atom_line_with_segid(
+                3, "C", "ARG", "R", 239, 2.2, 1.0, 0.0, "C", segid="P0"
+            ),
+            _atom_line_with_segid(
+                4, "O", "ARG", "R", 239, 2.0, 2.2, 0.0, "O", segid="P0"
+            ),
+            _atom_line_with_segid(
+                5, "N", "NMA", "R", 239, 3.5, 0.7, 0.0, "N", icode="A"
+            ),
+            _atom_line_with_segid(
+                6, "CA", "NMA", "R", 239, 4.4, 1.7, 0.0, "C", icode="A"
+            ),
+            _atom_line_with_segid(
+                7, "H", "NMA", "R", 239, 3.8, -0.2, 0.0, "H", icode="A"
+            ),
+        ],
+    )
 
 
 def _make_mixed_segid_protein_pdb(path: Path) -> None:
@@ -805,6 +837,56 @@ def test_get_alignment_normalizes_mixed_protein_segids_before_process_system(
     prot = reference.select_atoms("protein")
     assert len(prot.residues) == 2
     assert len(prot.segments) == 1
+
+
+def test_write_pdb_inherits_blank_terminal_cap_segid_from_covalent_neighbor(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "blank_cap_segid.pdb"
+    normalized = tmp_path / "normalized.pdb"
+    _make_blank_segid_c_terminal_cap_pdb(source)
+
+    universe = mda.Universe(str(source))
+    normalized_count = system_prep_mod._write_pdb_with_normalized_protein_segids(
+        universe, normalized
+    )
+
+    assert normalized_count == 1
+    rewritten = mda.Universe(str(normalized))
+    arg = rewritten.select_atoms("resname ARG and resid 239").residues[0]
+    nma = rewritten.select_atoms("resname NMA and resid 239A").residues[0]
+    assert arg.segid == "P0"
+    assert nma.segid == "P0"
+
+
+def test_process_system_keeps_blank_segid_terminal_cap_with_protein_fragment(
+    tmp_path: Path,
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    source = tmp_path / "blank_cap_segid.pdb"
+    protein = runner.ligands_folder / "protein_aligned.pdb"
+    system_pdb = runner.ligands_folder / "system_aligned.pdb"
+    _make_blank_segid_c_terminal_cap_pdb(source)
+    system_prep_mod._write_pdb_with_normalized_protein_segids(
+        mda.Universe(str(source)), protein
+    )
+    system_prep_mod._write_pdb_with_normalized_protein_segids(
+        mda.Universe(str(source)), system_pdb
+    )
+
+    runner._protein_aligned_pdb = str(protein)
+    runner._system_aligned_pdb = str(system_pdb)
+    runner._process_system()
+
+    reference = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    arg = reference.select_atoms("resname ARG and resid 239").residues[0]
+    nma = reference.select_atoms("resname NMA and resid 239A").residues[0]
+    assert arg.segid == nma.segid
+    assert arg.atoms.chainIDs[0] == nma.atoms.chainIDs[0]
 
 
 def _run_process_system_with_fragmented_protein(
