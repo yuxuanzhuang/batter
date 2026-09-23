@@ -52,6 +52,7 @@ def test_copy_simulation_dir_copies_disang(tmp_path):
     (src / "disang.rest").write_text("restraints")
     (src / "full.prmtop").write_text("prmtop")
     (src / "cv.in").write_text("cv")
+    (src / "co_alchemical_ion.json").write_text('{"selected_atom_mask":"@42"}\n')
 
     sim = SimpleNamespace(hmr="no")
 
@@ -72,6 +73,11 @@ def test_copy_simulation_dir_copies_disang(tmp_path):
 
     cv = dest / "cv.in"
     assert cv.exists()
+
+    manifest = dest / "co_alchemical_ion.json"
+    assert manifest.exists()
+    assert not manifest.is_symlink()
+    assert manifest.read_text() == '{"selected_atom_mask":"@42"}\n'
 
 
 def test_read_ligand_anchor_names_allows_single_apo_anchor(tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -831,6 +832,91 @@ def test_ligand_charge_from_metadata_rounds_and_handles_missing(tmp_path: Path) 
 
     assert box._ligand_charge_from_metadata(meta) == -2
     assert box._ligand_charge_from_metadata(tmp_path / "missing.json") is None
+
+
+@pytest.mark.parametrize(
+    ("comp", "ligand_charge", "initial", "expected"),
+    [
+        ("z", 2, (7, 0), (9, 2)),
+        ("y", -3, (1, 8), (3, 10)),
+        ("z", 1, (2, 4), (2, 4)),
+        ("y", 0, (0, 0), (0, 0)),
+    ],
+)
+def test_ensure_uno_dd_co_alchemical_ion_counts_adds_neutral_salt_pairs(
+    comp: str,
+    ligand_charge: int,
+    initial: tuple[int, int],
+    expected: tuple[int, int],
+) -> None:
+    sim = SimpleNamespace(
+        fe_type="uno_dd",
+        dec_method="dd",
+        rocklin_correction="no",
+        ion_def=("Na+", "Cl-", 0.05),
+    )
+
+    actual = box._ensure_uno_dd_co_alchemical_ion_counts(
+        *initial,
+        sim=sim,
+        comp=comp,
+        ligand_charge=ligand_charge,
+    )
+
+    assert actual == expected
+    assert actual[0] - actual[1] == initial[0] - initial[1]
+    if ligand_charge > 0:
+        assert actual[1] >= ligand_charge
+    elif ligand_charge < 0:
+        assert actual[0] >= -ligand_charge
+
+
+@pytest.mark.parametrize(
+    ("comp", "fe_type", "dec_method", "rocklin_correction"),
+    [
+        ("e", "uno_dd", "dd", "no"),
+        ("z", "uno", "dd", "no"),
+        ("z", "uno_dd", "sdr", "no"),
+        ("z", "uno_dd", "dd", "yes"),
+    ],
+)
+def test_ensure_uno_dd_co_alchemical_ion_counts_is_protocol_gated(
+    comp: str,
+    fe_type: str,
+    dec_method: str,
+    rocklin_correction: str,
+) -> None:
+    sim = SimpleNamespace(
+        fe_type=fe_type,
+        dec_method=dec_method,
+        rocklin_correction=rocklin_correction,
+        ion_def=("Na+", "Cl-", 0.05),
+    )
+
+    assert box._ensure_uno_dd_co_alchemical_ion_counts(
+        5,
+        0,
+        sim=sim,
+        comp=comp,
+        ligand_charge=2,
+    ) == (5, 0)
+
+
+def test_ensure_uno_dd_co_alchemical_ion_counts_rejects_negative_counts() -> None:
+    sim = SimpleNamespace(
+        fe_type="uno_dd",
+        dec_method="dd",
+        rocklin_correction="no",
+    )
+
+    with pytest.raises(ValueError, match="Ion counts must be non-negative"):
+        box._ensure_uno_dd_co_alchemical_ion_counts(
+            -1,
+            0,
+            sim=sim,
+            comp="y",
+            ligand_charge=1,
+        )
 
 
 def test_read_disulfide_pairs_deduplicates_and_ignores_empty_lines(tmp_path: Path) -> None:

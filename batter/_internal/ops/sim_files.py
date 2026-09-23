@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence, Optional, Tuple, Iterable, List
+from typing import Any, Sequence, Optional, Tuple, Iterable, List
 import hashlib
 
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
+from MDAnalysis.lib.distances import distance_array
 from loguru import logger
 import os
 import json
@@ -37,6 +38,22 @@ from parmed.amber.mask import AmberMask
 # ----------------------------- helpers ----------------------------- #
 
 DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000_000
+CO_ALCHEMICAL_ION_MANIFEST = "co_alchemical_ion.json"
+CO_ALCHEMICAL_ION_MIN_DISTANCE = 10.0
+CO_ALCHEMICAL_ION_PREFERRED_DISTANCE = 15.0
+CO_ALCHEMICAL_ION_RESTRAINT_FORCE = 10.0
+CO_ALCHEMICAL_ION_RESTRAINT_TITLE = "Co-alchemical ion positional restraint"
+CO_ALCHEMICAL_WATER_RESNAMES = {
+    "WAT",
+    "HOH",
+    "SOL",
+    "TIP3",
+    "TIP3P",
+    "TIP4P",
+    "OPC",
+    "SPC",
+    "SPCE",
+}
 
 
 def _fe_production_chunk_steps(total_steps: int) -> int:
@@ -45,6 +62,534 @@ def _fe_production_chunk_steps(total_steps: int) -> int:
     if total_steps <= 0:
         return 0
     return min(total_steps, DEFAULT_FE_PRODUCTION_CHUNK_STEPS)
+
+
+def _normalized_ion_token(value: object) -> str:
+    """Normalize LEaP/PDB ion spellings such as ``Na+``/``NA``."""
+    return re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+
+
+def _integer_charge(value: float, *, label: str, tolerance: float = 5.0e-3) -> int:
+    rounded = int(round(float(value)))
+    if abs(float(value) - rounded) > tolerance:
+        raise ValueError(
+            f"{label} charge {float(value):.8f} is not within {tolerance:g} "
+            "of an integer."
+        )
+    return rounded
+
+
+def _co_alchemical_ion_is_enabled(ctx: BuildContext) -> bool:
+    sim = ctx.sim
+    return (
+        str(getattr(ctx, "comp", "")).lower() in {"z", "y"}
+        and str(getattr(sim, "fe_type", "")).lower() == "uno_dd"
+        and str(getattr(sim, "dec_method", "")).lower() == "dd"
+        and str(getattr(sim, "rocklin_correction", "yes")).lower() == "no"
+    )
+
+
+def _select_counterion_subset(
+    candidates: Sequence[dict[str, Any]],
+    *,
+    target_charge: int,
+) -> tuple[list[dict[str, Any]], float]:
+    """Select the farthest exact-charge counterion subset.
+
+    Candidate charges must have the target sign.  The preferred pass uses ions
+    at least 15 A from the solute; a second pass relaxes that lower bound to
+    10 A.  Iterating farthest-first makes the result deterministic and keeps
+    the alchemical ion in bulk solvent.
+    """
+    if target_charge == 0:
+        return [], CO_ALCHEMICAL_ION_PREFERRED_DISTANCE
+
+    sign = 1 if target_charge > 0 else -1
+    target_units = abs(int(target_charge))
+    compatible = [
+        record
+        for record in candidates
+        if int(record["integer_charge"]) * sign > 0
+    ]
+    compatible.sort(
+        key=lambda record: (
+            -float(record["distance_to_solute"]),
+            int(record["residue_index"]),
+        )
+    )
+
+    for threshold in (
+        CO_ALCHEMICAL_ION_PREFERRED_DISTANCE,
+        CO_ALCHEMICAL_ION_MIN_DISTANCE,
+    ):
+        eligible = [
+            record
+            for record in compatible
+            if float(record["distance_to_solute"]) >= threshold
+        ]
+        # Dynamic programming over small integer ion charges.  Preserve the
+        # first solution encountered, which is the farthest-first solution.
+        choices: dict[int, list[dict[str, Any]]] = {0: []}
+        for record in eligible:
+            units = abs(int(record["integer_charge"]))
+            for subtotal, selected in list(choices.items())[::-1]:
+                new_total = subtotal + units
+                if new_total > target_units or new_total in choices:
+                    continue
+                choices[new_total] = [*selected, record]
+        if target_units in choices:
+            return choices[target_units], threshold
+
+    available = sum(abs(int(record["integer_charge"])) for record in compatible)
+    ion_names = sorted({str(record["residue_name"]) for record in compatible})
+    raise ValueError(
+        "No exact co-alchemical counterion selection is available at least "
+        f"{CO_ALCHEMICAL_ION_MIN_DISTANCE:g} A from the solute: need charge "
+        f"{target_charge:+d}, available compatible charge units={available}, "
+        f"ion residue names={ion_names or ['none']}."
+    )
+
+
+def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
+    """Select and validate an opposite-charge co-alchemical ion for DD z/y."""
+    window_dir = ctx.window_dir
+    topology_path = next(
+        (
+            path
+            for path in (
+                window_dir / "full_merged.prmtop",
+                window_dir / "full.prmtop",
+            )
+            if path.exists()
+        ),
+        None,
+    )
+    pdb_path = window_dir / "full.pdb"
+    if topology_path is None or not pdb_path.exists():
+        raise FileNotFoundError(
+            "Co-alchemical ion setup requires full.pdb and full_merged.prmtop "
+            f"(or full.prmtop) in {window_dir}."
+        )
+
+    parm = pmd.load_file(topology_path.as_posix())
+    universe = mda.Universe(pdb_path.as_posix())
+    if len(parm.atoms) != universe.atoms.n_atoms:
+        raise ValueError(
+            "Co-alchemical ion topology/PDB atom counts differ in "
+            f"{window_dir}: {len(parm.atoms)} vs {universe.atoms.n_atoms}."
+        )
+
+    mol = str(ctx.residue_name)
+    ligand_residues = [
+        residue for residue in parm.residues if str(residue.name).strip() == mol
+    ]
+    if len(ligand_residues) != 1:
+        raise ValueError(
+            "DD co-alchemical ion setup requires exactly one alchemical ligand "
+            f"residue named {mol!r} in {topology_path}; found {len(ligand_residues)}."
+        )
+    ligand_charge_raw = sum(
+        float(atom.charge) for atom in ligand_residues[0].atoms
+    )
+    ligand_charge = _integer_charge(
+        ligand_charge_raw,
+        label=f"Ligand {mol}",
+    )
+    system_charge_raw = sum(float(atom.charge) for atom in parm.atoms)
+    if abs(system_charge_raw) > 5.0e-3:
+        raise ValueError(
+            "The opposite-counterion co-annihilation scheme requires a neutral "
+            f"starting topology, but {topology_path} has charge "
+            f"{system_charge_raw:+.8f}."
+        )
+
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "strategy": "opposite-counterion-co-annihilation",
+        "component": str(ctx.comp),
+        "ligand_resname": mol,
+        "ligand_charge": ligand_charge,
+        "ligand_charge_raw": ligand_charge_raw,
+        "system_charge_raw": system_charge_raw,
+        "topology": topology_path.name,
+        "pdb": pdb_path.name,
+        "topology_size_bytes": topology_path.stat().st_size,
+        "pdb_size_bytes": pdb_path.stat().st_size,
+        "topology_atom_count": len(parm.atoms),
+        "pdb_atom_count": universe.atoms.n_atoms,
+        "required": ligand_charge != 0,
+        "selected_ions": [],
+        "selected_atom_indices": [],
+        "selected_atom_mask": "",
+        "selected_charge": 0,
+        "ti_region_charge": ligand_charge,
+        "restraint_force_constant": CO_ALCHEMICAL_ION_RESTRAINT_FORCE,
+    }
+    if ligand_charge == 0:
+        return manifest
+
+    ion_setting = (
+        getattr(ctx.sim, "anion", None)
+        if ligand_charge > 0
+        else getattr(ctx.sim, "cation", None)
+    )
+    if ion_setting is None:
+        ion_def = list(getattr(ctx.sim, "ion_def", []) or [])
+        ion_setting = (
+            ion_def[1]
+            if ligand_charge > 0 and len(ion_def) > 1
+            else ion_def[0] if ligand_charge < 0 and ion_def else None
+        )
+    wanted_token = _normalized_ion_token(ion_setting)
+    if not wanted_token:
+        raise ValueError(
+            "Co-alchemical ion setup could not determine the configured "
+            f"{'anion' if ligand_charge > 0 else 'cation'} name."
+        )
+
+    configured_ion_tokens = {
+        _normalized_ion_token(value)
+        for value in (
+            getattr(ctx.sim, "cation", None),
+            getattr(ctx.sim, "anion", None),
+            *(list(getattr(ctx.sim, "ion_def", []) or [])[:2]),
+        )
+        if value is not None
+    }
+    water_tokens = {
+        _normalized_ion_token(name) for name in CO_ALCHEMICAL_WATER_RESNAMES
+    }
+    solute_indices: list[int] = []
+    for residue in parm.residues:
+        residue_token = _normalized_ion_token(residue.name)
+        atom_tokens = {
+            _normalized_ion_token(getattr(atom, "name", ""))
+            for atom in residue.atoms
+        }
+        is_configured_ion = residue_token in configured_ion_tokens or (
+            len(residue.atoms) == 1
+            and bool(atom_tokens.intersection(configured_ion_tokens))
+        )
+        if residue_token in water_tokens or is_configured_ion:
+            continue
+        solute_indices.extend(int(atom.idx) for atom in residue.atoms)
+    if not solute_indices:
+        raise ValueError(f"No solute atoms were found in {pdb_path}.")
+    solute = universe.atoms[solute_indices]
+    manifest["distance_reference_atom_count"] = len(solute_indices)
+    box = universe.dimensions
+    if box is None or len(box) < 3 or not np.all(np.asarray(box[:3]) > 0):
+        box = None
+
+    candidates: list[dict[str, Any]] = []
+    for residue in parm.residues:
+        residue_token = _normalized_ion_token(residue.name)
+        atom_tokens = {
+            _normalized_ion_token(getattr(atom, "name", ""))
+            for atom in residue.atoms
+        }
+        if residue_token != wanted_token and not (
+            len(residue.atoms) == 1 and wanted_token in atom_tokens
+        ):
+            continue
+        atom_indices_zero = [int(atom.idx) for atom in residue.atoms]
+        residue_charge_raw = sum(float(atom.charge) for atom in residue.atoms)
+        residue_charge = _integer_charge(
+            residue_charge_raw,
+            label=f"Ion residue {residue.name} {int(residue.idx) + 1}",
+        )
+        if residue_charge == 0:
+            continue
+        distance = float(
+            distance_array(
+                universe.atoms[atom_indices_zero].positions,
+                solute.positions,
+                box=box,
+            ).min()
+        )
+        candidates.append(
+            {
+                "residue_index": int(residue.idx) + 1,
+                "residue_name": str(residue.name).strip(),
+                "atom_indices": [index + 1 for index in atom_indices_zero],
+                "charge": residue_charge_raw,
+                "integer_charge": residue_charge,
+                "distance_to_solute": distance,
+            }
+        )
+
+    target_charge = -ligand_charge
+    selected, threshold = _select_counterion_subset(
+        candidates,
+        target_charge=target_charge,
+    )
+    if threshold < CO_ALCHEMICAL_ION_PREFERRED_DISTANCE:
+        logger.warning(
+            "[co-alchemical-ion:{}] No exact counterion selection was at "
+            "least {} A from the solute; using the {} A minimum.",
+            ctx.comp,
+            CO_ALCHEMICAL_ION_PREFERRED_DISTANCE,
+            CO_ALCHEMICAL_ION_MIN_DISTANCE,
+        )
+
+    selected_indices = sorted(
+        int(index)
+        for record in selected
+        for index in record["atom_indices"]
+    )
+    selected_charge = sum(int(record["integer_charge"]) for record in selected)
+    region_charge = ligand_charge + selected_charge
+    if selected_charge != target_charge or region_charge != 0:
+        raise ValueError(
+            "Internal co-alchemical ion charge mismatch: ligand "
+            f"{ligand_charge:+d}, selected ions {selected_charge:+d}."
+        )
+
+    manifest.update(
+        {
+            "selection_min_distance": threshold,
+            "configured_counterion": str(ion_setting),
+            "selected_ions": selected,
+            "selected_atom_indices": selected_indices,
+            "selected_atom_mask": f"@{format_ranges(selected_indices)}",
+            "selected_charge": selected_charge,
+            "ti_region_charge": region_charge,
+        }
+    )
+    return manifest
+
+
+def _validate_co_alchemical_ion_manifest(
+    ctx: BuildContext,
+    manifest: dict[str, Any],
+    manifest_path: Path,
+) -> None:
+    """Reject stale or internally inconsistent persisted ion selections."""
+    if int(manifest.get("schema_version", -1)) != 1:
+        raise ValueError(f"Unsupported co-alchemical ion manifest: {manifest_path}")
+    if manifest.get("strategy") != "opposite-counterion-co-annihilation":
+        raise ValueError(f"Unexpected co-alchemical ion strategy: {manifest_path}")
+    if (
+        str(manifest.get("component")) != str(ctx.comp)
+        or str(manifest.get("ligand_resname")) != str(ctx.residue_name)
+    ):
+        raise ValueError(f"Stale co-alchemical ion manifest in {manifest_path}.")
+
+    for path_key, size_key in (
+        ("topology", "topology_size_bytes"),
+        ("pdb", "pdb_size_bytes"),
+    ):
+        artifact = ctx.window_dir / str(manifest.get(path_key, ""))
+        expected_size = int(manifest.get(size_key, -1))
+        if not artifact.exists() or expected_size < 0:
+            raise ValueError(
+                f"Co-alchemical ion manifest artifact is missing or unversioned: "
+                f"{artifact}"
+            )
+        if artifact.stat().st_size != expected_size:
+            raise ValueError(
+                f"Co-alchemical ion manifest does not match {artifact}: expected "
+                f"{expected_size} bytes, found {artifact.stat().st_size}."
+            )
+
+    ligand_charge = int(manifest.get("ligand_charge", 0))
+    selected_charge = int(manifest.get("selected_charge", 0))
+    required = bool(manifest.get("required"))
+    if required != (ligand_charge != 0):
+        raise ValueError(f"Invalid required flag in {manifest_path}.")
+    selected_indices = sorted(
+        set(int(index) for index in manifest.get("selected_atom_indices", []))
+    )
+    listed_indices = sorted(
+        int(index)
+        for record in manifest.get("selected_ions", [])
+        for index in record.get("atom_indices", [])
+    )
+    listed_charge = sum(
+        int(record.get("integer_charge", 0))
+        for record in manifest.get("selected_ions", [])
+    )
+    atom_count = int(manifest.get("topology_atom_count", 0))
+    pdb_atom_count = int(manifest.get("pdb_atom_count", 0))
+    if (
+        atom_count <= 0
+        or pdb_atom_count != atom_count
+        or abs(float(manifest.get("system_charge_raw", 1.0))) > 5.0e-3
+    ):
+        raise ValueError(f"Invalid system metadata in {manifest_path}.")
+    expected_mask = f"@{format_ranges(selected_indices)}" if selected_indices else ""
+    if required and (
+        not selected_indices
+        or selected_indices[0] < 1
+        or selected_indices != listed_indices
+        or selected_indices[-1] > atom_count
+        or selected_charge != listed_charge
+        or ligand_charge + selected_charge != 0
+        or int(manifest.get("ti_region_charge", ligand_charge)) != 0
+        or str(manifest.get("selected_atom_mask", "")) != expected_mask
+    ):
+        raise ValueError(f"Inconsistent co-alchemical ion selection in {manifest_path}.")
+    if not required and (selected_indices or selected_charge != 0):
+        raise ValueError(f"Unexpected neutral-ligand ion selection in {manifest_path}.")
+
+
+def _co_alchemical_ion_selection(ctx: BuildContext) -> dict[str, Any] | None:
+    """Return the persisted DD co-ion selection, or ``None`` when unnecessary."""
+    if not _co_alchemical_ion_is_enabled(ctx):
+        return None
+
+    manifest_path = ctx.window_dir / CO_ALCHEMICAL_ION_MANIFEST
+    if ctx.win != -1 and manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+    else:
+        manifest = _build_co_alchemical_ion_manifest(ctx)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    _validate_co_alchemical_ion_manifest(ctx, manifest, manifest_path)
+
+    if not bool(manifest.get("required")):
+        return None
+    indices = [int(index) for index in manifest.get("selected_atom_indices", [])]
+    if not indices or not str(manifest.get("selected_atom_mask", "")):
+        raise ValueError(f"Incomplete co-alchemical ion manifest: {manifest_path}")
+    logger.info(
+        "[co-alchemical-ion:{}] ligand charge {:+d}; co-annihilating {} "
+        "(charge {:+d}) using mask {}.",
+        ctx.comp,
+        int(manifest["ligand_charge"]),
+        manifest.get("configured_counterion", "counterion"),
+        int(manifest["selected_charge"]),
+        manifest["selected_atom_mask"],
+    )
+    return manifest
+
+
+def _apply_co_alchemical_ti_masks(
+    mdin_path: Path,
+    *,
+    ligand_mask: str,
+    selection: dict[str, Any] | None,
+) -> None:
+    """Co-annihilate the ligand and its opposite-charge counterion."""
+    if selection is None:
+        return
+    ion_mask = str(selection["selected_atom_mask"])
+    combined_mask = f"{ligand_mask} | {ion_mask}"
+    text = mdin_path.read_text()
+    replacements = {
+        "timask1": combined_mask,
+        "scmask1": combined_mask,
+        "timask2": "",
+        "scmask2": "",
+    }
+    counts: dict[str, int] = {}
+    for key, value in replacements.items():
+        text, counts[key] = re.subn(
+            rf"(?m)^\s*{key}\s*=.*$",
+            f"  {key} = '{value}',",
+            text,
+            count=1,
+        )
+    if any(count != 1 for count in counts.values()):
+        raise ValueError(
+            f"Could not apply co-alchemical ion masks to {mdin_path}: "
+            + ", ".join(f"{key} matches={count}" for key, count in counts.items())
+            + "."
+        )
+    mdin_path.write_text(text)
+
+
+def _enable_cartesian_restraint_component(
+    mdin_path: Path,
+    mask_component: str,
+    *,
+    default_force: float = CO_ALCHEMICAL_ION_RESTRAINT_FORCE,
+) -> None:
+    """Add one mask component to an ordinary (non-converted) ntr restraint."""
+    if not mdin_path.exists():
+        return
+    lines = mdin_path.read_text().splitlines(True)
+    out: list[str] = []
+    in_cntrl = False
+    saw_ntr = False
+    saw_mask = False
+    saw_force = False
+    inserted = False
+    for line in lines:
+        if re.match(r"\s*&cntrl\b", line, flags=re.IGNORECASE):
+            in_cntrl = True
+        if in_cntrl and re.search(r"\bntr\s*=", line, flags=re.IGNORECASE):
+            line = re.sub(r"\bntr\s*=\s*\d+", "ntr = 1", line)
+            saw_ntr = True
+        elif in_cntrl and re.search(
+            r"\brestraintmask\s*=", line, flags=re.IGNORECASE
+        ):
+            match = re.search(
+                r"restraintmask\s*=\s*['\"]([^'\"]*)['\"]",
+                line,
+                flags=re.IGNORECASE,
+            )
+            base = match.group(1).strip() if match else ""
+            line = (
+                f"  restraintmask = "
+                f"'{_mask_with_added_component(base, mask_component)}',\n"
+            )
+            saw_mask = True
+        elif in_cntrl and re.search(
+            r"\brestraint_wt\s*=", line, flags=re.IGNORECASE
+        ):
+            saw_force = True
+        if in_cntrl and re.match(r"\s*/\s*$", line) and not inserted:
+            if not saw_ntr:
+                out.append("  ntr = 1,\n")
+            if not saw_force:
+                out.append(f"  restraint_wt = {default_force:g},\n")
+            if not saw_mask:
+                out.append(f"  restraintmask = '{mask_component}',\n")
+            inserted = True
+            in_cntrl = False
+        out.append(line)
+    if not inserted:
+        raise ValueError(f"Could not find &cntrl terminator in {mdin_path}.")
+    mdin_path.write_text("".join(out))
+
+
+def _ensure_ntr_enabled(mdin_path: Path) -> None:
+    text = mdin_path.read_text()
+    text, count = re.subn(
+        r"(?m)^(\s*)ntr\s*=\s*\d+\s*,?",
+        r"\1ntr = 1,",
+        text,
+        count=1,
+    )
+    if count == 0:
+        text, count = re.subn(
+            r"(?m)^(\s*)/\s*$",
+            r"  ntr = 1,\n\1/",
+            text,
+            count=1,
+        )
+    if count != 1:
+        raise ValueError(f"Could not enable ntr in {mdin_path}.")
+    mdin_path.write_text(text)
+
+
+def _co_alchemical_restraint_groups(
+    selection: dict[str, Any] | None,
+) -> list[tuple[str, float, Sequence[int]]]:
+    if selection is None:
+        return []
+    return [
+        (
+            CO_ALCHEMICAL_ION_RESTRAINT_TITLE,
+            float(
+                selection.get(
+                    "restraint_force_constant",
+                    CO_ALCHEMICAL_ION_RESTRAINT_FORCE,
+                )
+            ),
+            [int(index) for index in selection["selected_atom_indices"]],
+        )
+    ]
 
 
 def _non_loop_mask_from_dssp_assignments(
@@ -215,6 +760,27 @@ def _format_restraint_weight(value: str | float) -> str:
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
+def _legacy_positional_group_lines(
+    title: str,
+    weight: str | float,
+    atom_indices: Sequence[int],
+) -> list[str]:
+    indices = sorted(set(int(index) for index in atom_indices))
+    if not indices or indices[0] < 1:
+        raise ValueError(f"Legacy restraint group {title!r} has no valid atoms.")
+    ranges = _merge_consecutive(indices)
+    out = [str(title), _format_restraint_weight(weight)]
+    for offset in range(0, len(ranges), 7):
+        parts = [
+            str(value)
+            for start, end in ranges[offset : offset + 7]
+            for value in (start, end)
+        ]
+        out.append("ATOM " + " ".join(parts))
+    out.append("END")
+    return out
+
+
 def _convert_restraintmask_to_legacy_group_block(
     prmtop_path: Path, maskstr: str, restraint_wt: str | float, title: str
 ) -> list[str]:
@@ -228,15 +794,7 @@ def _convert_restraintmask_to_legacy_group_block(
         raise ValueError(
             f"Selection size mismatch: selected={selected_count} vs ranges={range_count}"
         )
-    out = [title, _format_restraint_weight(restraint_wt)]
-    for i in range(0, len(ranges), 7):
-        chunk = ranges[i : i + 7]
-        parts: List[str] = []
-        for start, end in chunk:
-            parts.append(str(start))
-            parts.append(str(end))
-        out.append("ATOM " + " ".join(parts))
-    out.append("END")
+    out = _legacy_positional_group_lines(title, restraint_wt, indices)
     out.append("END")
     return out
 
@@ -264,6 +822,7 @@ def _apply_restraintmask_length_limit(
     cache_tag: Optional[str] = None,
     cache_master: bool = False,
     max_mask_chars: Optional[int] = None,
+    additional_groups: Sequence[tuple[str, float, Sequence[int]]] = (),
 ) -> None:
     """Convert restraintmask input to legacy AMBER GROUP input when possible.
 
@@ -285,14 +844,31 @@ def _apply_restraintmask_length_limit(
             continue
         out_lines.append(line)
 
-    if not mask:
+    if not mask and not additional_groups:
         return
 
-    if max_mask_chars is not None and len(mask) <= max_mask_chars:
+    if (
+        mask
+        and not additional_groups
+        and max_mask_chars is not None
+        and len(mask) <= max_mask_chars
+    ):
         return
 
     cache_path = None
-    mask_hash = hashlib.sha1(mask.encode("utf-8")).hexdigest()
+    group_signature = [
+        {
+            "title": str(group_title),
+            "weight": float(group_weight),
+            "atom_indices": sorted(set(int(index) for index in group_indices)),
+        }
+        for group_title, group_weight, group_indices in additional_groups
+    ]
+    hash_payload = json.dumps(
+        {"mask": mask or "", "additional_groups": group_signature},
+        sort_keys=True,
+    )
+    mask_hash = hashlib.sha1(hash_payload.encode("utf-8")).hexdigest()
     if cache_dir is not None and cache_tag:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / f"{cache_tag}.legacy_restraint"
@@ -301,25 +877,39 @@ def _apply_restraintmask_length_limit(
         cached = cache_path.read_text().splitlines()
         if cached and cached[0].startswith("# mask_sha1="):
             cached_hash = cached[0].split("=", 1)[1].strip()
-            if cached_hash != mask_hash:
-                logger.debug(
-                    f"[restraintmask] Cache hash mismatch for {mdin_path.name}; reusing cached block anyway."
+            cache_matches = cached_hash == mask_hash
+            if not cache_matches and additional_groups:
+                logger.warning(
+                    "[restraintmask] Cache hash mismatch for {}; rebuilding "
+                    "the co-alchemical ion restraint block.",
+                    mdin_path.name,
                 )
-            block = cached[1:]
-            new_text = "".join(out_lines)
-            if not new_text.endswith("\n"):
-                new_text += "\n"
-            new_text += "&end\n"
-            new_text += "\n".join(block) + "\n"
-            mdin_path.write_text(new_text)
-            logger.debug(
-                f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
-            )
-            return
+            else:
+                if not cache_matches:
+                    logger.debug(
+                        f"[restraintmask] Cache hash mismatch for {mdin_path.name}; reusing cached block anyway."
+                    )
+                block = cached[1:]
+                new_text = "".join(out_lines)
+                if not new_text.endswith("\n"):
+                    new_text += "\n"
+                new_text += "&end\n"
+                new_text += "\n".join(block) + "\n"
+                mdin_path.write_text(new_text)
+                logger.debug(
+                    f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
+                )
+                return
 
-    if prmtop_path is None or not prmtop_path.exists():
+    if mask and (prmtop_path is None or not prmtop_path.exists()):
+        message = (
+            f"[restraintmask] No prmtop found for {mdin_path.name}; "
+            "leaving restraintmask as-is."
+        )
+        if additional_groups:
+            raise FileNotFoundError(message)
         logger.warning(
-            f"[restraintmask] No prmtop found for {mdin_path.name}; leaving restraintmask as-is."
+            message
         )
         return
 
@@ -328,15 +918,35 @@ def _apply_restraintmask_length_limit(
     )
     restraint_wt = wt_match.group(1) if wt_match else "0.0"
 
-    try:
-        block = _convert_restraintmask_to_legacy_group_block(
-            prmtop_path, mask, restraint_wt, title
-        )
-    except Exception as exc:
-        logger.warning(
-            f"[restraintmask] Failed to convert mask for {mdin_path.name}: {exc}"
-        )
-        return
+    block: list[str] = []
+    if mask:
+        try:
+            assert prmtop_path is not None
+            block = _convert_restraintmask_to_legacy_group_block(
+                prmtop_path, mask, restraint_wt, title
+            )
+        except Exception as exc:
+            if additional_groups:
+                raise ValueError(
+                    f"Failed to convert restraint mask for {mdin_path}: {exc}"
+                ) from exc
+            logger.warning(
+                f"[restraintmask] Failed to convert mask for {mdin_path.name}: {exc}"
+            )
+            return
+
+    if additional_groups:
+        if block and block[-1] == "END":
+            block.pop()
+        for group_title, group_weight, group_indices in additional_groups:
+            block.extend(
+                _legacy_positional_group_lines(
+                    group_title,
+                    group_weight,
+                    group_indices,
+                )
+            )
+        block.append("END")
 
     if not mask_lines_removed:
         return
@@ -615,6 +1225,7 @@ def _apply_fe_handoff_restraint(
     start_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_START,
     end_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_END,
     stages: int = DEFAULT_FE_HANDOFF_STAGES,
+    additional_groups: Sequence[tuple[str, float, Sequence[int]]] = (),
 ) -> list[Path]:
     """Write staged target-window EQ inputs with independent DUM/ligand weights.
 
@@ -671,19 +1282,6 @@ def _apply_fe_handoff_restraint(
         raise ValueError(
             f"The FE handoff mask selected no non-DUM atoms: {restraint_mask!r}"
         )
-
-    def group_lines(title: str, weight: float, indices: Sequence[int]) -> list[str]:
-        lines = [title, _format_restraint_weight(weight)]
-        ranges = _merge_consecutive(sorted(set(int(index) for index in indices)))
-        for offset in range(0, len(ranges), 7):
-            parts = [
-                str(value)
-                for start, end in ranges[offset : offset + 7]
-                for value in (start, end)
-            ]
-            lines.append("ATOM " + " ".join(parts))
-        lines.append("END")
-        return lines
 
     def render_stage(*, stage_index: int, stage_steps: int, ligand_weight: float) -> str:
         replacements = {
@@ -743,15 +1341,23 @@ def _apply_fe_handoff_restraint(
         if not rendered.endswith("\n"):
             rendered += "\n"
         rendered += "&end\n"
-        blocks = group_lines(
+        blocks = _legacy_positional_group_lines(
             "FE constant DUM positional restraint", dum_weight, dum_indices
         )
         if ligand_weight > 0.0:
             blocks.extend(
-                group_lines(
+                _legacy_positional_group_lines(
                     "FE ligand anchor/common-core handoff positional restraint",
                     ligand_weight,
                     ligand_indices,
+                )
+            )
+        for group_title, group_weight, group_indices in additional_groups:
+            blocks.extend(
+                _legacy_positional_group_lines(
+                    group_title,
+                    group_weight,
+                    group_indices,
                 )
             )
         blocks.append("END")
@@ -796,6 +1402,14 @@ def _apply_fe_handoff_restraint(
                 "reference_restart": "eq_init.rst7",
                 "dum_atom_indices": dum_indices,
                 "ligand_atom_indices": ligand_indices,
+                "additional_groups": [
+                    {
+                        "title": str(group_title),
+                        "weight": float(group_weight),
+                        "atom_indices": [int(index) for index in group_indices],
+                    }
+                    for group_title, group_weight, group_indices in additional_groups
+                ],
                 "stages": stage_records,
             },
             indent=2,
@@ -1813,16 +2427,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     win = ctx.win
     windows_dir = ctx.window_dir
     cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
+    cache_master = win == -1
     all_atoms = sim.all_atoms
     non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = win == -1
-
 
     if not hasattr(sim, "dec_method"):
         raise AttributeError(
@@ -1859,12 +2466,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
-    cache_dir = windows_dir.parent / ".restraintmask_cache"
-    cache_master = ctx.win == -1
+    coion_selection = _co_alchemical_ion_selection(ctx)
+    coion_groups = _co_alchemical_restraint_groups(coion_selection)
 
     # compute extra mask once for this window root; applied to mdin-XX only
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -2113,6 +2716,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_co_alchemical_ti_masks(
+            eq_path,
+            ligand_mask=f":{mk1}",
+            selection=coion_selection,
+        )
+        if coion_selection is not None:
+            _ensure_ntr_enabled(eq_path)
         if win != -1:
             _apply_fe_handoff_restraint(
                 eq_path,
@@ -2122,6 +2732,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     ligand_resids=ligand_resids_ordered,
                 ),
                 total_steps=n_steps_run,
+                additional_groups=coion_groups,
             )
         _apply_restraintmask_length_limit(
             eq_path,
@@ -2129,6 +2740,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             cache_dir=cache_dir,
             cache_tag=_fe_eq_cache_tag(comp, win),
             cache_master=cache_master,
+            additional_groups=coion_groups if win == -1 else (),
         )
 
         # production template
@@ -2156,6 +2768,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_co_alchemical_ti_masks(
+            out_path,
+            ligand_mask=f":{mk1}",
+            selection=coion_selection,
+        )
+        if coion_selection is not None:
+            _ensure_ntr_enabled(out_path)
         # Patch mdin with extra restraints (only mdin-template)
         if extra_mask:
             try:
@@ -2172,6 +2791,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             cache_dir=cache_dir,
             cache_tag=f"{comp}-mdin-template",
             cache_master=cache_master,
+            additional_groups=coion_groups,
         )
 
         with (
@@ -2187,6 +2807,16 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     .replace("_lig_name_", mol)
                 )
                 fout.write(line)
+        _apply_co_alchemical_ti_masks(
+            windows_dir / "mini.in",
+            ligand_mask=f":{mk1}",
+            selection=coion_selection,
+        )
+        if coion_selection is not None:
+            _enable_cartesian_restraint_component(
+                windows_dir / "mini.in",
+                str(coion_selection["selected_atom_mask"]),
+            )
 
     # Always emit mini_eq.in, eqnpt0.in, eqnpt.in from UNO templates (no extra restraints here)
     with (
@@ -2238,6 +2868,16 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             "_non_loop_": non_loop_mask,
         },
     )
+
+    if coion_selection is not None:
+        ion_mask = str(coion_selection["selected_atom_mask"])
+        for ordinary_path in (
+            windows_dir / "mini_eq.in",
+            windows_dir / "eqnpt0.in",
+            windows_dir / "eqnpt.in",
+            windows_dir / "eqnpt_eq.in",
+        ):
+            _enable_cartesian_restraint_component(ordinary_path, ion_mask)
 
     (windows_dir / "lambda.sch").write_text(
         "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
@@ -2854,6 +3494,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    coion_selection = _co_alchemical_ion_selection(ctx)
+    coion_groups = _co_alchemical_restraint_groups(coion_selection)
 
     # mini.in from ligand template
     with (
@@ -2869,6 +3511,16 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("_lig_name_", mol)
             )
             fout.write(line)
+    _apply_co_alchemical_ti_masks(
+        windows_dir / "mini.in",
+        ligand_mask=f":{mk1}",
+        selection=coion_selection,
+    )
+    if coion_selection is not None:
+        _enable_cartesian_restraint_component(
+            windows_dir / "mini.in",
+            str(coion_selection["selected_atom_mask"]),
+        )
 
     # mini_eq.in from generic mini template
     with (
@@ -2910,6 +3562,16 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     "_lig_name_", mol
                 )
             )
+
+    if coion_selection is not None:
+        ion_mask = str(coion_selection["selected_atom_mask"])
+        for ordinary_path in (
+            windows_dir / "mini_eq.in",
+            windows_dir / "eqnpt0.in",
+            windows_dir / "eqnpt.in",
+            windows_dir / "eqnpt_eq.in",
+        ):
+            _enable_cartesian_restraint_component(ordinary_path, ion_mask)
 
     template = amber_dir / "mdin-unorest-lig"
 
@@ -2967,6 +3629,13 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_co_alchemical_ti_masks(
+        eq_path,
+        ligand_mask=f":{mk1}",
+        selection=coion_selection,
+    )
+    if coion_selection is not None:
+        _ensure_ntr_enabled(eq_path)
     if ctx.win != -1:
         _apply_fe_handoff_restraint(
             eq_path,
@@ -2976,6 +3645,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
             ),
             total_steps=fe_window_equil_steps(0.001),
+            additional_groups=coion_groups,
         )
     _apply_restraintmask_length_limit(
         eq_path,
@@ -2983,6 +3653,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         cache_dir=cache_dir,
         cache_tag=_fe_eq_cache_tag("y", ctx.win),
         cache_master=cache_master,
+        additional_groups=coion_groups if ctx.win == -1 else (),
     )
 
     # production template
@@ -3015,12 +3686,20 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_co_alchemical_ti_masks(
+        out_path,
+        ligand_mask=f":{mk1}",
+        selection=coion_selection,
+    )
+    if coion_selection is not None:
+        _ensure_ntr_enabled(out_path)
     _apply_restraintmask_length_limit(
         out_path,
         prmtop_for_masks,
         cache_dir=cache_dir,
         cache_tag="y-mdin-template",
         cache_master=cache_master,
+        additional_groups=coion_groups,
     )
 
     logger.debug(

@@ -1890,6 +1890,7 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
         "lig.mol2",
         "disang.rest",
         "cv.in",
+        "co_alchemical_ion.json",
     ]
     if not hasattr(sim, "hmr"):
         raise AttributeError("SimulationConfig missing 'hmr'.")

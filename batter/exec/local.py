@@ -17,6 +17,71 @@ from batter.systems.core import SimSystem
 
 Handler = Callable[[Step, SimSystem, Mapping], ExecResult]
 
+_RECYCLED_WORKER_PHASES = frozenset({"pre_prepare_fe", "prepare_fe"})
+
+
+def _slurm_task_limit() -> int | None:
+    """Return the worker-process limit declared by the active Slurm job.
+
+    BATTER manager jobs reserve multiple Slurm tasks and then use those slots
+    for local ``joblib`` workers.  Respecting ``SLURM_NTASKS`` prevents a YAML
+    ``max_workers`` value from oversubscribing both the manager's CPU and
+    memory allocation.  Outside Slurm there is no additional limit.
+    """
+    raw_value = os.environ.get("SLURM_NTASKS")
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _effective_worker_cap(requested: int | None, n_systems: int) -> int:
+    """Resolve local parallelism without exceeding the Slurm allocation."""
+    if requested is None:
+        worker_cap = min(n_systems, os.cpu_count() or 1)
+    else:
+        worker_cap = min(requested, n_systems)
+
+    slurm_limit = _slurm_task_limit()
+    if slurm_limit is not None and worker_cap > slurm_limit:
+        logger.info(
+            "LOCAL(parallel): limiting workers from {} to {} to match "
+            "SLURM_NTASKS={}",
+            worker_cap,
+            slurm_limit,
+            slurm_limit,
+        )
+        worker_cap = slurm_limit
+    return worker_cap
+
+
+def _shutdown_reusable_process_pool() -> None:
+    """Release loky workers so phase-local native allocations are returned.
+
+    ``joblib`` intentionally keeps its loky executor alive between calls.
+    Amber/MDAnalysis preparation can leave several gigabytes of native memory
+    mapped in each worker, so reusing those processes across many ligands can
+    exhaust a Slurm manager's cgroup even when the number of concurrent tasks
+    is modest.  The executor reference is private joblib state, hence the
+    defensive lookup and best-effort cleanup.
+    """
+    try:
+        from joblib.externals.loky import reusable_executor
+
+        executor = getattr(reusable_executor, "_executor", None)
+        if executor is None:
+            return
+        terminate = getattr(executor, "terminate", None)
+        if callable(terminate):
+            terminate(kill_workers=True)
+        else:  # pragma: no cover - compatibility with older loky versions
+            executor.shutdown(wait=True, kill_workers=True)
+    except Exception as exc:  # pragma: no cover - defensive cleanup
+        logger.warning("Could not recycle local worker processes: {}", exc)
+
 
 def _run_pipeline_task(
     pipeline: Pipeline,
@@ -216,7 +281,10 @@ class LocalBackend(ExecBackend):
         if not systems:
             return {}
 
-        worker_cap = max_workers if max_workers is not None else self._max_workers
+        requested_workers = (
+            max_workers if max_workers is not None else self._max_workers
+        )
+        worker_cap = _effective_worker_cap(requested_workers, len(systems))
         if worker_cap in (0, 1):
             logger.debug(
                 "LOCAL(parallel): running serially for {} system(s) (max_workers={}) — {}",
@@ -241,12 +309,6 @@ class LocalBackend(ExecBackend):
                 ) from next(iter(errors.values()))
             return out
 
-        if worker_cap is None:
-            cpu_count = os.cpu_count() or 1
-            worker_cap = min(len(systems), cpu_count)
-        else:
-            worker_cap = min(worker_cap, len(systems))
-
         logger.debug(
             "LOCAL(parallel): joblib(loky) with n_jobs={} for {} system(s) — {}",
             worker_cap,
@@ -254,19 +316,44 @@ class LocalBackend(ExecBackend):
             description,
         )
 
+        def _execute_batch(batch_systems: List[SimSystem]):
+            return Parallel(
+                n_jobs=worker_cap,
+                backend=backend,
+                prefer=prefer,
+                batch_size=batch_size,
+                verbose=verbose,
+                max_nbytes=None,
+            )(
+                delayed(_run_pipeline_task)(pipeline, self, sys)
+                for sys in batch_systems
+            )
+
         results: List[
             Tuple[str, Mapping[str, ExecResult] | None, str | None, str | None]
-        ] = Parallel(
-            n_jobs=worker_cap,
-            backend=backend,
-            prefer=prefer,
-            batch_size=batch_size,
-            verbose=verbose,
-            max_nbytes=None,
-        )(
-            delayed(_run_pipeline_task)(pipeline, self, sys)
-            for sys in systems
+        ] = []
+        recycle_workers = (
+            description in _RECYCLED_WORKER_PHASES
+            and prefer != "threads"
+            and backend in (None, "loky")
         )
+        if recycle_workers:
+            logger.info(
+                "LOCAL(parallel): recycling workers after each {}-system batch "
+                "for memory-intensive phase {}",
+                worker_cap,
+                description,
+            )
+            # Do not carry allocations from an earlier parallel phase into FE
+            # preparation.  Each subsequent worker handles at most one ligand.
+            _shutdown_reusable_process_pool()
+            for start in range(0, len(systems), worker_cap):
+                try:
+                    results.extend(_execute_batch(systems[start : start + worker_cap]))
+                finally:
+                    _shutdown_reusable_process_pool()
+        else:
+            results = _execute_batch(systems)
 
         out: Dict[str, Mapping[str, ExecResult]] = {}
         errors: Dict[str, BaseException] = {}
