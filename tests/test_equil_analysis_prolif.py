@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -20,16 +22,20 @@ from batter.exec.handlers.equil_analysis import (
     _persistent_prolif_ligand_anchor_preferences,
     _persistent_prolif_residue_ids,
     _persistent_prolif_residue_priorities,
+    _prolif_dataframe_with_original_residue_labels,
     _prolif_interaction_id,
     _prolif_interactions_current,
     _prolif_ligand_atom_names_by_interaction,
+    _prolif_protein_residue_map,
     _prolif_residue_metadata,
     _records_from_prolif_dataframe,
     _run_prolif_fingerprint,
     _salt_bridge_ligand_atom_preference,
     _stable_distance_validator,
     _write_prolif_lignetwork_html,
+    _write_prolif_interactions,
     _write_prolif_artifacts,
+    _write_representative_only_prolif,
     _write_stable_boresch_distance,
 )
 
@@ -98,6 +104,30 @@ def test_analysis_topology_converts_anchor_masks_for_pdb_fallback(
     ) == [":113@CA", ":79@CA", ":318@CA"]
 
 
+def test_prolif_protein_residue_map_applies_dum_offset(tmp_path: Path) -> None:
+    renum = tmp_path / "protein_renum.txt"
+    renum.write_text(
+        "ASP A 147 ASP 83\n"
+        "ILE A 322 ILE 258\n"
+    )
+
+    assert _prolif_protein_residue_map(renum) == {
+        84: {
+            "resid": 147,
+            "resname": "ASP",
+            "chainID": "A",
+            "prepared_resname": "ASP",
+        },
+        259: {
+            "resid": 322,
+            "resname": "ILE",
+            "chainID": "A",
+            "prepared_resname": "ILE",
+        },
+    }
+    assert _prolif_protein_residue_map(tmp_path / "missing.txt") == {}
+
+
 def test_prolif_dataframe_records_persistent_protein_residues() -> None:
     columns = pd.MultiIndex.from_tuples(
         [
@@ -153,6 +183,64 @@ def test_prolif_dataframe_records_persistent_protein_residues() -> None:
     ) == [42]
 
 
+def test_prolif_outputs_use_original_residue_labels_but_candidates_use_prepared_ids(
+) -> None:
+    columns = pd.MultiIndex.from_tuples(
+        [("LIG290.0", "ASP84.0", "Cationic")]
+    )
+    df = pd.DataFrame([[True]], columns=columns)
+    residue_map = {
+        84: {"resid": 147, "resname": "ASP", "chainID": "A"},
+    }
+
+    interactions, persistent = _records_from_prolif_dataframe(
+        df,
+        occupancy_threshold=0.3,
+        protein_residue_map=residue_map,
+    )
+
+    assert interactions[0]["protein"] == {
+        "label": "ASP147.A",
+        "resname": "ASP",
+        "resid": 147,
+        "chainID": "A",
+        "prepared_label": "ASP84",
+        "prepared_resid": 84,
+    }
+    assert persistent == [
+        {
+            "resid": 147,
+            "resname": "ASP",
+            "chainID": "A",
+            "prepared_resid": 84,
+            "max_occupancy": 1.0,
+            "interactions": [
+                {
+                    "interaction": "Cationic",
+                    "occupancy": 1.0,
+                    "active_frames": 1,
+                    "ligand": {
+                        "label": "LIG290",
+                        "resname": "LIG",
+                        "resid": 290,
+                        "chainID": "0",
+                    },
+                }
+            ],
+        }
+    ]
+    record = {"usable": True, "persistent_protein_residues": persistent}
+    assert _persistent_prolif_residue_ids(record) == [84]
+    assert _persistent_prolif_residue_priorities(record) == {84: 0}
+    assert _persistent_prolif_ligand_anchor_preferences(record) == []
+
+    display_df = _prolif_dataframe_with_original_residue_labels(df, residue_map)
+    assert list(display_df.columns) == [("LIG290.0", "ASP147.A", "Cationic")]
+    assert _prolif_interaction_id(display_df.columns[0]) == (
+        "LIG290|ASP147.A|Cationic"
+    )
+
+
 def test_prolif_residue_labels_show_integer_resids() -> None:
     protein_meta = _prolif_residue_metadata("ASP86.0")
     ligand_meta = _prolif_residue_metadata("hmn292.0")
@@ -168,7 +256,10 @@ def test_prolif_residue_labels_show_integer_resids() -> None:
 
 def test_prolif_atom_metadata_schema_invalidates_old_cache(tmp_path: Path) -> None:
     path = tmp_path / "prolif_interactions.json"
-    path.write_text(json.dumps({"schema_version": 3}) + "\n")
+    path.write_text(
+        json.dumps({"schema_version": PROLIF_INTERACTIONS_SCHEMA_VERSION - 1})
+        + "\n"
+    )
     assert not _prolif_interactions_current(path)
 
     path.write_text(
@@ -764,6 +855,86 @@ def test_run_prolif_fingerprint_disables_progress_when_supported() -> None:
     assert fp.progress is False
 
 
+def test_single_frame_prolif_writer_uses_unsliced_trajectory_and_original_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTrajectory:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, item):
+            if isinstance(item, slice):
+                raise AssertionError("one-frame trajectory must not be sliced")
+            return SimpleNamespace(frame=int(item))
+
+    class FakeSelection:
+        n_atoms = 1
+
+        def __iter__(self):
+            return iter(())
+
+    class FakeUniverse:
+        def __init__(self):
+            self.trajectory = FakeTrajectory()
+
+        @staticmethod
+        def select_atoms(selection):
+            assert selection in {"resname LIG", "protein"}
+            return FakeSelection()
+
+    trajectory = None
+
+    class FakeFingerprint:
+        def __init__(self):
+            self.ifp = {}
+
+        def run(self, received, ligand, protein, *, progress=True):
+            nonlocal trajectory
+            trajectory = received
+            assert progress is False
+
+        @staticmethod
+        def to_dataframe():
+            return pd.DataFrame(
+                [[True]],
+                columns=pd.MultiIndex.from_tuples(
+                    [("LIG290.0", "ASP84.0", "Cationic")]
+                ),
+            )
+
+    class FakeProlif:
+        __version__ = "test"
+        Fingerprint = FakeFingerprint
+
+    monkeypatch.setitem(sys.modules, "prolif", FakeProlif)
+    monkeypatch.setattr(
+        "batter.exec.handlers.equil_analysis._write_prolif_artifacts",
+        lambda **kwargs: ({}, {}),
+    )
+    renum = tmp_path / "protein_renum.txt"
+    renum.write_text("ASP A 147 ASP 83\n")
+    universe = FakeUniverse()
+
+    record = _write_prolif_interactions(
+        prolif_path=tmp_path / "prolif_interactions.json",
+        universe=universe,
+        ligand_label="POSE_A",
+        residue_name="LIG",
+        tail_fraction=1.0,
+        mode="single_frame_no_equil",
+        protein_renum_path=renum,
+    )
+
+    assert trajectory is universe.trajectory
+    assert record["usable"] is True
+    assert record["schema_version"] == PROLIF_INTERACTIONS_SCHEMA_VERSION
+    assert record["n_frames"] == 1
+    assert record["protein_residue_numbering"] == "input"
+    assert record["interactions"][0]["protein"]["label"] == "ASP147.A"
+    assert record["persistent_protein_residues"][0]["prepared_resid"] == 84
+
+
 def test_no_equil_representative_universe_uses_cpptraj_pdb(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -782,6 +953,134 @@ def test_no_equil_representative_universe_uses_cpptraj_pdb(
 
     assert _load_no_equil_representative_universe(rep_pdb) == "universe"
     assert calls == [((str(rep_pdb),), {})]
+
+
+def test_no_equil_representative_universe_attaches_solute_topology(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAtoms:
+        def __init__(self, names, resnames, positions):
+            self.names = np.asarray(names)
+            self.resnames = np.asarray(resnames)
+            self.positions = np.asarray(positions, dtype=np.float32)
+            self.n_atoms = len(self.names)
+
+        def __getitem__(self, item):
+            return FakeAtoms(
+                self.names[item],
+                self.resnames[item],
+                self.positions[item],
+            )
+
+    class FakeUniverse:
+        def __init__(self, atoms, dimensions=None):
+            self.atoms = atoms
+            self.dimensions = dimensions
+            self.loaded_coordinates = None
+            self.bonds = ["topology-bond"]
+
+        def load_new(self, coordinates):
+            self.loaded_coordinates = np.asarray(coordinates)
+            self.atoms.positions = self.loaded_coordinates.copy()
+
+    pdb_universe = FakeUniverse(
+        FakeAtoms(
+            ["Pb", "CA", "N1", "EP"],
+            ["DUM", "ALA", "LIG", "WAT"],
+            [[0, 0, 0], [1, 2, 3], [4, 5, 6], [7, 8, 9]],
+        ),
+        dimensions=np.asarray([10, 11, 12, 90, 90, 90], dtype=np.float32),
+    )
+    topology_universe = FakeUniverse(
+        FakeAtoms(
+            ["Pb", "CA", "N1"],
+            ["DUM", "ALA", "LIG"],
+            [[-1, -1, -1], [-1, -1, -1], [-1, -1, -1]],
+        )
+    )
+
+    rep_pdb = tmp_path / "representative.pdb"
+    rep_pdb.write_text("END\n")
+    solute_topology = tmp_path / "vac.prmtop"
+    solute_topology.write_text("topology\n")
+
+    class FakeMDA:
+        @staticmethod
+        def Universe(path):
+            if path == str(rep_pdb):
+                return pdb_universe
+            if path == str(solute_topology):
+                return topology_universe
+            raise AssertionError(path)
+
+    monkeypatch.setattr("batter.exec.handlers.equil_analysis._mda", lambda: FakeMDA)
+
+    result = _load_no_equil_representative_universe(rep_pdb, solute_topology)
+
+    assert result is topology_universe
+    assert result.bonds == ["topology-bond"]
+    np.testing.assert_allclose(
+        result.loaded_coordinates,
+        [[0, 0, 0], [1, 2, 3], [4, 5, 6]],
+    )
+    np.testing.assert_allclose(result.dimensions, pdb_universe.dimensions)
+
+
+@pytest.mark.parametrize("with_topology", [True, False])
+def test_representative_only_prolif_maps_only_prepared_topology(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_topology: bool,
+) -> None:
+    equil = tmp_path / "equil"
+    equil.mkdir()
+    rep_pdb = equil / "representative.pdb"
+    rep_pdb.write_text("END\n")
+    vac_topology = equil / "vac.prmtop"
+    if with_topology:
+        vac_topology.write_text("topology\n")
+    renum = equil / "protein_renum.txt"
+    renum.write_text("ASP A 147 ASP 83\n")
+    calls = {}
+
+    def fake_loader(pdb_path, topology_path=None):
+        calls["loader"] = (pdb_path, topology_path)
+        return "universe"
+
+    def fake_writer(**kwargs):
+        calls["writer"] = kwargs
+        return {"usable": True}
+
+    monkeypatch.setattr(
+        "batter.exec.handlers.equil_analysis._load_no_equil_representative_universe",
+        fake_loader,
+    )
+    monkeypatch.setattr(
+        "batter.exec.handlers.equil_analysis._write_prolif_interactions",
+        fake_writer,
+    )
+    paths = {
+        "equil_dir": equil,
+        "rep_pdb": rep_pdb,
+        "prolif_interactions": equil / "prolif_interactions.json",
+        "prot_renum": renum,
+    }
+
+    record = _write_representative_only_prolif(
+        paths=paths,
+        ligand_label="POSE_A",
+        residue_name="LIG",
+    )
+
+    assert record == {"usable": True}
+    assert calls["loader"] == (
+        rep_pdb,
+        vac_topology if with_topology else None,
+    )
+    assert calls["writer"]["protein_renum_path"] == (
+        renum if with_topology else None
+    )
 
 
 def test_write_prolif_lignetwork_html_uses_prolif_plot_lignetwork(
@@ -830,6 +1129,66 @@ def test_write_prolif_lignetwork_html_uses_prolif_plot_lignetwork(
             },
         )
     ]
+
+
+def test_write_prolif_lignetwork_html_uses_original_protein_labels(
+    tmp_path: Path,
+) -> None:
+    class FakeMolecule:
+        @staticmethod
+        def from_mda(selection):
+            return {"selection": selection}
+
+    class FakeProlif:
+        Molecule = FakeMolecule
+
+    class FakeView:
+        def save(self, path):
+            path.write_text(
+                '<html>{"id":"ASP84.0","next":"ASP147.0",'
+                '"to":"ILE259.0"}</html>\n'
+            )
+
+    class FakeFingerprint:
+        @staticmethod
+        def plot_lignetwork(*args, **kwargs):
+            return FakeView()
+
+    path = tmp_path / "network.html"
+    _write_prolif_lignetwork_html(
+        fingerprint=FakeFingerprint(),
+        ligand_selection="ligand-selection",
+        prolif_module=FakeProlif,
+        path=path,
+        threshold=0.3,
+        protein_residue_map={
+            84: {
+                "resid": 147,
+                "resname": "ASP",
+                "chainID": "A",
+                "prepared_resname": "ASP",
+            },
+            259: {
+                "resid": 322,
+                "resname": "ILE",
+                "chainID": "A",
+                "prepared_resname": "ILE",
+            },
+            147: {
+                "resid": 210,
+                "resname": "ASP",
+                "chainID": "A",
+                "prepared_resname": "ASP",
+            },
+        },
+    )
+
+    contents = path.read_text()
+    assert '"id":"ASP147.A"' in contents
+    assert '"next":"ASP210.A"' in contents
+    assert "ILE322.A" in contents
+    assert "ASP84" not in contents
+    assert "ILE259" not in contents
 
 
 def test_prolif_artifact_writer_falls_back_when_lignetwork_renderer_fails(
