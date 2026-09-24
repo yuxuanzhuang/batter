@@ -107,7 +107,7 @@ reset_minimization_after_failed_pre_equil() {
     fi
     if [[ -s mini.rst7 || -s mini2.rst7 ]]; then
         echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization instead of reusing mini.rst7/mini2.rst7."
-        rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out
+        rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out mini2.nc
     fi
 }
 
@@ -163,9 +163,9 @@ if [[ $only_eq -eq 1 ]]; then
         echo "mini_eq.in not found, using mini.in instead."
         cp mini.in mini_eq.in
     fi
+    mini_input="mini_eq.in"
+    noshake_mini_input="mini_noshake.in"
     if ! should_skip_eq_step "Minimization" "mini.rst7"; then
-        mini_input="mini_eq.in"
-        noshake_mini_input="mini_noshake.in"
         run_minimization_cuda "$mini_input" "mini.out" "mini.rst7" "mini.nc" "$INPCRD"
         if minimization_failed_for_noshake_retry "mini.out" "mini.rst7"; then
             echo "[WARN] Minimization with ntf=2, ntc=2 failed; retrying with ntf=1, ntc=1."
@@ -178,15 +178,21 @@ if [[ $only_eq -eq 1 ]]; then
         check_sim_failure "Minimization" "$log_file" mini.rst7
 
         if ! check_min_energy "mini.out" -1000; then
-            echo "[WARN] CUDA minimization energy did not pass threshold; continuing from mini.rst7 without CPU minimization."
+            echo "[WARN] CUDA minimization energy did not pass threshold; CPU Minimization 2 will validate and relax mini.rst7."
         fi
+    elif [[ -f "$noshake_mini_input" ]]; then
+        mini_input="$noshake_mini_input"
     fi
 
     if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
         require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
-        echo "[INFO] Skipping CPU Minimization 2; continuing from CUDA minimization restart."
-        cp mini.rst7 mini2.rst7
-        printf "Skipped CPU Minimization 2; copied mini.rst7 to mini2.rst7.\n" > mini2.out
+        echo "[INFO] Running CPU Minimization 2 to validate and relax the CUDA restart."
+        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i $mini_input -p $PRMTOP_MERGED -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        else
+            print_and_run "$PMEMD_CPU_EXEC -O -i $mini_input -p $PRMTOP_MERGED -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        fi
+        check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry"
     fi
 
     if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
