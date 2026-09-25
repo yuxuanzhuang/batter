@@ -16,7 +16,6 @@ from importlib import util as importlib_util
 import json
 import smtplib
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Sequence
 from smtplib import SMTPException
@@ -438,22 +437,101 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
         logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
 
 
-def _git_output(source_root: Path, *args: str) -> str | None:
-    """Return Git output without making Git a runtime requirement."""
+def _normalise_git_revision(value: str) -> str | None:
+    """Return a full Git object ID, rejecting malformed metadata."""
+    revision = value.strip().lower()
+    if len(revision) not in {40, 64}:
+        return None
+    if any(char not in "0123456789abcdef" for char in revision):
+        return None
+    return revision
+
+
+def _git_dir(source_root: Path) -> Path | None:
+    """Resolve a checkout's Git metadata directory without running Git."""
+    marker = source_root / ".git"
+    if marker.is_dir():
+        return marker
+    if not marker.is_file():
+        return None
+
     try:
-        result = subprocess.run(
-            ["git", "-C", str(source_root), *args],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
+        marker_text = marker.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
         return None
-    if result.returncode != 0:
+    prefix = "gitdir:"
+    if not marker_text.lower().startswith(prefix):
         return None
-    output = result.stdout.strip()
-    return output or None
+    path = Path(marker_text[len(prefix) :].strip())
+    if not path.is_absolute():
+        path = marker.parent / path
+    return path.resolve()
+
+
+def _read_git_revision(source_root: Path) -> str | None:
+    """Read HEAD from Git metadata without scanning the source worktree."""
+    git_dir = _git_dir(source_root)
+    if git_dir is None:
+        return None
+
+    try:
+        head = (git_dir / "HEAD").read_text(
+            encoding="utf-8", errors="replace"
+        ).strip()
+    except OSError:
+        return None
+
+    if not head.startswith("ref:"):
+        return _normalise_git_revision(head)
+
+    ref_name = head.removeprefix("ref:").strip()
+    if not ref_name.startswith("refs/"):
+        return None
+
+    common_dir = git_dir
+    try:
+        common_dir_text = (git_dir / "commondir").read_text(
+            encoding="utf-8", errors="replace"
+        ).strip()
+    except OSError:
+        common_dir_text = ""
+    if common_dir_text:
+        common_dir = Path(common_dir_text)
+        if not common_dir.is_absolute():
+            common_dir = git_dir / common_dir
+        common_dir = common_dir.resolve()
+
+    metadata_dirs = [git_dir]
+    if common_dir != git_dir:
+        metadata_dirs.append(common_dir)
+
+    for metadata_dir in metadata_dirs:
+        try:
+            revision = _normalise_git_revision(
+                (metadata_dir / ref_name).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            )
+        except OSError:
+            revision = None
+        if revision is not None:
+            return revision
+
+    for metadata_dir in metadata_dirs:
+        try:
+            packed_refs = (metadata_dir / "packed-refs").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            continue
+        for line in packed_refs.splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            fields = line.split(maxsplit=1)
+            if len(fields) != 2 or fields[1] != ref_name:
+                continue
+            return _normalise_git_revision(fields[0])
+    return None
 
 
 def _batter_provenance() -> dict[str, Any]:
@@ -464,17 +542,10 @@ def _batter_provenance() -> dict[str, Any]:
         "source_path": str(source_root),
     }
 
-    git_root = _git_output(source_root, "rev-parse", "--show-toplevel")
-    if git_root is None:
-        return provenance
-
-    provenance["git_root"] = git_root
-    provenance["git_revision"] = _git_output(source_root, "rev-parse", "HEAD")
-    provenance["git_describe"] = _git_output(
-        source_root, "describe", "--tags", "--always", "--dirty"
-    )
-    status = _git_output(source_root, "status", "--porcelain")
-    provenance["git_dirty"] = bool(status)
+    revision = _read_git_revision(source_root)
+    if revision is not None:
+        provenance["git_root"] = str(source_root)
+        provenance["git_revision"] = revision
     return provenance
 
 
