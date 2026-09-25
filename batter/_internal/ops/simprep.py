@@ -1876,8 +1876,18 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
 
 # ---------------------- window copier ----------------------
 def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None:
-    """Symlink (using relative links) or copy only the needed files from the source simulation dir."""
-    needed = [
+    """Stage the files needed by one alchemical window.
+
+    Large topology, coordinate, and structure inputs are immutable after the
+    source window is built.  Hard-linking those files avoids copying several
+    gigabytes per ligand while still producing self-contained paths that do
+    not depend on relative symlinks.  Per-window restraint and ion metadata
+    remain independent copies because later setup may rewrite them.
+
+    Filesystems that do not support hard links (for example, when ``source``
+    and ``dest`` are on different devices) transparently fall back to copies.
+    """
+    immutable = [
         "full.prmtop",
         "full.inpcrd",
         "full_merged.prmtop",
@@ -1888,6 +1898,8 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
         "vac_ligand.prmtop",
         "fe-lig.pdb",
         "lig.mol2",
+    ]
+    copied = [
         "disang.rest",
         "cv.in",
         "co_alchemical_ion.json",
@@ -1895,11 +1907,11 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
     if not hasattr(sim, "hmr"):
         raise AttributeError("SimulationConfig missing 'hmr'.")
     if sim.hmr == "yes":
-        needed.append("full.hmr.prmtop")
+        immutable.append("full.hmr.prmtop")
 
     dest.mkdir(parents=True, exist_ok=True)
 
-    for name in needed:
+    for name in [*immutable, *copied]:
         src = source / name
         if not src.exists():
             continue
@@ -1908,5 +1920,11 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
         if dst.exists() or dst.is_symlink():
             dst.unlink()
 
-        # Always copy files to avoid issues with transferring between computers
-        shutil.copy2(src, dst)
+        if name in copied:
+            shutil.copy2(src, dst)
+            continue
+
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)

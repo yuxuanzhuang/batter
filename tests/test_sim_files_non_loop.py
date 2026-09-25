@@ -592,6 +592,76 @@ def test_co_alchemical_restraint_cache_mismatch_rebuilds_local_group(
     assert "ATOM 2 2" not in text
 
 
+def test_nonmaster_restraint_conversion_populates_and_reuses_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = (
+        repo_root
+        / "tests"
+        / "data"
+        / "ligand_params"
+        / "b74b7e78c757"
+        / "lig.prmtop"
+    )
+    cache_dir = tmp_path / "cache"
+    convert_calls = 0
+    original_convert = sim_files._convert_restraintmask_to_legacy_group_block
+
+    def counted_convert(*args, **kwargs):
+        nonlocal convert_calls
+        convert_calls += 1
+        return original_convert(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sim_files,
+        "_convert_restraintmask_to_legacy_group_block",
+        counted_convert,
+    )
+
+    rendered: list[str] = []
+    for index in range(2):
+        mdin = tmp_path / f"target-{index}.in"
+        mdin.write_text(
+            "&cntrl\n"
+            "  ntr = 1,\n"
+            "  restraint_wt = 50,\n"
+            "  restraintmask = '@1',\n"
+            "/\n"
+        )
+        sim_files._apply_restraintmask_length_limit(
+            mdin,
+            prmtop,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=False,
+        )
+        rendered.append(mdin.read_text())
+
+    assert convert_calls == 1
+    assert rendered[0] == rendered[1]
+    assert (cache_dir / "z-mdin-template.legacy_restraint").is_file()
+
+    changed_weight = tmp_path / "changed-weight.in"
+    changed_weight.write_text(
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 25,\n"
+        "  restraintmask = '@1',\n"
+        "/\n"
+    )
+    sim_files._apply_restraintmask_length_limit(
+        changed_weight,
+        prmtop,
+        cache_dir=cache_dir,
+        cache_tag="z-mdin-template",
+        cache_master=False,
+    )
+
+    assert convert_calls == 2
+    assert "Converted from restraintmask\n25\n" in changed_weight.read_text()
+
+
 def test_legacy_restraint_conversion_appends_separate_counterion_group(
     tmp_path: Path,
 ) -> None:
@@ -760,6 +830,50 @@ def test_fe_handoff_schedule_survives_legacy_group_conversion(
     assert text == before
     assert "restraintmask =" not in text
     assert "FE constant DUM positional restraint\n10\nATOM 1 2\nEND\nEND\n" in text
+
+
+def test_fe_handoff_reuses_cached_topology_indices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    topology = tmp_path / "vac.pdb"
+    topology.write_text(
+        "HETATM    1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    cache_dir = tmp_path / ".restraintmask_cache"
+    load_calls: list[Path] = []
+    original_load_file = sim_files.pmd.load_file
+
+    def counted_load_file(path):
+        load_calls.append(Path(path))
+        return original_load_file(path)
+
+    monkeypatch.setattr(sim_files.pmd, "load_file", counted_load_file)
+
+    rendered: list[str] = []
+    for index in range(2):
+        window = tmp_path / f"z{index:02d}"
+        window.mkdir()
+        mdin = window / "eq.in"
+        mdin.write_text("&cntrl\n  restraint_wt = 10,\n/\n")
+        sim_files._apply_fe_handoff_restraint(
+            mdin,
+            restraint_mask="@3",
+            total_steps=25_000,
+            prmtop_path=topology,
+            cache_dir=cache_dir,
+        )
+        rendered.append(mdin.read_text())
+
+    assert load_calls == [topology]
+    assert rendered[0] == rendered[1]
+    cache_files = list(cache_dir.glob("fe-handoff-*.json"))
+    assert len(cache_files) == 1
+    cached = json.loads(cache_files[0].read_text())
+    assert cached["dum_atom_indices"] == [1, 2]
+    assert cached["ligand_atom_indices"] == [3]
 
 
 def test_ligand_handoff_prefers_persisted_boresch_anchor_names(

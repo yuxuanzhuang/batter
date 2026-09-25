@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any, Sequence, Optional, Tuple, Iterable, List
 import hashlib
+import gc
 
 import numpy as np
 import pandas as pd
@@ -864,8 +865,17 @@ def _apply_restraintmask_length_limit(
         }
         for group_title, group_weight, group_indices in additional_groups
     ]
+    wt_match = re.search(
+        r"\brestraint_wt\s*=\s*([0-9.+-eEdD]+)", text, flags=re.IGNORECASE
+    )
+    restraint_wt = wt_match.group(1) if wt_match else "0.0"
     hash_payload = json.dumps(
-        {"mask": mask or "", "additional_groups": group_signature},
+        {
+            "mask": mask or "",
+            "restraint_wt": restraint_wt,
+            "title": title,
+            "additional_groups": group_signature,
+        },
         sort_keys=True,
     )
     mask_hash = hashlib.sha1(hash_payload.encode("utf-8")).hexdigest()
@@ -878,17 +888,7 @@ def _apply_restraintmask_length_limit(
         if cached and cached[0].startswith("# mask_sha1="):
             cached_hash = cached[0].split("=", 1)[1].strip()
             cache_matches = cached_hash == mask_hash
-            if not cache_matches and additional_groups:
-                logger.warning(
-                    "[restraintmask] Cache hash mismatch for {}; rebuilding "
-                    "the co-alchemical ion restraint block.",
-                    mdin_path.name,
-                )
-            else:
-                if not cache_matches:
-                    logger.debug(
-                        f"[restraintmask] Cache hash mismatch for {mdin_path.name}; reusing cached block anyway."
-                    )
+            if cache_matches:
                 block = cached[1:]
                 new_text = "".join(out_lines)
                 if not new_text.endswith("\n"):
@@ -900,6 +900,10 @@ def _apply_restraintmask_length_limit(
                     f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
                 )
                 return
+            logger.debug(
+                "[restraintmask] Cache hash mismatch for {}; rebuilding it.",
+                mdin_path.name,
+            )
 
     if mask and (prmtop_path is None or not prmtop_path.exists()):
         message = (
@@ -912,11 +916,6 @@ def _apply_restraintmask_length_limit(
             message
         )
         return
-
-    wt_match = re.search(
-        r"\brestraint_wt\s*=\s*([0-9.+-eEdD]+)", text, flags=re.IGNORECASE
-    )
-    restraint_wt = wt_match.group(1) if wt_match else "0.0"
 
     block: list[str] = []
     if mask:
@@ -957,8 +956,21 @@ def _apply_restraintmask_length_limit(
     new_text += "&end\n"
     new_text += "\n".join(block) + "\n"
     mdin_path.write_text(new_text)
-    if cache_path is not None and cache_master:
-        cache_path.write_text("# mask_sha1=" + mask_hash + "\n" + "\n".join(block) + "\n")
+    if cache_path is not None:
+        cache_text = "# mask_sha1=" + mask_hash + "\n" + "\n".join(block) + "\n"
+        temporary = cache_path.with_name(
+            f".{cache_path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            temporary.write_text(cache_text)
+            os.replace(temporary, cache_path)
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            logger.warning(
+                "[restraintmask] Could not write cache {}: {}",
+                cache_path,
+                exc,
+            )
     logger.debug(
         f"[restraintmask] Converted restraintmask in {mdin_path.name} to legacy group block."
     )
@@ -1216,12 +1228,140 @@ def _rbfe_handoff_restraint_mask(
     return _combine_handoff_masks(masks)
 
 
+_FE_HANDOFF_INDEX_CACHE_SCHEMA = 1
+
+
+def _fe_handoff_topology_signature(topology_path: Path) -> dict[str, int | str]:
+    """Return the stable metadata shared by copies of one window topology."""
+    stat = topology_path.stat()
+    return {
+        "name": topology_path.name,
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _positive_index_list(value: object) -> list[int] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    try:
+        indices = [int(index) for index in value]
+    except (TypeError, ValueError):
+        return None
+    if any(index <= 0 for index in indices):
+        return None
+    return indices
+
+
+def _fe_handoff_atom_indices(
+    topology_path: Path,
+    restraint_mask: str,
+    *,
+    cache_dir: Path | None = None,
+) -> tuple[list[int], list[int]]:
+    """Resolve DUM/handoff indices once for all identical component windows.
+
+    A solvated Amber topology can take several seconds and hundreds of MB to
+    parse.  All lambda windows receive byte-identical topology copies, so keep
+    only the small derived index lists on disk and validate them against the
+    copied topology's size/mtime before reuse.
+    """
+    signature = _fe_handoff_topology_signature(topology_path)
+    cache_path: Path | None = None
+    if cache_dir is not None:
+        mask_hash = hashlib.sha1(restraint_mask.encode("utf-8")).hexdigest()
+        cache_path = Path(cache_dir) / f"fe-handoff-{mask_hash}.json"
+        if cache_path.is_file():
+            try:
+                cached = json.loads(cache_path.read_text())
+                dum_indices = _positive_index_list(cached.get("dum_atom_indices"))
+                ligand_indices = _positive_index_list(
+                    cached.get("ligand_atom_indices")
+                )
+                if (
+                    cached.get("schema_version") == _FE_HANDOFF_INDEX_CACHE_SCHEMA
+                    and cached.get("topology") == signature
+                    and cached.get("restraint_mask") == restraint_mask
+                    and dum_indices is not None
+                    and ligand_indices is not None
+                    and not set(dum_indices).intersection(ligand_indices)
+                ):
+                    logger.debug(
+                        "[fe_handoff] Reused cached atom indices from {}.",
+                        cache_path,
+                    )
+                    return dum_indices, ligand_indices
+            except (OSError, AttributeError, ValueError, TypeError) as exc:
+                logger.debug(
+                    "[fe_handoff] Ignoring invalid atom-index cache {}: {}",
+                    cache_path,
+                    exc,
+                )
+
+    parm = pmd.load_file(topology_path.as_posix())
+    try:
+        dum_indices = [
+            index + 1
+            for index, atom in enumerate(parm.atoms)
+            if str(atom.residue.name).strip().upper() == "DUM"
+        ]
+        if not dum_indices:
+            raise ValueError(f"No DUM atoms found in {topology_path}")
+        dum_index_set = set(dum_indices)
+        ligand_selection = AmberMask(parm, restraint_mask).Selection()
+        ligand_indices = [
+            index + 1
+            for index, selected in enumerate(ligand_selection)
+            if selected > 0 and index + 1 not in dum_index_set
+        ]
+        if not ligand_indices:
+            raise ValueError(
+                "The FE handoff mask selected no non-DUM atoms: "
+                f"{restraint_mask!r}"
+            )
+    finally:
+        # ParmEd structures contain cyclic object graphs.  Drop the one large
+        # parse promptly; future windows use only the cached integer lists.
+        del parm
+        gc.collect()
+
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": _FE_HANDOFF_INDEX_CACHE_SCHEMA,
+            "topology": signature,
+            "restraint_mask": restraint_mask,
+            "dum_atom_indices": dum_indices,
+            "ligand_atom_indices": ligand_indices,
+        }
+        temporary = cache_path.with_name(
+            f".{cache_path.name}.{os.getpid()}.tmp"
+        )
+        try:
+            temporary.write_text(json.dumps(payload, indent=2) + "\n")
+            os.replace(temporary, cache_path)
+            logger.debug(
+                "[fe_handoff] Cached atom indices in {}.",
+                cache_path,
+            )
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            logger.warning(
+                "[fe_handoff] Could not write atom-index cache {}: {}",
+                cache_path,
+                exc,
+            )
+
+    return dum_indices, ligand_indices
+
+
 def _apply_fe_handoff_restraint(
     mdin_path: Path,
     *,
     restraint_mask: str,
     total_steps: int,
     prmtop_path: Path | None = None,
+    cache_dir: Path | None = None,
     start_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_START,
     end_weight: float = DEFAULT_FE_HANDOFF_RESTRAINT_END,
     stages: int = DEFAULT_FE_HANDOFF_STAGES,
@@ -1263,25 +1403,11 @@ def _apply_fe_handoff_restraint(
         raise FileNotFoundError(
             f"A topology is required for independent DUM/ligand handoff restraints: {mdin_path}"
         )
-    parm = pmd.load_file(prmtop_path.as_posix())
-    dum_indices = [
-        index + 1
-        for index, atom in enumerate(parm.atoms)
-        if str(atom.residue.name).strip().upper() == "DUM"
-    ]
-    if not dum_indices:
-        raise ValueError(f"No DUM atoms found in {prmtop_path}")
-    dum_index_set = set(dum_indices)
-    ligand_selection = AmberMask(parm, restraint_mask).Selection()
-    ligand_indices = [
-        index + 1
-        for index, selected in enumerate(ligand_selection)
-        if selected > 0 and index + 1 not in dum_index_set
-    ]
-    if not ligand_indices:
-        raise ValueError(
-            f"The FE handoff mask selected no non-DUM atoms: {restraint_mask!r}"
-        )
+    dum_indices, ligand_indices = _fe_handoff_atom_indices(
+        prmtop_path,
+        restraint_mask,
+        cache_dir=cache_dir,
+    )
 
     def render_stage(*, stage_index: int, stage_steps: int, ligand_weight: float) -> str:
         replacements = {
@@ -1492,21 +1618,21 @@ _FE_WATER_RESNAMES = {"WAT", "HOH", "SOL", "TIP3", "TIP3P", "TIP4P", "SPC", "SPC
 
 
 def _pdb_atom_record_count(pdb_path: Path) -> int:
-    return sum(
-        1
-        for line in pdb_path.read_text().splitlines()
-        if line.startswith(("ATOM", "HETATM"))
-    )
+    with pdb_path.open("rt") as handle:
+        return sum(
+            1 for line in handle if line.startswith(("ATOM", "HETATM"))
+        )
 
 
 def _leading_nonwater_pdb_atom_count(pdb_path: Path) -> int:
     count = 0
-    for line in pdb_path.read_text().splitlines():
-        if not line.startswith(("ATOM", "HETATM")):
-            continue
-        if line[17:20].strip().upper() in _FE_WATER_RESNAMES:
-            break
-        count += 1
+    with pdb_path.open("rt") as handle:
+        for line in handle:
+            if not line.startswith(("ATOM", "HETATM")):
+                continue
+            if line[17:20].strip().upper() in _FE_WATER_RESNAMES:
+                break
+            count += 1
     return count
 
 
@@ -2041,6 +2167,7 @@ def _sim_files_d_sdr_charge_transfer(
                 ligand_resids=ligand_resids,
             ),
             total_steps=n_steps_run,
+            cache_dir=cache_dir,
         )
     _apply_restraintmask_length_limit(
         eq_path,
@@ -2294,6 +2421,7 @@ def sim_files_dd(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     ligand_resids=ligand_resids,
                 ),
                 total_steps=steps,
+                cache_dir=cache_dir,
             )
         _apply_restraintmask_length_limit(
             destination,
@@ -2572,6 +2700,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     ligand_resids=ligand_resids_ordered,
                 ),
                 total_steps=n_steps_run,
+                cache_dir=cache_dir,
             )
         _apply_restraintmask_length_limit(
             out_path,
@@ -2732,6 +2861,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     ligand_resids=ligand_resids_ordered,
                 ),
                 total_steps=n_steps_run,
+                cache_dir=cache_dir,
                 additional_groups=coion_groups,
             )
         _apply_restraintmask_length_limit(
@@ -3073,6 +3203,7 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
             ),
             total_steps=n_steps_run,
+            cache_dir=cache_dir,
         )
     _apply_restraintmask_length_limit(
         windows_dir / "eq.in",
@@ -3349,6 +3480,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 septop=septop,
             ),
             total_steps=n_steps_run,
+            cache_dir=cache_dir,
         )
     _apply_restraintmask_length_limit(
         eq_path,
@@ -3645,6 +3777,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
             ),
             total_steps=fe_window_equil_steps(0.001),
+            cache_dir=cache_dir,
             additional_groups=coion_groups,
         )
     _apply_restraintmask_length_limit(
@@ -3795,6 +3928,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 ligand_resids=_ligand_resids_from_pdb(vac_pdb, mol),
             ),
             total_steps=fe_window_equil_steps(0.001),
+            cache_dir=cache_dir,
         )
     _apply_restraintmask_length_limit(
         eq_path,
