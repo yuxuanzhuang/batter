@@ -35,6 +35,25 @@ done
 if [[ -n "${CALL_LOG:-}" && -n "$out" ]]; then
   echo "$out" >> "$CALL_LOG"
 fi
+if [[ -n "${NUMERIC_FAIL_OUT_ONCE:-}" && "$out" == "$NUMERIC_FAIL_OUT_ONCE" ]]; then
+  marker="${NUMERIC_FAIL_MARKER:-numeric_failed_once}"
+  if [[ ! -f "$marker" ]]; then
+    touch "$marker"
+    if [[ -n "$out" ]]; then
+      cat > "$out" <<'EOF'
+                    FINAL RESULTS
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    2000       1.4327E+09     4.2550E+04     8.3890E+06     C        4656
+ 1-4 VDW = *************  1-4 EEL =    -1696.6286
+ EAMBER  = *************
+EOF
+    fi
+    [[ -n "$rst" ]] && printf "Stub Amber restart\n    1  0.00000000\n  0.0  0.0  0.0\n" > "$rst"
+    [[ -n "$nc" ]] && printf "nc\n" > "$nc"
+    exit 0
+  fi
+fi
 if [[ -n "${SHAKE_FAIL_OUT_ONCE:-}" && "$out" == "$SHAKE_FAIL_OUT_ONCE" ]]; then
   marker="${SHAKE_FAIL_MARKER:-shake_failed_once}"
   if [[ ! -f "$marker" ]]; then
@@ -92,7 +111,11 @@ targets=()
 while IFS= read -r line; do
   if [[ "$line" == trajout* ]]; then
     set -- $line
-    targets+=("$2")
+    if [[ " $* " == *" multi "* ]]; then
+      targets+=("$2.1" "$2.2")
+    else
+      targets+=("$2")
+    fi
   fi
 done
 for target in "${targets[@]}"; do
@@ -159,6 +182,62 @@ def _setup_run_local_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
         "eqnpt_eq.in",
     ]:
         _write_file(work / name, "x\n")
+
+    env = _common_env(work)
+    env["ONLY_EQ"] = "1"
+    cmd = ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"]
+    return env, cmd
+
+
+def _setup_run_local_fep_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
+    repo_root = _repo_root()
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work.mkdir()
+    script_text = (
+        script.read_text()
+        .replace("NWINDOWS", "2")
+        .replace("COMPONENT", "z")
+        .replace("LAMBDA_EQ_LIST", "0.0 1.0")
+        .replace("LAMBDA_SET_LIST", "0.0 1.0")
+    )
+    _write_file(work / "run-local.bash", script_text)
+    _write_file(work / "check_run.bash", check_run.read_text())
+
+    for name in [
+        "full.hmr.prmtop",
+        "full_merged.prmtop",
+        "full.inpcrd",
+        "eqnpt0.in",
+        "eqnpt.in",
+        "eqnpt_eq.in",
+        "eq.in",
+    ]:
+        _write_file(work / name, "x\n")
+    _write_file(
+        work / "mini.in",
+        "&cntrl\n"
+        "  ntf = 1,\n"
+        "  ntc = 2,\n"
+        "/\n",
+    )
+    for name in [
+        "mini.rst7",
+        "mini2.rst7",
+        "eqnpt_pre.rst7",
+        "eqnpt00.rst7",
+        "eqnpt01.rst7",
+        "eqnpt02.rst7",
+        "eqnpt03.rst7",
+        "eqnpt04.rst7",
+        "eqnpt_eq.rst7",
+    ]:
+        _write_file(work / name, "rst\n")
+    for index in range(2):
+        window = work.parent / f"z{index:02d}"
+        window.mkdir()
+        _write_file(window / "eq.rst7", "rst\n")
 
     env = _common_env(work)
     env["ONLY_EQ"] = "1"
@@ -529,6 +608,34 @@ def test_run_local_only_eq_retries_minimization_without_shake_after_shake_error(
     assert "retrying with ntf=1, ntc=1" in result.stdout
     assert "  ntf = 1," in fallback_text
     assert "  ntc = 1," in fallback_text
+
+
+def test_run_local_fep_minimization_retries_without_shake_after_numeric_failure(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "z-1"
+    env, cmd = _setup_run_local_fep_only_eq(work)
+    env["NUMERIC_FAIL_OUT_ONCE"] = "mini.in.out"
+    env["NUMERIC_FAIL_MARKER"] = str(work / ".numeric_failed_once")
+
+    result = subprocess.run(
+        cmd,
+        cwd=work,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(work)
+    fallback_text = (work / "mini_noshake.in").read_text()
+    assert calls.count("mini.in.out") == 2
+    assert "FEP minimization with ntc=2 had a numeric failure; retrying with ntc=1" in result.stdout
+    assert "  ntf = 1," in fallback_text
+    assert "  ntc = 1," in fallback_text
+    assert list((work / "WRONG_FAIL").glob("*/mini.in.out"))
+    assert "EAMBER = -2000.0000" in (work / "mini.in.out").read_text()
+    assert (work / "EQ_FINISHED").exists()
 
 
 def test_run_local_rbfe_only_eq_retries_seed_minimization_without_shake_after_shake_error(

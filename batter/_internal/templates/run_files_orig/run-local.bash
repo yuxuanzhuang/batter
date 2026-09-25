@@ -240,8 +240,14 @@ if [[ $only_eq -eq 1 ]]; then
             fep_mini_input="mini.in"
             fep_noshake_mini_input="mini_noshake.in"
             print_and_run "$PMEMD_DPFP_EXEC $PMEMD_GPU_FLAGS -O -i $fep_mini_input -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+            fep_mini_retry_reason=""
             if minimization_failed_for_noshake_retry "mini.in.out" "mini.in.rst7"; then
-                echo "[WARN] FEP minimization with ntc=2 failed; retrying with ntc=1."
+                fep_mini_retry_reason="constraint failure"
+            elif amber_output_has_numeric_failure "mini.in.out"; then
+                fep_mini_retry_reason="numeric failure"
+            fi
+            if [[ -n "$fep_mini_retry_reason" ]]; then
+                echo "[WARN] FEP minimization with ntc=2 had a ${fep_mini_retry_reason}; retrying with ntc=1."
                 archive_failed_job_files "$retry" "$log_file" mini.in.rst7
                 rm -f "$log_file" mini.in.rst7 mini.in.nc mini.in.out
                 write_noshake_minimization_input "$fep_mini_input" "$fep_noshake_mini_input"
