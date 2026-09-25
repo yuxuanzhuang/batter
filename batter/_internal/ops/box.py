@@ -80,6 +80,7 @@ _PRE_RING_REPAIR_FILES = {
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
 _BULK_LIGAND_BOX_Z_PADDING = 4.0
+_CHARGED_Y_MIN_COION_BUFFER = 15.0
 _WATER_RESNAMES = {
     "WAT",
     "HOH",
@@ -2151,6 +2152,65 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         return None
 
 
+def _uno_dd_co_alchemical_ion_is_enabled(
+    sim: Any,
+    *,
+    comp: str,
+    ligand_charge: int | None,
+) -> bool:
+    """Return whether this leg needs opposite-ion co-annihilation."""
+    return (
+        int(ligand_charge or 0) != 0
+        and str(comp).lower() in {"z", "y"}
+        and str(getattr(sim, "fe_type", "")).lower() == "uno_dd"
+        and str(getattr(sim, "dec_method", "")).lower() == "dd"
+        and str(getattr(sim, "rocklin_correction", "yes")).lower() == "no"
+    )
+
+
+def _effective_y_ligand_box_buffers(
+    buffer_x: float,
+    buffer_y: float,
+    buffer_z: float,
+    *,
+    sim: Any,
+    comp: str,
+    ligand_charge: int | None,
+) -> tuple[float, float, float]:
+    """Expand charged UNO-DD y boxes without mutating the shared config.
+
+    ``lig_buffer`` is the ligand-solvation padding knob and defaults to 15 A.
+    Keeping every y-axis padding at least that large gives the co-alchemical
+    counterion more bulk-solvent volume while preserving any larger explicit
+    per-axis buffers.
+    """
+    configured = (float(buffer_x), float(buffer_y), float(buffer_z))
+    if str(comp).lower() != "y" or not _uno_dd_co_alchemical_ion_is_enabled(
+        sim,
+        comp=comp,
+        ligand_charge=ligand_charge,
+    ):
+        return configured
+
+    ligand_buffer = float(
+        getattr(sim, "lig_buffer", _CHARGED_Y_MIN_COION_BUFFER)
+        or _CHARGED_Y_MIN_COION_BUFFER
+    )
+    minimum = max(_CHARGED_Y_MIN_COION_BUFFER, ligand_buffer)
+    effective = tuple(max(value, minimum) for value in configured)
+    if effective != configured:
+        logger.info(
+            "[create_box:y] Charged UNO-DD ligand (q={:+d}); expanding "
+            "solvent buffers from ({:.1f}, {:.1f}, {:.1f}) A to "
+            "({:.1f}, {:.1f}, {:.1f}) A (lig_buffer={:.1f} A).",
+            int(ligand_charge or 0),
+            *configured,
+            *effective,
+            ligand_buffer,
+        )
+    return effective
+
+
 def _ensure_uno_dd_co_alchemical_ion_counts(
     num_cat: int,
     num_ani: int,
@@ -2176,14 +2236,12 @@ def _ensure_uno_dd_co_alchemical_ion_counts(
             f"got cations={cat_count}, anions={ani_count}."
         )
 
-    enabled = (
-        str(comp).lower() in {"z", "y"}
-        and str(getattr(sim, "fe_type", "")).lower() == "uno_dd"
-        and str(getattr(sim, "dec_method", "")).lower() == "dd"
-        and str(getattr(sim, "rocklin_correction", "yes")).lower() == "no"
-    )
     charge = int(ligand_charge or 0)
-    if not enabled or charge == 0:
+    if not _uno_dd_co_alchemical_ion_is_enabled(
+        sim,
+        comp=comp,
+        ligand_charge=charge,
+    ):
         return cat_count, ani_count
 
     required = abs(charge)
@@ -4072,6 +4130,22 @@ def create_box_y(ctx: BuildContext) -> None:
         return int(round(q))
 
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
+    if lig_charge is None:
+        lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
+        logger.warning(
+            "[create_box:y] Ligand charge metadata was unavailable for {}; "
+            "using the TLeap unit charge ({:+d}).",
+            mol,
+            lig_charge,
+        )
+    buffer_x, buffer_y, buffer_z = _effective_y_ligand_box_buffers(
+        buffer_x,
+        buffer_y,
+        buffer_z,
+        sim=sim,
+        comp=comp,
+        ligand_charge=lig_charge,
+    )
     # put a minimum of 5 ions
     box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
     num_ions = max(

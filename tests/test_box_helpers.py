@@ -919,6 +919,82 @@ def test_ensure_uno_dd_co_alchemical_ion_counts_rejects_negative_counts() -> Non
         )
 
 
+@pytest.mark.parametrize("ligand_charge", [1, -2])
+def test_effective_y_ligand_box_buffers_expand_charged_uno_dd(
+    ligand_charge: int,
+) -> None:
+    sim = SimpleNamespace(
+        fe_type="uno_dd",
+        dec_method="dd",
+        rocklin_correction="no",
+        lig_buffer=15.0,
+    )
+
+    actual = box._effective_y_ligand_box_buffers(
+        10.0,
+        12.0,
+        18.0,
+        sim=sim,
+        comp="y",
+        ligand_charge=ligand_charge,
+    )
+
+    assert actual == (15.0, 15.0, 18.0)
+    assert (sim.fe_type, sim.lig_buffer) == ("uno_dd", 15.0)
+
+
+def test_effective_y_ligand_box_buffers_use_lig_buffer_and_never_shrink() -> None:
+    sim = SimpleNamespace(
+        fe_type="uno_dd",
+        dec_method="dd",
+        rocklin_correction="no",
+        lig_buffer=20.0,
+    )
+
+    assert box._effective_y_ligand_box_buffers(
+        25.0,
+        10.0,
+        22.0,
+        sim=sim,
+        comp="y",
+        ligand_charge=1,
+    ) == (25.0, 20.0, 22.0)
+
+
+@pytest.mark.parametrize(
+    ("comp", "ligand_charge", "fe_type", "dec_method", "rocklin_correction"),
+    [
+        ("y", 0, "uno_dd", "dd", "no"),
+        ("z", 1, "uno_dd", "dd", "no"),
+        ("y", 1, "uno", "dd", "no"),
+        ("y", 1, "uno_dd", "sdr", "no"),
+        ("y", 1, "uno_dd", "dd", "yes"),
+    ],
+)
+def test_effective_y_ligand_box_buffers_leave_other_legs_unchanged(
+    comp: str,
+    ligand_charge: int,
+    fe_type: str,
+    dec_method: str,
+    rocklin_correction: str,
+) -> None:
+    sim = SimpleNamespace(
+        fe_type=fe_type,
+        dec_method=dec_method,
+        rocklin_correction=rocklin_correction,
+        lig_buffer=20.0,
+    )
+
+    assert box._effective_y_ligand_box_buffers(
+        10.0,
+        11.0,
+        12.0,
+        sim=sim,
+        comp=comp,
+        ligand_charge=ligand_charge,
+    ) == (10.0, 11.0, 12.0)
+
+
 def test_read_disulfide_pairs_deduplicates_and_ignores_empty_lines(tmp_path: Path) -> None:
     sslink = tmp_path / "build_amber_sslink"
     sslink.write_text("\n19 44\n44 19\n35 77\n")
