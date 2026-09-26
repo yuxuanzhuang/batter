@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 import types
 
+import numpy as np
 import pytest
 
 
@@ -415,14 +416,22 @@ def _counterion_candidate(
     residue_index: int,
     charge: int,
     distance: float,
+    *,
+    position: tuple[float, float, float] | None = None,
+    displacement: tuple[float, float, float] | None = None,
 ) -> dict[str, object]:
-    return {
+    candidate: dict[str, object] = {
         "residue_index": residue_index,
         "residue_name": "Cl-" if charge < 0 else "Na+",
         "atom_indices": [residue_index],
         "integer_charge": charge,
         "distance_to_solute": distance,
     }
+    if position is not None:
+        candidate["representative_position"] = list(position)
+    if displacement is not None:
+        candidate["displacement_from_ligand"] = list(displacement)
+    return candidate
 
 
 def test_counterion_selection_uses_farthest_exact_charge_subset() -> None:
@@ -441,6 +450,26 @@ def test_counterion_selection_uses_farthest_exact_charge_subset() -> None:
     assert [record["residue_index"] for record in selected] == [101, 102]
     assert sum(int(record["integer_charge"]) for record in selected) == -2
     assert threshold == sim_files.CO_ALCHEMICAL_ION_PREFERRED_DISTANCE
+
+
+def test_counterion_selection_resolves_mixed_valence_composition_ties() -> None:
+    candidates = [
+        _counterion_candidate(101, -1, 30.0),
+        _counterion_candidate(102, -1, 29.0),
+        _counterion_candidate(103, -3, 28.0),
+        _counterion_candidate(104, -3, 27.0),
+        _counterion_candidate(105, -4, 26.0),
+        _counterion_candidate(106, -4, 25.0),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-10,
+    )
+
+    # (3, 3, 4) and (1, 1, 4, 4) both have sum(q^2) == 34; prefer the
+    # less concentrated four-ion composition.
+    assert [abs(int(record["integer_charge"])) for record in selected] == [1, 1, 4, 4]
 
 
 def test_counterion_selection_relaxes_to_minimum_distance() -> None:
@@ -466,6 +495,96 @@ def test_counterion_selection_rejects_when_no_exact_distant_subset() -> None:
 
     with pytest.raises(ValueError, match="No exact co-alchemical counterion"):
         sim_files._select_counterion_subset(candidates, target_charge=-1)
+
+
+def test_counterion_selection_uses_pbc_separation_and_is_deterministic() -> None:
+    box = np.array([40.0, 40.0, 40.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 30.0, position=(1.0, 5.0, 5.0), displacement=(1.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 29.0, position=(39.0, 5.0, 5.0), displacement=(-1.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            103, -1, 20.0, position=(20.0, 5.0, 5.0), displacement=(20.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-2,
+        box=box,
+    )
+    permuted, _ = sim_files._select_counterion_subset(
+        list(reversed(candidates)),
+        target_charge=-2,
+        box=box,
+    )
+
+    # Residues 101 and 102 appear 38 A apart in Cartesian coordinates but are
+    # only 2 A apart through the periodic boundary.
+    assert [record["residue_index"] for record in selected] == [102, 103]
+    assert [record["residue_index"] for record in permuted] == [102, 103]
+
+
+def test_counterion_selection_breaks_pair_distance_tie_by_charge_balance() -> None:
+    box = np.array([100.0, 100.0, 100.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 20.0, position=(10.0, 50.0, 50.0), displacement=(10.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 20.0, position=(60.0, 50.0, 50.0), displacement=(-40.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            103, -1, 20.0, position=(25.0, 50.0, 50.0), displacement=(25.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            104, -1, 20.0, position=(75.0, 50.0, 50.0), displacement=(-25.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-2,
+        box=box,
+    )
+    metrics = sim_files._counterion_selection_metrics(selected, box=box)
+
+    assert [record["residue_index"] for record in selected] == [103, 104]
+    assert metrics["selected_min_pairwise_distance"] == pytest.approx(50.0)
+    assert metrics["selected_charge_displacement_norm"] == pytest.approx(0.0)
+
+
+def test_counterion_single_ion_selection_still_uses_farthest_candidate() -> None:
+    box = np.array([80.0, 80.0, 80.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 30.0, position=(35.0, 0.0, 0.0), displacement=(35.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 20.0, position=(10.0, 0.0, 0.0), displacement=(10.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-1,
+        box=box,
+    )
+
+    assert [record["residue_index"] for record in selected] == [101]
+
+
+def test_periodic_centroid_unwraps_coordinates_across_box_face() -> None:
+    box = np.array([100.0, 100.0, 100.0, 90.0, 90.0, 90.0])
+    positions = np.array([[99.0, 20.0, 20.0], [1.0, 20.0, 20.0]])
+
+    centroid = sim_files._periodic_centroid(positions, box)
+
+    assert centroid[0] % 100.0 == pytest.approx(0.0)
+    assert centroid[1:] == pytest.approx([20.0, 20.0])
 
 
 def test_co_alchemical_ti_masks_include_counterion_in_ti_and_softcore(

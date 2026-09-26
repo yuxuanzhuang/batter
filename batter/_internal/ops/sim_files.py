@@ -10,7 +10,7 @@ import gc
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
-from MDAnalysis.lib.distances import distance_array
+from MDAnalysis.lib.distances import distance_array, minimize_vectors
 from loguru import logger
 import os
 import json
@@ -42,8 +42,11 @@ DEFAULT_FE_PRODUCTION_CHUNK_STEPS = 250_000_000
 CO_ALCHEMICAL_ION_MANIFEST = "co_alchemical_ion.json"
 CO_ALCHEMICAL_ION_MIN_DISTANCE = 10.0
 CO_ALCHEMICAL_ION_PREFERRED_DISTANCE = 15.0
+CO_ALCHEMICAL_ION_PAIR_DISTANCE_WARNING = 10.0
 CO_ALCHEMICAL_ION_RESTRAINT_FORCE = 10.0
 CO_ALCHEMICAL_ION_RESTRAINT_TITLE = "Co-alchemical ion positional restraint"
+CO_ALCHEMICAL_ION_SELECTION_METHOD = "balanced-pbc-v1"
+CO_ALCHEMICAL_ION_SELECTION_SEEDS = 16
 CO_ALCHEMICAL_WATER_RESNAMES = {
     "WAT",
     "HOH",
@@ -90,17 +93,92 @@ def _co_alchemical_ion_is_enabled(ctx: BuildContext) -> bool:
     )
 
 
+def _periodic_centroid(
+    positions: np.ndarray,
+    box: Optional[np.ndarray],
+) -> np.ndarray:
+    """Return a centroid without splitting a group across a periodic face."""
+    coordinates = np.asarray(positions, dtype=float)
+    if coordinates.ndim != 2 or coordinates.shape[1] != 3 or not len(coordinates):
+        raise ValueError("Centroid positions must be a non-empty (n, 3) array.")
+    if box is None or len(coordinates) == 1:
+        return np.mean(coordinates, axis=0)
+    anchor = coordinates[0]
+    unwrapped = anchor + minimize_vectors(coordinates - anchor, box)
+    return np.mean(unwrapped, axis=0)
+
+
+def _counterion_selection_metrics(
+    selected: Sequence[dict[str, Any]],
+    *,
+    box: Optional[np.ndarray],
+) -> dict[str, Any]:
+    """Summarize the geometry used to audit a persisted ion selection."""
+    if not selected:
+        return {
+            "selected_min_solute_distance": None,
+            "selected_mean_solute_distance": None,
+            "selected_min_pairwise_distance": None,
+            "selected_charge_displacement_norm": None,
+            "selected_charge_concentration": 0,
+        }
+
+    solute_distances = np.asarray(
+        [float(record["distance_to_solute"]) for record in selected],
+        dtype=float,
+    )
+    pairwise_distance: Optional[float] = None
+    if len(selected) > 1 and all(
+        record.get("representative_position") is not None for record in selected
+    ):
+        positions = np.asarray(
+            [record["representative_position"] for record in selected],
+            dtype=float,
+        )
+        distances = distance_array(positions, positions, box=box)
+        upper_triangle = distances[np.triu_indices(len(selected), k=1)]
+        pairwise_distance = float(np.min(upper_triangle))
+
+    displacement_norm: Optional[float] = None
+    if all(record.get("displacement_from_ligand") is not None for record in selected):
+        charge_displacement = np.zeros(3, dtype=float)
+        charge_units = 0
+        for record in selected:
+            integer_charge = int(record["integer_charge"])
+            charge_displacement += integer_charge * np.asarray(
+                record["displacement_from_ligand"], dtype=float
+            )
+            charge_units += abs(integer_charge)
+        if charge_units:
+            displacement_norm = float(np.linalg.norm(charge_displacement)) / charge_units
+
+    return {
+        "selected_min_solute_distance": float(np.min(solute_distances)),
+        "selected_mean_solute_distance": float(np.mean(solute_distances)),
+        "selected_min_pairwise_distance": pairwise_distance,
+        "selected_charge_displacement_norm": displacement_norm,
+        "selected_charge_concentration": sum(
+            abs(int(record["integer_charge"])) ** 2 for record in selected
+        ),
+    }
+
+
 def _select_counterion_subset(
     candidates: Sequence[dict[str, Any]],
     *,
     target_charge: int,
+    box: Optional[np.ndarray] = None,
 ) -> tuple[list[dict[str, Any]], float]:
-    """Select the farthest exact-charge counterion subset.
+    """Select an exact-charge, spatially dispersed counterion subset.
 
     Candidate charges must have the target sign.  The preferred pass uses ions
     at least 15 A from the solute; a second pass relaxes that lower bound to
-    10 A.  Iterating farthest-first makes the result deterministic and keeps
-    the alchemical ion in bulk solvent.
+    10 A.  Within a pass, charge-composition dynamic programming first favors
+    distributed physical charge (for example, two monovalent ions over one
+    divalent ion).  A bounded multi-start farthest-point search then maximizes
+    the minimum PBC ion--ion separation and minimizes the ligand-centered
+    charge-displacement norm.  Single-ion selection retains the historical
+    farthest-from-solute behavior.
     """
     if target_charge == 0:
         return [], CO_ALCHEMICAL_ION_PREFERRED_DISTANCE
@@ -114,8 +192,8 @@ def _select_counterion_subset(
     ]
     compatible.sort(
         key=lambda record: (
-            -float(record["distance_to_solute"]),
             int(record["residue_index"]),
+            tuple(int(index) for index in record.get("atom_indices", [])),
         )
     )
 
@@ -128,18 +206,191 @@ def _select_counterion_subset(
             for record in compatible
             if float(record["distance_to_solute"]) >= threshold
         ]
-        # Dynamic programming over small integer ion charges.  Preserve the
-        # first solution encountered, which is the farthest-first solution.
-        choices: dict[int, list[dict[str, Any]]] = {0: []}
+        if not eligible:
+            continue
+
+        # Determine the preferred physical ion valences without enumerating
+        # candidate subsets.  The additive squared-charge cost prefers several
+        # monovalent ions to an artificially concentrated multivalent charge.
+        compositions: dict[int, set[tuple[int, ...]]] = {0: {()}}
+
+        def composition_score(composition: tuple[int, ...]) -> tuple[Any, ...]:
+            return (
+                sum(units * units for units in composition),
+                max(composition, default=0),
+                -len(composition),
+                composition,
+            )
+
         for record in eligible:
             units = abs(int(record["integer_charge"]))
-            for subtotal, selected in list(choices.items())[::-1]:
-                new_total = subtotal + units
-                if new_total > target_units or new_total in choices:
+            if units <= 0 or units > target_units:
+                continue
+            for subtotal in range(target_units - units, -1, -1):
+                existing = compositions.get(subtotal, set())
+                if not existing:
                     continue
-                choices[new_total] = [*selected, record]
-        if target_units in choices:
-            return choices[target_units], threshold
+                new_total = subtotal + units
+                compositions.setdefault(new_total, set()).update(
+                    tuple(sorted((*composition, units)))
+                    for composition in existing
+                )
+
+        exact_compositions = compositions.get(target_units, set())
+        if not exact_compositions:
+            continue
+        preferred_composition = min(exact_compositions, key=composition_score)
+
+        required_counts = {
+            units: preferred_composition.count(units)
+            for units in set(preferred_composition)
+        }
+        positions_available = all(
+            record.get("representative_position") is not None
+            for record in eligible
+        )
+        displacements_available = all(
+            record.get("displacement_from_ligand") is not None
+            for record in eligible
+        )
+        positions = (
+            np.asarray(
+                [record["representative_position"] for record in eligible],
+                dtype=float,
+            )
+            if positions_available
+            else None
+        )
+        weighted_displacements = (
+            np.asarray(
+                [
+                    int(record["integer_charge"])
+                    * np.asarray(record["displacement_from_ligand"], dtype=float)
+                    for record in eligible
+                ]
+            )
+            if displacements_available
+            else None
+        )
+
+        def completed_score(state: tuple[int, ...]) -> tuple[Any, ...]:
+            records = [eligible[index] for index in state]
+            solute_distances = [
+                float(record["distance_to_solute"]) for record in records
+            ]
+            min_pair_distance = 0.0
+            if len(state) > 1 and positions is not None:
+                distances = distance_array(positions[list(state)], positions[list(state)], box=box)
+                min_pair_distance = float(
+                    np.min(distances[np.triu_indices(len(state), k=1)])
+                )
+            displacement_norm = 0.0
+            if len(state) > 1 and weighted_displacements is not None:
+                displacement_norm = float(
+                    np.linalg.norm(np.sum(weighted_displacements[list(state)], axis=0))
+                ) / target_units
+            return (
+                min_pair_distance,
+                -displacement_norm,
+                min(solute_distances),
+                float(np.mean(solute_distances)),
+                tuple(-int(eligible[index]["residue_index"]) for index in sorted(state)),
+            )
+
+        seed_indices = sorted(
+            (
+                index
+                for index, record in enumerate(eligible)
+                if abs(int(record["integer_charge"])) in required_counts
+            ),
+            key=lambda index: (
+                -float(eligible[index]["distance_to_solute"]),
+                int(eligible[index]["residue_index"]),
+            ),
+        )[:CO_ALCHEMICAL_ION_SELECTION_SEEDS]
+
+        completed_states: list[tuple[int, ...]] = []
+        for seed_index in seed_indices:
+            remaining_counts = dict(required_counts)
+            seed_units = abs(int(eligible[seed_index]["integer_charge"]))
+            if remaining_counts.get(seed_units, 0) <= 0:
+                continue
+            remaining_counts[seed_units] -= 1
+            state = [seed_index]
+            current_min_pair = float("inf")
+            current_displacement = (
+                weighted_displacements[seed_index].copy()
+                if weighted_displacements is not None
+                else np.zeros(3, dtype=float)
+            )
+
+            while len(state) < len(preferred_composition):
+                available_indices = [
+                    index
+                    for index, record in enumerate(eligible)
+                    if index not in state
+                    and remaining_counts.get(
+                        abs(int(record["integer_charge"])), 0
+                    )
+                    > 0
+                ]
+                if not available_indices:
+                    break
+
+                pair_separations = np.zeros(len(available_indices), dtype=float)
+                if positions is not None:
+                    pair_separations = np.min(
+                        distance_array(
+                            positions[available_indices],
+                            positions[state],
+                            box=box,
+                        ),
+                        axis=1,
+                    )
+
+                best_index: Optional[int] = None
+                best_score: Optional[tuple[Any, ...]] = None
+                for offset, candidate_index in enumerate(available_indices):
+                    candidate_displacement_norm = 0.0
+                    if weighted_displacements is not None:
+                        candidate_displacement_norm = float(
+                            np.linalg.norm(
+                                current_displacement
+                                + weighted_displacements[candidate_index]
+                            )
+                        ) / target_units
+                    candidate_score = (
+                        min(current_min_pair, float(pair_separations[offset])),
+                        -candidate_displacement_norm,
+                        float(eligible[candidate_index]["distance_to_solute"]),
+                        -int(eligible[candidate_index]["residue_index"]),
+                    )
+                    if best_score is None or candidate_score > best_score:
+                        best_score = candidate_score
+                        best_index = candidate_index
+
+                if best_index is None:
+                    break
+                if positions is not None:
+                    best_offset = available_indices.index(best_index)
+                    current_min_pair = min(
+                        current_min_pair,
+                        float(pair_separations[best_offset]),
+                    )
+                if weighted_displacements is not None:
+                    current_displacement += weighted_displacements[best_index]
+                selected_units = abs(int(eligible[best_index]["integer_charge"]))
+                remaining_counts[selected_units] -= 1
+                state.append(best_index)
+
+            if len(state) == len(preferred_composition):
+                completed_states.append(tuple(sorted(state)))
+
+        if completed_states:
+            best_state = max(set(completed_states), key=completed_score)
+            selected = [eligible[index] for index in best_state]
+            selected.sort(key=lambda record: int(record["residue_index"]))
+            return selected, threshold
 
     available = sum(abs(int(record["integer_charge"])) for record in compatible)
     ion_names = sorted({str(record["residue_name"]) for record in compatible})
@@ -207,6 +458,7 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "strategy": "opposite-counterion-co-annihilation",
+        "selection_method": CO_ALCHEMICAL_ION_SELECTION_METHOD,
         "component": str(ctx.comp),
         "ligand_resname": mol,
         "ligand_charge": ligand_charge,
@@ -279,8 +531,36 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
     solute = universe.atoms[solute_indices]
     manifest["distance_reference_atom_count"] = len(solute_indices)
     box = universe.dimensions
-    if box is None or len(box) < 3 or not np.all(np.asarray(box[:3]) > 0):
+    if (
+        box is None
+        or len(box) < 6
+        or not np.all(np.asarray(box[:3], dtype=float) > 0)
+        or not np.all(np.asarray(box[3:6], dtype=float) > 0)
+    ):
         box = None
+    else:
+        box = np.asarray(box[:6], dtype=float)
+
+    ligand_atoms = ligand_residues[0].atoms
+    ligand_reference_indices = [
+        int(atom.idx)
+        for atom in ligand_atoms
+        if int(getattr(atom, "atomic_number", 0) or 0) != 1
+    ]
+    if not ligand_reference_indices:
+        ligand_reference_indices = [int(atom.idx) for atom in ligand_atoms]
+    ligand_reference = _periodic_centroid(
+        universe.atoms[ligand_reference_indices].positions,
+        box,
+    )
+    manifest.update(
+        {
+            "selection_periodic": box is not None,
+            "selection_box": box.tolist() if box is not None else None,
+            "selection_reference": "ligand-heavy-atom-centroid",
+            "selection_reference_position": ligand_reference.tolist(),
+        }
+    )
 
     candidates: list[dict[str, Any]] = []
     for residue in parm.residues:
@@ -301,9 +581,14 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
         )
         if residue_charge == 0:
             continue
+        ion_positions = universe.atoms[atom_indices_zero].positions
+        representative_position = _periodic_centroid(ion_positions, box)
+        displacement = representative_position - ligand_reference
+        if box is not None:
+            displacement = minimize_vectors(displacement.reshape(1, 3), box)[0]
         distance = float(
             distance_array(
-                universe.atoms[atom_indices_zero].positions,
+                ion_positions,
                 solute.positions,
                 box=box,
             ).min()
@@ -316,6 +601,8 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
                 "charge": residue_charge_raw,
                 "integer_charge": residue_charge,
                 "distance_to_solute": distance,
+                "representative_position": representative_position.tolist(),
+                "displacement_from_ligand": displacement.tolist(),
             }
         )
 
@@ -323,6 +610,7 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
     selected, threshold = _select_counterion_subset(
         candidates,
         target_charge=target_charge,
+        box=box,
     )
     if threshold < CO_ALCHEMICAL_ION_PREFERRED_DISTANCE:
         logger.warning(
@@ -346,15 +634,43 @@ def _build_co_alchemical_ion_manifest(ctx: BuildContext) -> dict[str, Any]:
             f"{ligand_charge:+d}, selected ions {selected_charge:+d}."
         )
 
+    selection_metrics = _counterion_selection_metrics(selected, box=box)
+    min_pairwise_distance = selection_metrics["selected_min_pairwise_distance"]
+    if (
+        min_pairwise_distance is not None
+        and min_pairwise_distance < CO_ALCHEMICAL_ION_PAIR_DISTANCE_WARNING
+    ):
+        logger.warning(
+            "[co-alchemical-ion:{}] Selected ions are only {:.2f} A apart "
+            "under PBC; consider a larger solvent box for this charge state.",
+            ctx.comp,
+            min_pairwise_distance,
+        )
+
+    compatible_candidates = [
+        record
+        for record in candidates
+        if int(record["integer_charge"]) * (1 if target_charge > 0 else -1) > 0
+    ]
     manifest.update(
         {
+            # Keep the historical key for consumers that interpret it as the
+            # distance-gate threshold, and record actual selected distances
+            # separately in selection_metrics.
             "selection_min_distance": threshold,
+            "selection_distance_threshold": threshold,
+            "selection_candidate_count": len(compatible_candidates),
+            "selection_eligible_candidate_count": sum(
+                float(record["distance_to_solute"]) >= threshold
+                for record in compatible_candidates
+            ),
             "configured_counterion": str(ion_setting),
             "selected_ions": selected,
             "selected_atom_indices": selected_indices,
             "selected_atom_mask": f"@{format_ranges(selected_indices)}",
             "selected_charge": selected_charge,
             "ti_region_charge": region_charge,
+            **selection_metrics,
         }
     )
     return manifest
