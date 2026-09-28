@@ -9,6 +9,7 @@ import sys
 from types import SimpleNamespace
 import types
 
+import numpy as np
 import pytest
 
 
@@ -368,6 +369,467 @@ def test_restraintmask_short_mask_converts_to_legacy_group(tmp_path: Path) -> No
     assert "ATOM 1 1" in text
 
 
+@pytest.mark.parametrize("component", ["z", "y"])
+def test_co_alchemical_ion_is_enabled_for_uno_dd_without_rocklin(
+    component: str,
+) -> None:
+    ctx = SimpleNamespace(
+        comp=component,
+        sim=SimpleNamespace(
+            fe_type="uno_dd",
+            dec_method="dd",
+            rocklin_correction="no",
+        ),
+    )
+
+    assert sim_files._co_alchemical_ion_is_enabled(ctx)
+
+
+@pytest.mark.parametrize(
+    ("component", "fe_type", "dec_method", "rocklin_correction"),
+    [
+        ("e", "uno_dd", "dd", "no"),
+        ("z", "uno", "dd", "no"),
+        ("z", "uno_dd", "sdr", "no"),
+        ("z", "uno_dd", "dd", "yes"),
+    ],
+)
+def test_co_alchemical_ion_is_disabled_outside_uno_dd_z_y_without_rocklin(
+    component: str,
+    fe_type: str,
+    dec_method: str,
+    rocklin_correction: str,
+) -> None:
+    ctx = SimpleNamespace(
+        comp=component,
+        sim=SimpleNamespace(
+            fe_type=fe_type,
+            dec_method=dec_method,
+            rocklin_correction=rocklin_correction,
+        ),
+    )
+
+    assert not sim_files._co_alchemical_ion_is_enabled(ctx)
+
+
+def _counterion_candidate(
+    residue_index: int,
+    charge: int,
+    distance: float,
+    *,
+    position: tuple[float, float, float] | None = None,
+    displacement: tuple[float, float, float] | None = None,
+) -> dict[str, object]:
+    candidate: dict[str, object] = {
+        "residue_index": residue_index,
+        "residue_name": "Cl-" if charge < 0 else "Na+",
+        "atom_indices": [residue_index],
+        "integer_charge": charge,
+        "distance_to_solute": distance,
+    }
+    if position is not None:
+        candidate["representative_position"] = list(position)
+    if displacement is not None:
+        candidate["displacement_from_ligand"] = list(displacement)
+    return candidate
+
+
+def test_counterion_selection_uses_farthest_exact_charge_subset() -> None:
+    candidates = [
+        _counterion_candidate(101, -1, 30.0),
+        _counterion_candidate(102, -1, 25.0),
+        _counterion_candidate(103, -2, 20.0),
+        _counterion_candidate(104, 1, 40.0),
+    ]
+
+    selected, threshold = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-2,
+    )
+
+    assert [record["residue_index"] for record in selected] == [101, 102]
+    assert sum(int(record["integer_charge"]) for record in selected) == -2
+    assert threshold == sim_files.CO_ALCHEMICAL_ION_PREFERRED_DISTANCE
+
+
+def test_counterion_selection_resolves_mixed_valence_composition_ties() -> None:
+    candidates = [
+        _counterion_candidate(101, -1, 30.0),
+        _counterion_candidate(102, -1, 29.0),
+        _counterion_candidate(103, -3, 28.0),
+        _counterion_candidate(104, -3, 27.0),
+        _counterion_candidate(105, -4, 26.0),
+        _counterion_candidate(106, -4, 25.0),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-10,
+    )
+
+    # (3, 3, 4) and (1, 1, 4, 4) both have sum(q^2) == 34; prefer the
+    # less concentrated four-ion composition.
+    assert [abs(int(record["integer_charge"])) for record in selected] == [1, 1, 4, 4]
+
+
+def test_counterion_selection_relaxes_to_minimum_distance() -> None:
+    candidates = [
+        _counterion_candidate(101, -1, 12.0),
+        _counterion_candidate(102, -1, 9.0),
+    ]
+
+    selected, threshold = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-1,
+    )
+
+    assert [record["residue_index"] for record in selected] == [101]
+    assert threshold == sim_files.CO_ALCHEMICAL_ION_MIN_DISTANCE
+
+
+def test_counterion_selection_rejects_when_no_exact_distant_subset() -> None:
+    candidates = [
+        _counterion_candidate(101, -1, 9.9),
+        _counterion_candidate(102, 1, 30.0),
+    ]
+
+    with pytest.raises(ValueError, match="No exact co-alchemical counterion"):
+        sim_files._select_counterion_subset(candidates, target_charge=-1)
+
+
+def test_counterion_selection_uses_pbc_separation_and_is_deterministic() -> None:
+    box = np.array([40.0, 40.0, 40.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 30.0, position=(1.0, 5.0, 5.0), displacement=(1.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 29.0, position=(39.0, 5.0, 5.0), displacement=(-1.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            103, -1, 20.0, position=(20.0, 5.0, 5.0), displacement=(20.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-2,
+        box=box,
+    )
+    permuted, _ = sim_files._select_counterion_subset(
+        list(reversed(candidates)),
+        target_charge=-2,
+        box=box,
+    )
+
+    # Residues 101 and 102 appear 38 A apart in Cartesian coordinates but are
+    # only 2 A apart through the periodic boundary.
+    assert [record["residue_index"] for record in selected] == [102, 103]
+    assert [record["residue_index"] for record in permuted] == [102, 103]
+
+
+def test_counterion_selection_breaks_pair_distance_tie_by_charge_balance() -> None:
+    box = np.array([100.0, 100.0, 100.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 20.0, position=(10.0, 50.0, 50.0), displacement=(10.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 20.0, position=(60.0, 50.0, 50.0), displacement=(-40.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            103, -1, 20.0, position=(25.0, 50.0, 50.0), displacement=(25.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            104, -1, 20.0, position=(75.0, 50.0, 50.0), displacement=(-25.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-2,
+        box=box,
+    )
+    metrics = sim_files._counterion_selection_metrics(selected, box=box)
+
+    assert [record["residue_index"] for record in selected] == [103, 104]
+    assert metrics["selected_min_pairwise_distance"] == pytest.approx(50.0)
+    assert metrics["selected_charge_displacement_norm"] == pytest.approx(0.0)
+
+
+def test_counterion_single_ion_selection_still_uses_farthest_candidate() -> None:
+    box = np.array([80.0, 80.0, 80.0, 90.0, 90.0, 90.0])
+    candidates = [
+        _counterion_candidate(
+            101, -1, 30.0, position=(35.0, 0.0, 0.0), displacement=(35.0, 0.0, 0.0)
+        ),
+        _counterion_candidate(
+            102, -1, 20.0, position=(10.0, 0.0, 0.0), displacement=(10.0, 0.0, 0.0)
+        ),
+    ]
+
+    selected, _ = sim_files._select_counterion_subset(
+        candidates,
+        target_charge=-1,
+        box=box,
+    )
+
+    assert [record["residue_index"] for record in selected] == [101]
+
+
+def test_periodic_centroid_unwraps_coordinates_across_box_face() -> None:
+    box = np.array([100.0, 100.0, 100.0, 90.0, 90.0, 90.0])
+    positions = np.array([[99.0, 20.0, 20.0], [1.0, 20.0, 20.0]])
+
+    centroid = sim_files._periodic_centroid(positions, box)
+
+    assert centroid[0] % 100.0 == pytest.approx(0.0)
+    assert centroid[1:] == pytest.approx([20.0, 20.0])
+
+
+def test_co_alchemical_ti_masks_include_counterion_in_ti_and_softcore(
+    tmp_path: Path,
+) -> None:
+    mdin = tmp_path / "mdin-template"
+    mdin.write_text(
+        "&cntrl\n"
+        "  timask1 = ':LIG',\n"
+        "  timask2 = ':STALE',\n"
+        "  scmask1 = ':LIG',\n"
+        "  scmask2 = ':STALE',\n"
+        "/\n"
+    )
+
+    sim_files._apply_co_alchemical_ti_masks(
+        mdin,
+        ligand_mask=":LIG",
+        selection={"selected_atom_mask": "@42,44-45"},
+    )
+
+    text = mdin.read_text()
+    assert "timask1 = ':LIG | @42,44-45'," in text
+    assert "scmask1 = ':LIG | @42,44-45'," in text
+    assert "timask2 = ''," in text
+    assert "scmask2 = ''," in text
+    assert "crgmask" not in text
+
+
+def test_co_alchemical_manifest_validation_rejects_changed_topology(
+    tmp_path: Path,
+) -> None:
+    topology = tmp_path / "full.prmtop"
+    pdb = tmp_path / "full.pdb"
+    topology.write_text("topology\n")
+    pdb.write_text("pdb\n")
+    manifest_path = tmp_path / sim_files.CO_ALCHEMICAL_ION_MANIFEST
+    manifest = {
+        "schema_version": 1,
+        "strategy": "opposite-counterion-co-annihilation",
+        "component": "y",
+        "ligand_resname": "LIG",
+        "ligand_charge": 1,
+        "system_charge_raw": 0.0,
+        "topology": topology.name,
+        "pdb": pdb.name,
+        "topology_size_bytes": topology.stat().st_size,
+        "pdb_size_bytes": pdb.stat().st_size,
+        "topology_atom_count": 2,
+        "pdb_atom_count": 2,
+        "required": True,
+        "selected_ions": [
+            {"atom_indices": [2], "integer_charge": -1},
+        ],
+        "selected_atom_indices": [2],
+        "selected_atom_mask": "@2",
+        "selected_charge": -1,
+        "ti_region_charge": 0,
+    }
+    ctx = SimpleNamespace(
+        comp="y",
+        residue_name="LIG",
+        window_dir=tmp_path,
+    )
+
+    sim_files._validate_co_alchemical_ion_manifest(ctx, manifest, manifest_path)
+
+    topology.write_text("changed topology\n")
+    with pytest.raises(ValueError, match="manifest does not match"):
+        sim_files._validate_co_alchemical_ion_manifest(
+            ctx,
+            manifest,
+            manifest_path,
+        )
+
+
+def test_co_alchemical_restraint_cache_mismatch_rebuilds_local_group(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = (
+        repo_root
+        / "tests"
+        / "data"
+        / "ligand_params"
+        / "b74b7e78c757"
+        / "lig.prmtop"
+    )
+    cache_dir = tmp_path / "cache"
+
+    def write_input(path: Path) -> None:
+        path.write_text(
+            "&cntrl\n"
+            "  ntr = 1,\n"
+            "  restraint_wt = 50,\n"
+            "  restraintmask = '@1',\n"
+            "/\n"
+        )
+
+    master = tmp_path / "master.in"
+    write_input(master)
+    sim_files._apply_restraintmask_length_limit(
+        master,
+        prmtop,
+        cache_dir=cache_dir,
+        cache_tag="y-mdin-template",
+        cache_master=True,
+        additional_groups=[("Co-alchemical ion", 10.0, [2])],
+    )
+
+    target = tmp_path / "target.in"
+    write_input(target)
+    sim_files._apply_restraintmask_length_limit(
+        target,
+        prmtop,
+        cache_dir=cache_dir,
+        cache_tag="y-mdin-template",
+        cache_master=False,
+        additional_groups=[("Co-alchemical ion", 10.0, [3])],
+    )
+
+    text = target.read_text()
+    assert "ATOM 3 3" in text
+    assert "ATOM 2 2" not in text
+
+
+def test_nonmaster_restraint_conversion_populates_and_reuses_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = (
+        repo_root
+        / "tests"
+        / "data"
+        / "ligand_params"
+        / "b74b7e78c757"
+        / "lig.prmtop"
+    )
+    cache_dir = tmp_path / "cache"
+    convert_calls = 0
+    original_convert = sim_files._convert_restraintmask_to_legacy_group_block
+
+    def counted_convert(*args, **kwargs):
+        nonlocal convert_calls
+        convert_calls += 1
+        return original_convert(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sim_files,
+        "_convert_restraintmask_to_legacy_group_block",
+        counted_convert,
+    )
+
+    rendered: list[str] = []
+    for index in range(2):
+        mdin = tmp_path / f"target-{index}.in"
+        mdin.write_text(
+            "&cntrl\n"
+            "  ntr = 1,\n"
+            "  restraint_wt = 50,\n"
+            "  restraintmask = '@1',\n"
+            "/\n"
+        )
+        sim_files._apply_restraintmask_length_limit(
+            mdin,
+            prmtop,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=False,
+        )
+        rendered.append(mdin.read_text())
+
+    assert convert_calls == 1
+    assert rendered[0] == rendered[1]
+    assert (cache_dir / "z-mdin-template.legacy_restraint").is_file()
+
+    changed_weight = tmp_path / "changed-weight.in"
+    changed_weight.write_text(
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 25,\n"
+        "  restraintmask = '@1',\n"
+        "/\n"
+    )
+    sim_files._apply_restraintmask_length_limit(
+        changed_weight,
+        prmtop,
+        cache_dir=cache_dir,
+        cache_tag="z-mdin-template",
+        cache_master=False,
+    )
+
+    assert convert_calls == 2
+    assert "Converted from restraintmask\n25\n" in changed_weight.read_text()
+
+
+def test_legacy_restraint_conversion_appends_separate_counterion_group(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = (
+        repo_root
+        / "tests"
+        / "data"
+        / "ligand_params"
+        / "b74b7e78c757"
+        / "lig.prmtop"
+    )
+    mdin = tmp_path / "mdin-test.in"
+    mdin.write_text(
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 50,\n"
+        "  restraintmask = '@1',\n"
+        "/\n"
+    )
+
+    sim_files._apply_restraintmask_length_limit(
+        mdin,
+        prmtop,
+        additional_groups=[
+            (
+                sim_files.CO_ALCHEMICAL_ION_RESTRAINT_TITLE,
+                sim_files.CO_ALCHEMICAL_ION_RESTRAINT_FORCE,
+                [2],
+            )
+        ],
+    )
+
+    text = mdin.read_text()
+    assert "restraintmask =" not in text
+    assert text.endswith(
+        "&end\n"
+        "Converted from restraintmask\n"
+        "50\n"
+        "ATOM 1 1\n"
+        "END\n"
+        "Co-alchemical ion positional restraint\n"
+        "10\n"
+        "ATOM 2 2\n"
+        "END\n"
+        "END\n"
+    )
+
+
 def test_extra_restraints_are_included_in_legacy_group_conversion(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     prmtop = repo_root / "tests" / "data" / "ligand_params" / "b74b7e78c757" / "lig.prmtop"
@@ -487,6 +949,50 @@ def test_fe_handoff_schedule_survives_legacy_group_conversion(
     assert text == before
     assert "restraintmask =" not in text
     assert "FE constant DUM positional restraint\n10\nATOM 1 2\nEND\nEND\n" in text
+
+
+def test_fe_handoff_reuses_cached_topology_indices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    topology = tmp_path / "vac.pdb"
+    topology.write_text(
+        "HETATM    1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    2  Pb  DUM A   2       1.000   0.000   0.000  1.00  0.00          PB\n"
+        "HETATM    3  C1  LIG A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    cache_dir = tmp_path / ".restraintmask_cache"
+    load_calls: list[Path] = []
+    original_load_file = sim_files.pmd.load_file
+
+    def counted_load_file(path):
+        load_calls.append(Path(path))
+        return original_load_file(path)
+
+    monkeypatch.setattr(sim_files.pmd, "load_file", counted_load_file)
+
+    rendered: list[str] = []
+    for index in range(2):
+        window = tmp_path / f"z{index:02d}"
+        window.mkdir()
+        mdin = window / "eq.in"
+        mdin.write_text("&cntrl\n  restraint_wt = 10,\n/\n")
+        sim_files._apply_fe_handoff_restraint(
+            mdin,
+            restraint_mask="@3",
+            total_steps=25_000,
+            prmtop_path=topology,
+            cache_dir=cache_dir,
+        )
+        rendered.append(mdin.read_text())
+
+    assert load_calls == [topology]
+    assert rendered[0] == rendered[1]
+    cache_files = list(cache_dir.glob("fe-handoff-*.json"))
+    assert len(cache_files) == 1
+    cached = json.loads(cache_files[0].read_text())
+    assert cached["dum_atom_indices"] == [1, 2]
+    assert cached["ligand_atom_indices"] == [3]
 
 
 def test_ligand_handoff_prefers_persisted_boresch_anchor_names(

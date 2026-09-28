@@ -45,33 +45,83 @@ def test_pdb4amber_for_simprep_resolves_from_active_python_environment(
     ]
 
 
-def test_copy_simulation_dir_copies_disang(tmp_path):
+def test_copy_simulation_dir_links_immutable_files_and_copies_mutable_files(tmp_path):
     src = tmp_path / "src"
     dest = tmp_path / "dest" / "win"
     src.mkdir(parents=True)
     (src / "disang.rest").write_text("restraints")
-    (src / "full.prmtop").write_text("prmtop")
+    immutable_contents = {
+        "full.prmtop": "prmtop",
+        "full.hmr.prmtop": "hmr prmtop",
+        "full.inpcrd": "coordinates",
+        "full.pdb": "structure",
+        "lig.mol2": "ligand",
+    }
+    for name, contents in immutable_contents.items():
+        (src / name).write_text(contents)
     (src / "cv.in").write_text("cv")
+    (src / "co_alchemical_ion.json").write_text('{"selected_atom_mask":"@42"}\n')
 
-    sim = SimpleNamespace(hmr="no")
+    sim = SimpleNamespace(hmr="yes")
 
     simprep.copy_simulation_dir(src, dest, sim)
 
     disang = dest / "disang.rest"
     assert disang.exists()
     assert not disang.is_symlink()
+    assert not disang.samefile(src / "disang.rest")
     assert disang.read_text() == "restraints"
 
-    prmtop = dest / "full.prmtop"
-    assert prmtop.exists()
-    # other files may still be symlinked
-    if prmtop.is_symlink():
-        assert prmtop.resolve() == (src / "full.prmtop").resolve()
-    else:
-        assert prmtop.read_text() == "prmtop"
+    for name, contents in immutable_contents.items():
+        linked = dest / name
+        assert linked.exists()
+        assert not linked.is_symlink()
+        assert linked.samefile(src / name)
+        assert linked.read_text() == contents
 
     cv = dest / "cv.in"
     assert cv.exists()
+    assert not cv.samefile(src / "cv.in")
+
+    manifest = dest / "co_alchemical_ion.json"
+    assert manifest.exists()
+    assert not manifest.is_symlink()
+    assert not manifest.samefile(src / "co_alchemical_ion.json")
+    assert manifest.read_text() == '{"selected_atom_mask":"@42"}\n'
+
+
+def test_copy_simulation_dir_replaces_existing_immutable_file(tmp_path):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    (src / "full.prmtop").write_text("new topology")
+    (dest / "full.prmtop").write_text("old topology")
+
+    simprep.copy_simulation_dir(src, dest, SimpleNamespace(hmr="no"))
+
+    assert (dest / "full.prmtop").samefile(src / "full.prmtop")
+    assert (dest / "full.prmtop").read_text() == "new topology"
+
+
+def test_copy_simulation_dir_falls_back_to_copy_when_hardlink_fails(
+    tmp_path, monkeypatch
+):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    (src / "full.prmtop").write_text("topology")
+
+    def fail_link(_src, _dst):
+        raise OSError("hard links unavailable")
+
+    monkeypatch.setattr(simprep.os, "link", fail_link)
+
+    simprep.copy_simulation_dir(src, dest, SimpleNamespace(hmr="no"))
+
+    copied = dest / "full.prmtop"
+    assert copied.read_text() == "topology"
+    assert not copied.samefile(src / "full.prmtop")
 
 
 def test_read_ligand_anchor_names_allows_single_apo_anchor(tmp_path):

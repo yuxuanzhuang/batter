@@ -119,6 +119,23 @@ Use ``--help`` to see all commands:
    batter -h
    batter run -h
 
+Standalone ligand parameterisation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Parameterise one protonated 3D ligand SDF without creating a run YAML:
+
+.. code-block:: bash
+
+   batter param-ligand ligand.sdf
+
+The command defaults to the ``openff-2.3.0`` force field with
+``openff-gnn-am1bcc-1.0.0.pt`` charges and writes a reusable parameter bundle
+under ``ligand_param/<content-hash>/``. Use ``--output`` to choose another
+parameter store, or run ``batter param-ligand --help`` for force-field, charge,
+hydrogen-retention, and overwrite options. See the
+`CLI reference <https://batter.readthedocs.io/en/latest/cli.html#parameterize-one-ligand>`_
+for the generated files and examples.
+
 Equilibration analysis outputs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

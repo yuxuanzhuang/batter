@@ -80,6 +80,7 @@ _PRE_RING_REPAIR_FILES = {
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
 _BULK_LIGAND_BOX_Z_PADDING = 4.0
+_CHARGED_Y_MIN_COION_BUFFER = 15.0
 _WATER_RESNAMES = {
     "WAT",
     "HOH",
@@ -2151,6 +2152,121 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         return None
 
 
+def _uno_dd_co_alchemical_ion_is_enabled(
+    sim: Any,
+    *,
+    comp: str,
+    ligand_charge: int | None,
+) -> bool:
+    """Return whether this leg needs opposite-ion co-annihilation."""
+    return (
+        int(ligand_charge or 0) != 0
+        and str(comp).lower() in {"z", "y"}
+        and str(getattr(sim, "fe_type", "")).lower() == "uno_dd"
+        and str(getattr(sim, "dec_method", "")).lower() == "dd"
+        and str(getattr(sim, "rocklin_correction", "yes")).lower() == "no"
+    )
+
+
+def _effective_y_ligand_box_buffers(
+    buffer_x: float,
+    buffer_y: float,
+    buffer_z: float,
+    *,
+    sim: Any,
+    comp: str,
+    ligand_charge: int | None,
+) -> tuple[float, float, float]:
+    """Expand charged UNO-DD y boxes without mutating the shared config.
+
+    ``lig_buffer`` is the ligand-solvation padding knob and defaults to 15 A.
+    Keeping every y-axis padding at least that large gives the co-alchemical
+    counterion more bulk-solvent volume while preserving any larger explicit
+    per-axis buffers.
+    """
+    configured = (float(buffer_x), float(buffer_y), float(buffer_z))
+    if str(comp).lower() != "y" or not _uno_dd_co_alchemical_ion_is_enabled(
+        sim,
+        comp=comp,
+        ligand_charge=ligand_charge,
+    ):
+        return configured
+
+    ligand_buffer = float(
+        getattr(sim, "lig_buffer", _CHARGED_Y_MIN_COION_BUFFER)
+        or _CHARGED_Y_MIN_COION_BUFFER
+    )
+    minimum = max(_CHARGED_Y_MIN_COION_BUFFER, ligand_buffer)
+    effective = tuple(max(value, minimum) for value in configured)
+    if effective != configured:
+        logger.info(
+            "[create_box:y] Charged UNO-DD ligand (q={:+d}); expanding "
+            "solvent buffers from ({:.1f}, {:.1f}, {:.1f}) A to "
+            "({:.1f}, {:.1f}, {:.1f}) A (lig_buffer={:.1f} A).",
+            int(ligand_charge or 0),
+            *configured,
+            *effective,
+            ligand_buffer,
+        )
+    return effective
+
+
+def _ensure_uno_dd_co_alchemical_ion_counts(
+    num_cat: int,
+    num_ani: int,
+    *,
+    sim: Any,
+    comp: str,
+    ligand_charge: int | None,
+) -> tuple[int, int]:
+    """Ensure UNO-DD has enough opposite-sign ions without changing net charge.
+
+    When the Rocklin correction is disabled, charged UNO-DD ``z``/``y`` legs
+    co-annihilate the ligand with counterions. A highly charged receptor can
+    consume all ions of the required sign during ordinary neutralization. Add
+    complete cation/anion salt pairs until at least ``abs(ligand_charge)``
+    opposite-sign ions are present. Adding pairs leaves the box charge
+    unchanged.
+    """
+    cat_count = int(num_cat)
+    ani_count = int(num_ani)
+    if cat_count < 0 or ani_count < 0:
+        raise ValueError(
+            "Ion counts must be non-negative; "
+            f"got cations={cat_count}, anions={ani_count}."
+        )
+
+    charge = int(ligand_charge or 0)
+    if not _uno_dd_co_alchemical_ion_is_enabled(
+        sim,
+        comp=comp,
+        ligand_charge=charge,
+    ):
+        return cat_count, ani_count
+
+    required = abs(charge)
+    available = ani_count if charge > 0 else cat_count
+    added_pairs = max(0, required - available)
+    if added_pairs == 0:
+        return cat_count, ani_count
+
+    ion_def = tuple(getattr(sim, "ion_def", ("cation", "anion")) or ())
+    if charge > 0:
+        counterion = ion_def[1] if len(ion_def) > 1 else "anion"
+    else:
+        counterion = ion_def[0] if ion_def else "cation"
+    logger.info(
+        "[create_box:{}] Adding {} salt pair(s) so charged ligand (q={:+d}) "
+        "has at least {} configured counterion(s) ({}).",
+        comp,
+        added_pairs,
+        charge,
+        required,
+        counterion,
+    )
+    return cat_count + added_pairs, ani_count + added_pairs
+
+
 def _read_disulfide_pairs(sslink_path: Path) -> list[tuple[int, int]]:
     """Read pdb4amber's 1-based residue-index disulfide pairs."""
     if not sslink_path.exists():
@@ -3405,6 +3521,23 @@ def create_box(ctx: BuildContext) -> None:
         num_ions = neu_cat
         num_ani = 0
 
+    if neut == "no":
+        num_cat, num_ani = _ensure_uno_dd_co_alchemical_ion_counts(
+            num_cat,
+            num_ani,
+            sim=sim,
+            comp=comp,
+            ligand_charge=lig_charge,
+        )
+    elif neut == "yes":
+        neu_cat, neu_ani = _ensure_uno_dd_co_alchemical_ion_counts(
+            neu_cat,
+            neu_ani,
+            sim=sim,
+            comp=comp,
+            ligand_charge=lig_charge,
+        )
+
     water_part_prefixes: list[str] = []
     if use_membrane_reference_box:
         for chunk_index, chunk_path in enumerate(water_chunk_paths):
@@ -3997,6 +4130,22 @@ def create_box_y(ctx: BuildContext) -> None:
         return int(round(q))
 
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
+    if lig_charge is None:
+        lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
+        logger.warning(
+            "[create_box:y] Ligand charge metadata was unavailable for {}; "
+            "using the TLeap unit charge ({:+d}).",
+            mol,
+            lig_charge,
+        )
+    buffer_x, buffer_y, buffer_z = _effective_y_ligand_box_buffers(
+        buffer_x,
+        buffer_y,
+        buffer_z,
+        sim=sim,
+        comp=comp,
+        ligand_charge=lig_charge,
+    )
     # put a minimum of 5 ions
     box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
     num_ions = max(
@@ -4006,6 +4155,20 @@ def create_box_y(ctx: BuildContext) -> None:
 
     add_neu_cat = max(0, -lig_charge)
     add_neu_ani = max(0, lig_charge)
+
+    if neut == "no":
+        add_cat = num_ions + add_neu_cat
+        add_ani = num_ions + add_neu_ani
+    else:
+        add_cat = add_neu_cat
+        add_ani = add_neu_ani
+    add_cat, add_ani = _ensure_uno_dd_co_alchemical_ion_counts(
+        add_cat,
+        add_ani,
+        sim=sim,
+        comp=comp,
+        ligand_charge=lig_charge,
+    )
 
     tleap_solv_lines = (window_dir / "tleap.in").read_text().splitlines()
     tleap_solv_lines += [
@@ -4021,16 +4184,16 @@ def create_box_y(ctx: BuildContext) -> None:
         "# ions",
     ]
     if neut == "no":
-        if num_ions > 0 or add_neu_cat > 0 or add_neu_ani > 0:
+        if add_cat > 0 or add_ani > 0:
             tleap_solv_lines += [
-                f"addionsrand model {ion_def[0]} {num_ions + add_neu_cat}",
-                f"addionsrand model {ion_def[1]} {num_ions + add_neu_ani}",
+                f"addionsrand model {ion_def[0]} {add_cat}",
+                f"addionsrand model {ion_def[1]} {add_ani}",
             ]
     else:
-        if add_neu_cat:
-            tleap_solv_lines.append(f"addionsrand model {ion_def[0]} {add_neu_cat}")
-        if add_neu_ani:
-            tleap_solv_lines.append(f"addionsrand model {ion_def[1]} {add_neu_ani}")
+        if add_cat:
+            tleap_solv_lines.append(f"addionsrand model {ion_def[0]} {add_cat}")
+        if add_ani:
+            tleap_solv_lines.append(f"addionsrand model {ion_def[1]} {add_ani}")
 
     tleap_solv_lines += [
         "desc model",

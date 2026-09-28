@@ -1,6 +1,7 @@
 import pytest
 
-from batter.exec.local import LocalBackend
+import batter.exec.local as local_mod
+from batter.exec.local import LocalBackend, _effective_worker_cap, _slurm_task_limit
 from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -88,3 +89,99 @@ def test_local_backend_run_parallel_process_errors_are_picklable(tmp_path):
         backend.run_parallel(pipeline, systems, max_workers=2)
 
     assert "sys0: RuntimeError: unpicklable-boom-sys0" in str(exc_info.value)
+
+
+def test_slurm_task_limit_is_absent_outside_slurm(monkeypatch):
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+
+    assert _slurm_task_limit() is None
+
+
+@pytest.mark.parametrize("value", ["", "invalid", "0", "-2"])
+def test_slurm_task_limit_ignores_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("SLURM_NTASKS", value)
+
+    assert _slurm_task_limit() is None
+
+
+def test_effective_worker_cap_respects_slurm_tasks(monkeypatch):
+    monkeypatch.setenv("SLURM_NTASKS", "4")
+
+    assert _effective_worker_cap(8, 87) == 4
+
+
+def test_effective_worker_cap_does_not_raise_requested_limit(monkeypatch):
+    monkeypatch.setenv("SLURM_NTASKS", "8")
+
+    assert _effective_worker_cap(3, 87) == 3
+
+
+def test_prepare_fe_recycles_workers_after_each_ligand_batch(monkeypatch, tmp_path):
+    backend = LocalBackend()
+    backend.register("demo", _dummy_handler)
+    pipeline = Pipeline([Step(name="demo", payload={})])
+    systems = [make_system(tmp_path, idx) for idx in range(5)]
+    batch_sizes = []
+    recycle_calls = []
+
+    class InlineParallel:
+        def __init__(self, **kwargs):
+            assert kwargs["n_jobs"] == 2
+
+        def __call__(self, calls):
+            calls = list(calls)
+            batch_sizes.append(len(calls))
+            return [func(*args, **kwargs) for func, args, kwargs in calls]
+
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+    monkeypatch.setattr(local_mod, "Parallel", InlineParallel)
+    monkeypatch.setattr(
+        local_mod,
+        "_shutdown_reusable_process_pool",
+        lambda: recycle_calls.append(True),
+    )
+
+    results = backend.run_parallel(
+        pipeline,
+        systems,
+        max_workers=2,
+        description="prepare_fe",
+    )
+
+    assert batch_sizes == [2, 2, 1]
+    assert len(recycle_calls) == 4  # before preparation and after every batch
+    assert set(results) == {system.name for system in systems}
+
+
+def test_regular_phase_keeps_single_parallel_pool(monkeypatch, tmp_path):
+    backend = LocalBackend()
+    backend.register("demo", _dummy_handler)
+    pipeline = Pipeline([Step(name="demo", payload={})])
+    systems = [make_system(tmp_path, idx) for idx in range(5)]
+    batch_sizes = []
+
+    class InlineParallel:
+        def __init__(self, **kwargs):
+            assert kwargs["n_jobs"] == 2
+
+        def __call__(self, calls):
+            calls = list(calls)
+            batch_sizes.append(len(calls))
+            return [func(*args, **kwargs) for func, args, kwargs in calls]
+
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+    monkeypatch.setattr(local_mod, "Parallel", InlineParallel)
+    monkeypatch.setattr(
+        local_mod,
+        "_shutdown_reusable_process_pool",
+        lambda: pytest.fail("regular phases must not recycle the process pool"),
+    )
+
+    backend.run_parallel(
+        pipeline,
+        systems,
+        max_workers=2,
+        description="prepare_equil",
+    )
+
+    assert batch_sizes == [5]

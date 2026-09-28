@@ -95,7 +95,7 @@ reset_minimization_after_failed_pre_equil() {
     fi
     if [[ -s mini.rst7 || -s mini2.rst7 || -s eqnvt.rst7 ]]; then
         echo "[INFO] Prior failure occurred before Pre equilibration completed; rerunning minimization instead of reusing mini.rst7/mini2.rst7; rerunning minimization/NVT prep instead of reusing mini.rst7/mini2.rst7/eqnvt.rst7."
-        rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out eqnvt.rst7 eqnvt.out eqnvt.nc
+        rm -f mini.rst7 mini.out mini.nc mini_noshake.in mini2.rst7 mini2.out mini2.nc eqnvt.rst7 eqnvt.out eqnvt.nc
     fi
 }
 
@@ -111,24 +111,17 @@ write_noshake_minimization_input() {
 
 minimization_failed_for_noshake_retry() {
     local out_file=$1
-    local rst_file=$2
-    local status=${SIM_COMMAND_STATUS:-0}
+    local constraint_failure_pattern='Coordinate resetting.*(cannot be|was not|is not|could not be).*accomplished|try[[:space:]]+ntc[[:space:]]*=[[:space:]]*1|SHAKE[^[:alnum:]]+.*(cannot|could not|fail(ed|ure)?|error)|(cannot|could not|fail(ed|ure)?|error).*SHAKE'
 
-    if [[ $status =~ ^[0-9]+$ && $status -ne 0 ]]; then
+    if [[ -f "$log_file" ]] && grep -Eqi "$constraint_failure_pattern" "$log_file"; then
         return 0
     fi
-    if [[ -f "$log_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$log_file"; then
+    if [[ -f "$out_file" ]] && grep -Eqi "$constraint_failure_pattern" "$out_file"; then
         return 0
     fi
-    if [[ -f "$out_file" ]] && grep -Eqi "Coordinate resetting cannot be accomplished|try ntc=1|SHAKE|Calculation halted|Terminated Abnormally|FATAL" "$out_file"; then
-        return 0
-    fi
-    if [[ ! -s "$rst_file" ]]; then
-        return 0
-    fi
-    if is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
-        return 0
-    fi
+    # Generic command failures and invalid/missing restarts are handled by
+    # check_sim_failure.  Changing constraints is safe only for an explicit
+    # SHAKE/coordinate-reset failure.
     return 1
 }
 
@@ -223,7 +216,7 @@ if ! should_skip_eq_step "Minimization" "mini.rst7"; then
     check_sim_failure "Minimization" "$log_file" mini.rst7
 
     if ! check_min_energy "mini.out" -1000; then
-        echo "[WARN] CUDA minimization energy did not pass threshold; continuing from mini.rst7 without CPU minimization."
+        echo "[WARN] CUDA minimization energy did not pass threshold; CPU Minimization 2 will validate and relax mini.rst7."
     fi
 else
     if [[ -f "$noshake_mini_input" ]]; then
@@ -233,9 +226,13 @@ fi
 
 if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
     require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
-    echo "[INFO] Skipping CPU Minimization 2; continuing from CUDA minimization restart."
-    cp mini.rst7 mini2.rst7
-    printf "Skipped CPU Minimization 2; copied mini.rst7 to mini2.rst7.\n" > mini2.out
+    echo "[INFO] Running CPU Minimization 2 to validate and relax the CUDA restart."
+    if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+        print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i $mini_input -p $PRMTOP_MERGED -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    else
+        print_and_run "$PMEMD_CPU_EXEC -O -i $mini_input -p $PRMTOP_MERGED -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    fi
+    check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
 fi
 
 # ---------------- Equilibration ----------------

@@ -444,11 +444,43 @@ def _pdb_line(
     y: float,
     z: float,
     element: str = "C",
+    icode: str = "",
 ) -> str:
     return (
-        f"{record:<6}{index:5d} {name:^4s} {resname:>3s} {chain:1s}{resid:4d}"
-        f"    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2s}\n"
+        f"{record:<6}{index:5d} {name:^4s} {resname:>3s} {chain:1s}{resid:4d}{icode:1s}"
+        f"   {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {element:>2s}\n"
     )
+
+
+def test_select_resnum_range_atoms_includes_upper_bound_insertion_code(
+    tmp_path: Path,
+) -> None:
+    pdb_file = tmp_path / "protein_with_terminal_cap.pdb"
+    pdb_file.write_text(
+        "".join(
+            [
+                _pdb_line("ATOM", 1, "N", "LEU", "A", 289, 0.0, 0.0, 0.0, "N"),
+                _pdb_line("ATOM", 2, "CA", "LEU", "A", 289, 1.0, 0.0, 0.0),
+                _pdb_line("HETATM", 3, "N", "NMA", "A", 290, 2.0, 0.0, 0.0, "N", "A"),
+                _pdb_line("HETATM", 4, "CA", "NMA", "A", 290, 3.0, 0.0, 0.0, "C", "A"),
+                "END\n",
+            ]
+        )
+    )
+    universe = mda.Universe(str(pdb_file))
+
+    selected = build_complex_mod._select_resnum_range_atoms(
+        universe,
+        first_resid="1",
+        last_resid="290",
+        atom_selection="not name H*",
+    )
+
+    assert selected.n_atoms == 4
+    assert [
+        (str(residue.resname), int(residue.resid), str(residue.icode))
+        for residue in selected.residues
+    ] == [("LEU", 289, ""), ("NMA", 290, "A")]
 
 
 def test_pdb4amber_is_required(

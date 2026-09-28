@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import MDAnalysis as mda
     from batter.analysis.sim_validation import SimValidator
 
-PROLIF_INTERACTIONS_SCHEMA_VERSION = 4
+PROLIF_INTERACTIONS_SCHEMA_VERSION = 5
 PROLIF_OCCUPANCY_THRESHOLD = 0.30
 PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS = frozenset(
     {"hydrophobic", "vdwcontact", "vdwinteraction", "vdwinteractions"}
@@ -94,13 +94,68 @@ def _mda_align():
     return align
 
 
-def _load_no_equil_representative_universe(rep_pdb: Path):
-    """Load the cpptraj-written PDB snapshot for eq_steps=0 analyses."""
+def _load_no_equil_representative_universe(
+    rep_pdb: Path,
+    solute_topology: Path | None = None,
+):
+    """Load one no-equil snapshot, retaining AMBER bonds when available.
+
+    ``cpptraj`` omits OPC extra points from PDB output, so a solvated AMBER
+    topology cannot be paired directly with ``representative.pdb``.  The
+    vacuum topology contains exactly the leading DUM + protein + ligand atoms
+    written to the PDB and supplies the bond/charge information that ProLIF
+    needs to recognize interactions such as salt bridges and hydrogen bonds.
+    """
     if not rep_pdb.exists():
         raise FileNotFoundError(
             f"Missing representative PDB for no-equil analysis: {rep_pdb}"
         )
-    return _mda().Universe(str(rep_pdb))
+    mda_module = _mda()
+    pdb_universe = mda_module.Universe(str(rep_pdb))
+    if solute_topology is None:
+        return pdb_universe
+
+    solute_topology = Path(solute_topology)
+    if not solute_topology.exists():
+        raise FileNotFoundError(
+            f"Missing solute topology for no-equil analysis: {solute_topology}"
+        )
+    solute_coordinates = solute_topology.with_suffix(".inpcrd")
+    if solute_coordinates.exists():
+        topology_universe = mda_module.Universe(
+            str(solute_topology), str(solute_coordinates)
+        )
+    else:
+        topology_universe = mda_module.Universe(str(solute_topology))
+    n_topology_atoms = int(topology_universe.atoms.n_atoms)
+    if int(pdb_universe.atoms.n_atoms) < n_topology_atoms:
+        raise ValueError(
+            "Representative PDB has fewer atoms than the solute topology "
+            f"({pdb_universe.atoms.n_atoms} < {n_topology_atoms})."
+        )
+
+    pdb_solute = pdb_universe.atoms[:n_topology_atoms]
+    topology_names = np.asarray(topology_universe.atoms.names, dtype=str)
+    pdb_names = np.asarray(pdb_solute.names, dtype=str)
+    topology_resnames = np.asarray(topology_universe.atoms.resnames, dtype=str)
+    pdb_resnames = np.asarray(pdb_solute.resnames, dtype=str)
+    if not (
+        np.array_equal(topology_names, pdb_names)
+        and np.array_equal(topology_resnames, pdb_resnames)
+    ):
+        raise ValueError(
+            "Representative PDB solute atoms do not match the AMBER solute "
+            f"topology {solute_topology}."
+        )
+
+    topology_universe.load_new(
+        np.asarray(pdb_solute.positions, dtype=np.float32).copy()
+    )
+    if pdb_universe.dimensions is not None:
+        topology_universe.dimensions = np.asarray(
+            pdb_universe.dimensions, dtype=np.float32
+        ).copy()
+    return topology_universe
 
 
 def _sim_validator_cls():
@@ -250,6 +305,25 @@ def _load_protein_renum(path: Path) -> pd.DataFrame:
         header=None,
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
+
+
+def _prolif_protein_residue_map(
+    protein_renum_path: Path | None,
+) -> dict[int, dict[str, Any]]:
+    """Map prepared protein residue IDs (including DUM offset) to inputs."""
+    if protein_renum_path is None or not Path(protein_renum_path).is_file():
+        return {}
+    renum = _load_protein_renum(Path(protein_renum_path))
+    residue_map: dict[int, dict[str, Any]] = {}
+    for row in renum.itertuples(index=False):
+        prepared_resid = int(row.new_resid) + 1
+        residue_map[prepared_resid] = {
+            "resid": int(row.old_resid),
+            "resname": str(row.old_resname).strip(),
+            "chainID": str(row.old_chain).strip(),
+            "prepared_resname": str(row.new_resname).strip(),
+        }
+    return residue_map
 
 
 def _equil_anchor_masks_to_original_resids(
@@ -506,6 +580,46 @@ def _prolif_residue_metadata(value: Any) -> dict[str, Any]:
     }
 
 
+def _prolif_original_protein_metadata(
+    metadata: Mapping[str, Any],
+    protein_residue_map: Mapping[int, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """Return display metadata using input numbering, retaining prepared ID."""
+    output = dict(metadata)
+    prepared_resid = _int_or_none(output.get("resid"))
+    if prepared_resid is None or not protein_residue_map:
+        return output
+    original = protein_residue_map.get(int(prepared_resid))
+    if not isinstance(original, Mapping):
+        return output
+
+    original_resid = _int_or_none(original.get("resid"))
+    if original_resid is None:
+        return output
+    original_resname = str(
+        original.get("resname") or output.get("resname") or ""
+    ).strip()
+    original_chain = str(original.get("chainID") or "").strip()
+    original_label = f"{original_resname}{original_resid}"
+    if original_chain and original_chain not in {
+        "0",
+        "None",
+        "none",
+        "nan",
+        "NaN",
+    }:
+        original_label += f".{original_chain}"
+    return {
+        **output,
+        "label": original_label,
+        "resname": original_resname,
+        "resid": int(original_resid),
+        "chainID": original_chain,
+        "prepared_label": str(output.get("label") or ""),
+        "prepared_resid": int(prepared_resid),
+    }
+
+
 def _prolif_column_parts(column: Any) -> tuple[Any, Any, Any] | None:
     parts = list(column) if isinstance(column, tuple) else [column]
     if len(parts) < 3:
@@ -556,6 +670,36 @@ def _bool_prolif_dataframe(df: pd.DataFrame | None) -> pd.DataFrame:
     if df.empty:
         return df.copy()
     return df.fillna(False).astype(bool)
+
+
+def _prolif_dataframe_with_original_residue_labels(
+    df: pd.DataFrame,
+    protein_residue_map: Mapping[int, Mapping[str, Any]] | None,
+) -> pd.DataFrame:
+    """Relabel protein columns for user-facing CSV and plot artifacts."""
+    if (
+        df is None
+        or df.empty
+        or not protein_residue_map
+        or not isinstance(df.columns, pd.MultiIndex)
+    ):
+        return df
+    mapped_columns: list[tuple[Any, ...]] = []
+    for column in df.columns:
+        parts = list(column) if isinstance(column, tuple) else [column]
+        if len(parts) >= 3:
+            protein_meta = _prolif_original_protein_metadata(
+                _prolif_residue_metadata(parts[1]),
+                protein_residue_map,
+            )
+            parts[1] = protein_meta.get("label") or parts[1]
+        mapped_columns.append(tuple(parts))
+    output = df.copy()
+    output.columns = pd.MultiIndex.from_tuples(
+        mapped_columns,
+        names=getattr(df.columns, "names", None),
+    )
+    return output
 
 
 def _import_pyplot():
@@ -843,6 +987,7 @@ def _write_prolif_lignetwork_html(
     prolif_module: Any | None,
     path: Path,
     threshold: float,
+    protein_residue_map: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> None:
     if fingerprint is None or ligand_selection is None or prolif_module is None:
         _write_prolif_lignetwork_unavailable(
@@ -861,6 +1006,42 @@ def _write_prolif_lignetwork_html(
             show_interaction_data=True,
         )
         view.save(path)
+        if protein_residue_map and path.is_file():
+            contents = path.read_text()
+            label_map: dict[str, str] = {}
+            for prepared_resid, original in protein_residue_map.items():
+                prepared_resname = str(
+                    original.get("prepared_resname")
+                    or original.get("resname")
+                    or ""
+                ).strip()
+                if not prepared_resname:
+                    continue
+                display = _prolif_original_protein_metadata(
+                    {
+                        "label": f"{prepared_resname}{prepared_resid}",
+                        "resname": prepared_resname,
+                        "resid": int(prepared_resid),
+                        "chainID": "",
+                    },
+                    protein_residue_map,
+                )
+                display_label = str(display.get("label") or "").strip()
+                if not display_label:
+                    continue
+                label_map[f"{prepared_resname}{int(prepared_resid)}"] = display_label
+            if label_map:
+                prepared_labels = "|".join(
+                    re.escape(label)
+                    for label in sorted(label_map, key=len, reverse=True)
+                )
+                contents = re.sub(
+                    rf"(?<![A-Za-z0-9])({prepared_labels})(?:\.[A-Za-z0-9]+)?"
+                    rf"(?![A-Za-z0-9])",
+                    lambda match: label_map[match.group(1)],
+                    contents,
+                )
+            path.write_text(contents)
     except Exception as exc:
         logger.debug("ProLIF LigNetwork renderer unavailable: {}", exc)
         _write_prolif_lignetwork_unavailable(
@@ -887,6 +1068,7 @@ def _write_prolif_artifacts(
     fingerprint: Any | None = None,
     ligand_selection: Any | None = None,
     prolif_module: Any | None = None,
+    protein_residue_map: Mapping[int, Mapping[str, Any]] | None = None,
     occupancy_threshold: float = PROLIF_OCCUPANCY_THRESHOLD,
 ) -> tuple[dict[str, str], dict[str, str]]:
     paths = _prolif_artifact_paths(prolif_path)
@@ -902,6 +1084,7 @@ def _write_prolif_artifacts(
             prolif_module=prolif_module,
             path=p,
             threshold=occupancy_threshold,
+            protein_residue_map=protein_residue_map,
         ),
         "interaction_diagram_png": lambda p: _write_prolif_interaction_diagram(
             interactions,
@@ -1078,6 +1261,7 @@ def _records_from_prolif_dataframe(
     df: pd.DataFrame,
     *,
     occupancy_threshold: float,
+    protein_residue_map: Mapping[int, Mapping[str, Any]] | None = None,
     ligand_atom_names_by_interaction: Mapping[
         tuple[str, str, str], Sequence[str]
     ]
@@ -1099,7 +1283,10 @@ def _records_from_prolif_dataframe(
             continue
         ligand_id, protein_id, interaction = parsed
         ligand_meta = _prolif_residue_metadata(ligand_id)
-        protein_meta = _prolif_residue_metadata(protein_id)
+        protein_meta = _prolif_original_protein_metadata(
+            _prolif_residue_metadata(protein_id),
+            protein_residue_map,
+        )
         occ = float(value)
         active_frames = int(bool_df[column].sum())
         record = {
@@ -1137,6 +1324,11 @@ def _records_from_prolif_dataframe(
                 "resid": int(resid),
                 "resname": protein_meta.get("resname") or "",
                 "chainID": protein_meta.get("chainID") or "",
+                **(
+                    {"prepared_resid": int(protein_meta["prepared_resid"])}
+                    if protein_meta.get("prepared_resid") is not None
+                    else {}
+                ),
                 "max_occupancy": 0.0,
                 "interactions": [],
             },
@@ -1170,6 +1362,14 @@ def _records_from_prolif_dataframe(
     return records, persistent
 
 
+def _prolif_prepared_resid(item: Mapping[str, Any]) -> int | None:
+    """Return the residue ID used by the prepared analysis topology."""
+    prepared_resid = _int_or_none(item.get("prepared_resid"))
+    if prepared_resid is not None:
+        return prepared_resid
+    return _int_or_none(item.get("resid"))
+
+
 def _persistent_prolif_residue_ids(prolif_record: dict[str, Any] | None) -> list[int]:
     if not isinstance(prolif_record, dict) or not prolif_record.get("usable", False):
         return []
@@ -1177,7 +1377,7 @@ def _persistent_prolif_residue_ids(prolif_record: dict[str, Any] | None) -> list
     for item in prolif_record.get("persistent_protein_residues") or []:
         if not isinstance(item, dict):
             continue
-        resid = _int_or_none(item.get("resid"))
+        resid = _prolif_prepared_resid(item)
         if resid is not None and resid not in out:
             out.append(resid)
     return out
@@ -1192,7 +1392,7 @@ def _persistent_prolif_residue_priorities(
     for item in prolif_record.get("persistent_protein_residues") or []:
         if not isinstance(item, dict):
             continue
-        resid = _int_or_none(item.get("resid"))
+        resid = _prolif_prepared_resid(item)
         if resid is None:
             continue
         best_priority = priorities.get(int(resid), 99)
@@ -1219,7 +1419,7 @@ def _persistent_prolif_ligand_anchor_preferences(
     for residue in prolif_record.get("persistent_protein_residues") or []:
         if not isinstance(residue, dict):
             continue
-        resid = _int_or_none(residue.get("resid"))
+        resid = _prolif_prepared_resid(residue)
         for interaction in residue.get("interactions") or []:
             if not isinstance(interaction, dict):
                 continue
@@ -1264,7 +1464,7 @@ def _persistent_prolif_salt_bridge_residues(
     for item in prolif_record.get("persistent_protein_residues") or []:
         if not isinstance(item, dict):
             continue
-        resid = _int_or_none(item.get("resid"))
+        resid = _prolif_prepared_resid(item)
         if resid is None:
             continue
         has_salt_bridge = False
@@ -1318,6 +1518,7 @@ def _write_prolif_interactions(
     residue_name: str | None,
     tail_fraction: float,
     mode: str,
+    protein_renum_path: Path | None = None,
     occupancy_threshold: float = PROLIF_OCCUPANCY_THRESHOLD,
 ) -> dict[str, Any]:
     try:
@@ -1337,9 +1538,14 @@ def _write_prolif_interactions(
             raise ValueError("No trajectory frames available for ProLIF analysis.")
         start_frame = _trailing_analysis_start_frame(n_frames_total, tail_fraction)
         fp = plf.Fingerprint()
+        analysis_trajectory = (
+            universe.trajectory
+            if start_frame == 0
+            else universe.trajectory[start_frame:n_frames_total]
+        )
         _run_prolif_fingerprint(
             fp,
-            universe.trajectory[start_frame:n_frames_total],
+            analysis_trajectory,
             ligand,
             protein,
         )
@@ -1355,19 +1561,36 @@ def _write_prolif_interactions(
                 exc,
             )
             ligand_atom_names_by_interaction = {}
+        try:
+            protein_residue_map = _prolif_protein_residue_map(protein_renum_path)
+        except Exception as exc:
+            logger.debug(
+                "[equil_check:{}] Could not map ProLIF protein residue labels "
+                "through {}: {}",
+                ligand_label,
+                protein_renum_path,
+                exc,
+            )
+            protein_residue_map = {}
         interactions, persistent = _records_from_prolif_dataframe(
             df,
             occupancy_threshold=occupancy_threshold,
+            protein_residue_map=protein_residue_map,
             ligand_atom_names_by_interaction=ligand_atom_names_by_interaction,
+        )
+        artifact_df = _prolif_dataframe_with_original_residue_labels(
+            df,
+            protein_residue_map,
         )
         artifacts, artifact_errors = _write_prolif_artifacts(
             prolif_path=prolif_path,
-            df=df,
+            df=artifact_df,
             interactions=interactions,
             ligand_label=ligand_label or residue_name,
             fingerprint=fp,
             ligand_selection=ligand,
             prolif_module=plf,
+            protein_residue_map=protein_residue_map,
             occupancy_threshold=occupancy_threshold,
         )
         record = {
@@ -1382,6 +1605,9 @@ def _write_prolif_interactions(
             "analysis_start_frame": int(start_frame),
             "n_frames": int(max(0, n_frames_total - start_frame)),
             "occupancy_threshold": float(occupancy_threshold),
+            "protein_residue_numbering": (
+                "input" if protein_residue_map else "analysis_topology"
+            ),
             "candidate_interaction_filter": {
                 "excluded_interactions": sorted(PROLIF_CANDIDATE_EXCLUDED_INTERACTIONS),
             },
@@ -2471,6 +2697,32 @@ def _maybe_cleanup_equil(payload: StepPayload, paths: dict[str, Path]) -> None:
     cleanup_equil_after_analysis(paths["equil_dir"])
 
 
+def _write_representative_only_prolif(
+    *,
+    paths: Mapping[str, Path],
+    ligand_label: str | None,
+    residue_name: str | None,
+) -> dict[str, Any]:
+    """Backfill ProLIF from a representative snapshot when trajectories are gone."""
+    solute_topology = paths["equil_dir"] / "vac.prmtop"
+    uses_prepared_topology = solute_topology.exists()
+    universe = _load_no_equil_representative_universe(
+        paths["rep_pdb"],
+        solute_topology if uses_prepared_topology else None,
+    )
+    return _write_prolif_interactions(
+        prolif_path=paths["prolif_interactions"],
+        universe=universe,
+        ligand_label=ligand_label,
+        residue_name=residue_name,
+        tail_fraction=1.0,
+        mode="representative_only",
+        protein_renum_path=(
+            paths["prot_renum"] if uses_prepared_topology else None
+        ),
+    )
+
+
 def equil_analysis_handler(
     step: Step, system: SimSystem, params: Dict[str, Any]
 ) -> ExecResult:
@@ -2623,14 +2875,10 @@ def equil_analysis_handler(
             )
             if not _prolif_interactions_current(p["prolif_interactions"]):
                 try:
-                    u_prolif = _mda().Universe(str(p["rep_pdb"]))
-                    _write_prolif_interactions(
-                        prolif_path=p["prolif_interactions"],
-                        universe=u_prolif,
+                    _write_representative_only_prolif(
+                        paths=p,
                         ligand_label=lig,
                         residue_name=residue_name,
-                        tail_fraction=1.0,
-                        mode="representative_only",
                     )
                 except Exception as exc:
                     _write_unusable_prolif_interactions(
@@ -2671,7 +2919,9 @@ def equil_analysis_handler(
         try:
             # eqnpt_appear.rst7 can be a NetCDF restart with a .rst7 suffix.
             # MDAnalysis cannot infer that reliably; cpptraj already wrote PDB.
-            u_prolif = _load_no_equil_representative_universe(p["rep_pdb"])
+            u_prolif = _load_no_equil_representative_universe(
+                p["rep_pdb"], p["equil_dir"] / "vac.prmtop"
+            )
             prolif_record = _write_prolif_interactions(
                 prolif_path=p["prolif_interactions"],
                 universe=u_prolif,
@@ -2679,6 +2929,7 @@ def equil_analysis_handler(
                 residue_name=residue_name,
                 tail_fraction=1.0,
                 mode="single_frame_no_equil",
+                protein_renum_path=p["prot_renum"],
             )
         except Exception as exc:
             prolif_record = _write_unusable_prolif_interactions(
@@ -2690,7 +2941,9 @@ def equil_analysis_handler(
                 reason=exc,
             )
         try:
-            u_static = _load_no_equil_representative_universe(p["rep_pdb"])
+            u_static = _load_no_equil_representative_universe(
+                p["rep_pdb"], p["equil_dir"] / "vac.prmtop"
+            )
             anchor_masks = _load_equil_anchor_masks(p["equil_dir"])
             stable_val = _stable_distance_validator(
                 universe=u_static,
@@ -2786,6 +3039,9 @@ def equil_analysis_handler(
                 residue_name=residue_name,
                 tail_fraction=0.25,
                 mode="trajectory_tail",
+                protein_renum_path=(
+                    p["prot_renum"] if uses_amber_topology else None
+                ),
             )
         except Exception as exc:
             prolif_record = _write_unusable_prolif_interactions(
@@ -2860,6 +3116,22 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] keeping existing representative.* after "
                 "validation/backfill failure"
             )
+            if not _prolif_interactions_current(p["prolif_interactions"]):
+                try:
+                    _write_representative_only_prolif(
+                        paths=p,
+                        ligand_label=lig,
+                        residue_name=residue_name,
+                    )
+                except Exception as prolif_exc:
+                    _write_unusable_prolif_interactions(
+                        prolif_path=p["prolif_interactions"],
+                        ligand_label=lig,
+                        residue_name=residue_name,
+                        tail_fraction=1.0,
+                        mode="representative_only",
+                        reason=prolif_exc,
+                    )
         else:
             # copy last frame as representative
             restart_candidates = []

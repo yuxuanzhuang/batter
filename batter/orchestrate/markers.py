@@ -15,7 +15,7 @@ from batter.utils import components_under
 from batter.orchestrate.state_registry import get_phase_state, PhaseState
 
 _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 10
-_PROLIF_INTERACTIONS_SCHEMA_VERSION = 4
+_PROLIF_INTERACTIONS_SCHEMA_VERSION = 5
 
 
 def _components_under_pattern(root: Path, pattern: str) -> list[str]:

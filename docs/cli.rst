@@ -55,6 +55,39 @@ Notes:
 * The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
   ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
 
+Parameterize One Ligand
+=======================
+
+Generate a reusable parameter set from one ligand SDF::
+
+   batter param-ligand ligand.sdf
+
+By default this writes the standard content-addressed BATTER layout under
+``ligand_param/<content-hash>/``. The generated directory contains
+``lig.sdf``, ``lig.mol2``, ``lig.frcmod``, ``lig.lib``, ``lig.prmtop``,
+``lig.inpcrd``, ``lig.pdb``, and JSON metadata. Use ``--output`` to select a
+different store. The default force field is ``openff-2.3.0`` with
+``openff-gnn-am1bcc-1.0.0.pt`` charges; use ``--ligand-ff`` and
+``--charge-method`` to override them. For example::
+
+   batter param-ligand ligand.sdf \
+       --output ligand_param \
+       --ligand-ff openff-2.3.0 \
+       --charge-method openff-gnn-am1bcc-1.0.0.pt
+
+A protonated 3D SDF with explicit hydrogens is recommended. Pass
+``--no-retain-h`` to regenerate hydrogens, or ``--overwrite`` to rebuild an
+otherwise complete matching cache entry. For a multi-record SDF, this command
+parameterizes the first molecule only. Parameterization runs synchronously on
+the local host and requires the same AmberTools/OpenFF executables and Python
+packages as BATTER's normal ligand-parameterization phase.
+
+To reuse this store in a run, point ``create.param_outdir`` at
+``ligand_param`` and keep ``create.ligand_ff``, ``create.param_charge``, and
+``create.retain_lig_prot`` consistent with the standalone command. Note that
+the standalone default is the singular ``ligand_param`` while a regular BATTER
+workflow normally creates ``<output_folder>/ligand_params``.
+
 Rerun Equilibration Analysis
 ============================
 

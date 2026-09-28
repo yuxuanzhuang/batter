@@ -146,6 +146,27 @@ def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_pat
     )
     assert markers.is_done(auto_anchor_system, "equil_analysis") is True
 
+    prolif_path.write_text(
+        json.dumps(
+            {
+                "schema_version": markers._PROLIF_INTERACTIONS_SCHEMA_VERSION - 1,
+                "usable": True,
+            }
+        )
+        + "\n"
+    )
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is False
+    prolif_path.write_text(
+        json.dumps(
+            {
+                "schema_version": markers._PROLIF_INTERACTIONS_SCHEMA_VERSION,
+                "usable": True,
+            }
+        )
+        + "\n"
+    )
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is True
+
     stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
     pinned_receptor_anchor_system = SimSystem(
         name=root.name,

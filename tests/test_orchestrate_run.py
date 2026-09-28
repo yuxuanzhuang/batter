@@ -136,6 +136,34 @@ def test_store_run_metadata_preserves_invocation_history(
     ]
 
 
+def test_read_git_revision_from_loose_branch_ref(tmp_path: Path) -> None:
+    revision = "0123456789abcdef0123456789abcdef01234567"
+    git_dir = tmp_path / ".git"
+    ref_path = git_dir / "refs" / "heads" / "main"
+    ref_path.parent.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+    ref_path.write_text(f"{revision}\n")
+
+    assert run_mod._read_git_revision(tmp_path) == revision
+
+
+def test_read_git_revision_from_worktree_packed_ref(tmp_path: Path) -> None:
+    revision = "fedcba9876543210fedcba9876543210fedcba98"
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    common_dir = tmp_path / "repo.git"
+    git_dir = common_dir / "worktrees" / "checkout"
+    git_dir.mkdir(parents=True)
+    (checkout / ".git").write_text(f"gitdir: {git_dir}\n")
+    (git_dir / "HEAD").write_text("ref: refs/heads/topic\n")
+    (git_dir / "commondir").write_text("../..\n")
+    (common_dir / "packed-refs").write_text(
+        f"# pack-refs with: peeled fully-peeled sorted\n{revision} refs/heads/topic\n"
+    )
+
+    assert run_mod._read_git_revision(checkout) == revision
+
+
 def test_analysis_inner_workers_avoids_nested_parallelism() -> None:
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=6) == 1
     assert run_mod._analysis_inner_workers(requested_workers=8, n_ligands=1) == 8

@@ -103,6 +103,7 @@ _SYSTEM_KEEP_NAMES = {
     "extra_conf_restraints.json",
     "ligand_dihedral_restraints.json",
     "ligand_dihedral_schedule.json",
+    "co_alchemical_ion.json",
     "sdr_info.txt",
     "vac.inpcrd",
     "vac.pdb",
