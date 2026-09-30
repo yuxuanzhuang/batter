@@ -703,6 +703,99 @@ def test_check_sim_failure_uses_final_results_for_minimization_numeric_check(
     assert not (tmp_path / "WRONG_FAIL").exists()
 
 
+def test_check_sim_failure_can_defer_initial_minimization_overflow_to_cpu(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    _write_ascii_restart(tmp_path / "mini.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text(
+        "nstlim = 1000000,\ndt = 0.004,\n"
+    )
+    (tmp_path / "mini.out").write_text(
+        "                    FINAL RESULTS\n"
+        "\n"
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "   2000       1.4586E+09     1.0016E+02     1.2022E+04     H1A     23319\n"
+        " VDWAALS = *************  EEL     =  -158820.0949  HBOND      =        0.0000\n"
+        " EAMBER  = *************\n"
+        "|  Total wall time:          11    seconds     0.00 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& BATTER_ALLOW_NUMERIC_RESTART_RECOVERY=1 RETRY_COUNT=1 "
+        "check_sim_failure 'Minimization' run.log mini.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "deferring numeric validation to CPU Minimization 2" in result.stdout
+    assert (tmp_path / "mini.rst7").exists()
+    assert (tmp_path / "mini.out").exists()
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_numeric_restart_recovery_opt_in_is_limited_to_initial_minimization(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "check_run.bash"
+    )
+    _write_ascii_restart(tmp_path / "mini2.rst7", natom=1, payload_fields=6)
+    (tmp_path / "mdin-template").write_text(
+        "nstlim = 1000000,\ndt = 0.004,\n"
+    )
+    (tmp_path / "mini2.out").write_text(
+        "                    FINAL RESULTS\n"
+        "\n"
+        " EAMBER  = *************\n"
+        "|  Total wall time:          11    seconds     0.00 hours\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& BATTER_ALLOW_NUMERIC_RESTART_RECOVERY=1 RETRY_COUNT=1 "
+        "check_sim_failure 'CPU Minimization 2' run.log mini2.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Numeric failure detected in mini2.out" in result.stdout
+    assert "deferring numeric validation" not in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "mini2.rst7").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/mini2.out"))
+
+
 def test_check_sim_failure_rejects_incomplete_amber_output(
     tmp_path: Path,
 ) -> None:

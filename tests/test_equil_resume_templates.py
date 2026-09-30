@@ -47,6 +47,7 @@ if [[ -n "${NUMERIC_FAIL_OUT_ONCE:-}" && "$out" == "$NUMERIC_FAIL_OUT_ONCE" ]]; 
     2000       1.4327E+09     4.2550E+04     8.3890E+06     C        4656
  1-4 VDW = *************  1-4 EEL =    -1696.6286
  EAMBER  = *************
+|  Total wall time:           1    seconds     0.00 hours
 EOF
     fi
     [[ -n "$rst" ]] && printf "Stub Amber restart\n    1  0.00000000\n  0.0  0.0  0.0\n" > "$rst"
@@ -974,6 +975,71 @@ def test_run_equil_runs_cpu_minimization2(
     assert "-ref full.inpcrd" in mini2_command
     assert (tmp_path / "mini.rst7").exists()
     assert (tmp_path / "mini2.rst7").exists()
+
+
+def test_initial_cuda_overflow_is_deferred_to_cpu_minimization2(
+    tmp_path: Path,
+) -> None:
+    cases = [
+        ("run_local", _setup_run_local_only_eq),
+        ("run_equil", _setup_run_equil_only_eq),
+    ]
+
+    for name, setup in cases:
+        work = tmp_path / name
+        work.mkdir()
+        env, cmd = setup(work)
+        env["NUMERIC_FAIL_OUT_ONCE"] = "mini.out"
+        env["NUMERIC_FAIL_MARKER"] = str(work / ".numeric_failed_once")
+
+        result = subprocess.run(
+            cmd,
+            cwd=work,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, name + "\n" + result.stdout + result.stderr
+        assert "deferring numeric validation to CPU Minimization 2" in result.stdout
+        assert _read_calls(work)[:2] == ["mini.out", "mini2.out"]
+        assert (work / "mini.rst7").exists()
+        assert (work / "mini2.rst7").exists()
+        assert not (work / "ATTEMPT_FAILED").exists()
+        assert not (work / "WRONG_FAIL").exists()
+
+
+def test_exported_numeric_recovery_flag_does_not_relax_cpu_minimization2(
+    tmp_path: Path,
+) -> None:
+    cases = [
+        ("run_local", _setup_run_local_only_eq),
+        ("run_equil", _setup_run_equil_only_eq),
+    ]
+
+    for name, setup in cases:
+        work = tmp_path / name
+        work.mkdir()
+        env, cmd = setup(work)
+        env["BATTER_ALLOW_NUMERIC_RESTART_RECOVERY"] = "1"
+        env["NUMERIC_FAIL_OUT_ONCE"] = "mini2.out"
+        env["NUMERIC_FAIL_MARKER"] = str(work / ".numeric_failed_once")
+
+        result = subprocess.run(
+            cmd,
+            cwd=work,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0, name + "\n" + result.stdout + result.stderr
+        assert "Numeric failure detected in mini2.out" in result.stdout
+        assert "deferring numeric validation" not in result.stdout
+        assert _read_calls(work)[:2] == ["mini.out", "mini2.out"]
+        assert (work / "ATTEMPT_FAILED").read_text() == "FAILED\n"
 
 
 def test_cpu_minimization2_partial_resume_uses_existing_noshake_input(

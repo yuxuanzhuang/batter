@@ -818,6 +818,7 @@ check_sim_failure() {
     local rst_file=$3
     local rst_file_prev=${4:-}
     local retry_count=${5:-${RETRY_COUNT:-${RETRY:-}}}
+    local allow_numeric_restart_recovery=${BATTER_ALLOW_NUMERIC_RESTART_RECOVERY:-0}
     local command_status=${SIM_COMMAND_STATUS:-0}
     local -a extra_files=()
     local extra_file_count=0
@@ -1015,6 +1016,19 @@ check_sim_failure() {
 
     local bad_output_file
     if bad_output_file=$(numeric_failure_file); then
+        # The initial CUDA minimization can exceed Amber's fixed-width printed
+        # energy fields for a heavily clashing but still finite structure while
+        # writing a complete, usable restart.  Equilibration runners opt in to
+        # retaining only that restart so the immediately following
+        # double-precision CPU minimization can validate and relax it.  All
+        # other stages, and CPU Minimization 2 itself, remain strict.
+        if [[ $allow_numeric_restart_recovery == 1 \
+            && $stage == "Minimization" \
+            && $rst_file == "mini.rst7" \
+            && $bad_output_file == "mini.out" ]]; then
+            echo "[WARN] $stage produced a numeric overflow in ${bad_output_file}, but wrote a complete restart; deferring numeric validation to CPU Minimization 2."
+            return 0
+        fi
         echo "[ERROR] $stage simulation failed. Numeric failure detected in ${bad_output_file}:"
         tail -n 200 "$bad_output_file" || true
         cleanup_outputs

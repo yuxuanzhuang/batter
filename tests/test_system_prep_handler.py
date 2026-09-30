@@ -248,6 +248,44 @@ def _make_mixed_segid_protein_pdb(path: Path) -> None:
     )
 
 
+def _make_covalent_segid_transition_pdb(
+    path: Path,
+    *,
+    peptide_bond_distance: float = 1.33,
+) -> None:
+    first_c_x = 2.2
+    second_n_x = first_c_x + peptide_bond_distance
+    _write_pdb(
+        path,
+        [
+            _atom_line_with_segid(
+                1, "N", "ALA", "A", 1, 0.0, 0.0, 0.0, "N", segid=""
+            ),
+            _atom_line_with_segid(
+                2, "CA", "ALA", "A", 1, 1.2, 0.0, 0.0, "C", segid=""
+            ),
+            _atom_line_with_segid(
+                3, "C", "ALA", "A", 1, first_c_x, 0.8, 0.0, "C", segid=""
+            ),
+            _atom_line_with_segid(
+                4, "O", "ALA", "A", 1, 2.1, 2.0, 0.0, "O", segid=""
+            ),
+            _atom_line_with_segid(
+                5, "N", "GLY", "A", 2, second_n_x, 0.8, 0.0, "N", segid="P"
+            ),
+            _atom_line_with_segid(
+                6, "CA", "GLY", "A", 2, second_n_x + 1.0, 1.4, 0.0, "C", segid="P"
+            ),
+            _atom_line_with_segid(
+                7, "C", "GLY", "A", 2, second_n_x + 2.0, 0.6, 0.0, "C", segid="P"
+            ),
+            _atom_line_with_segid(
+                8, "O", "GLY", "A", 2, second_n_x + 2.1, -0.6, 0.0, "O", segid="P"
+            ),
+        ],
+    )
+
+
 def _xy_area(atomgroup) -> float:
     spans = np.ptp(atomgroup.positions, axis=0)
     return float(spans[0] * spans[1])
@@ -857,6 +895,46 @@ def test_write_pdb_inherits_blank_terminal_cap_segid_from_covalent_neighbor(
     nma = rewritten.select_atoms("resname NMA and resid 239A").residues[0]
     assert arg.segid == "P0"
     assert nma.segid == "P0"
+
+
+def test_write_pdb_normalizes_segid_across_covalent_peptide_transition(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "peptide_segid_transition.pdb"
+    normalized = tmp_path / "normalized.pdb"
+    _make_covalent_segid_transition_pdb(source)
+
+    universe = mda.Universe(str(source))
+    normalized_count = system_prep_mod._write_pdb_with_normalized_protein_segids(
+        universe, normalized
+    )
+
+    assert normalized_count == 1
+    rewritten = mda.Universe(str(normalized))
+    residues = rewritten.select_atoms("protein").residues
+    assert residues.n_residues == 2
+    assert [residue.segid for residue in residues] == ["P", "P"]
+    assert len(system_prep_mod._group_residues_by_source_identity(residues)) == 1
+
+
+def test_write_pdb_preserves_segid_transition_without_peptide_bond(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "separate_fragments.pdb"
+    normalized = tmp_path / "normalized.pdb"
+    _make_covalent_segid_transition_pdb(source, peptide_bond_distance=4.0)
+
+    universe = mda.Universe(str(source))
+    normalized_count = system_prep_mod._write_pdb_with_normalized_protein_segids(
+        universe, normalized
+    )
+
+    assert normalized_count == 0
+    rewritten = mda.Universe(str(normalized))
+    residues = rewritten.select_atoms("protein").residues
+    assert residues.n_residues == 2
+    assert [residue.segid for residue in residues] == ["", "P"]
+    assert len(system_prep_mod._group_residues_by_source_identity(residues)) == 2
 
 
 def test_process_system_keeps_blank_segid_terminal_cap_with_protein_fragment(

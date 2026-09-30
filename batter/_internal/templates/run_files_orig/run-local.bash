@@ -175,7 +175,8 @@ if [[ $only_eq -eq 1 ]]; then
             mini_input="$noshake_mini_input"
             run_minimization_cuda "$mini_input" "mini.out" "mini.rst7" "mini.nc" "$INPCRD"
         fi
-        check_sim_failure "Minimization" "$log_file" mini.rst7
+        BATTER_ALLOW_NUMERIC_RESTART_RECOVERY=1 \
+            check_sim_failure "Minimization" "$log_file" mini.rst7
 
         if ! check_min_energy "mini.out" -1000; then
             echo "[WARN] CUDA minimization energy did not pass threshold; CPU Minimization 2 will validate and relax mini.rst7."

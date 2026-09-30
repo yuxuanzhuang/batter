@@ -39,6 +39,7 @@ from batter.utils.builder_utils import (
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
 _PROTEIN_CAP_BOND_DISTANCE_CUTOFF_A = 1.9
+_PROTEIN_PEPTIDE_BOND_DISTANCE_CUTOFF_A = 1.9
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
 _XY_ROTATION_REFINE_DEGREES = (45.0, 15.0, 5.0, 1.0)
 _PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
@@ -499,7 +500,7 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
         residue_atom_indices.setdefault(residue_key, []).append(int(atom.index))
 
     segid_overrides: dict[int, str] = {}
-    normalized_count = 0
+    normalized_residue_keys: set[tuple[str, int, str, str]] = set()
     residue_segids: dict[tuple[str, int, str, str], str] = {}
     ambiguous_residue_keys: set[tuple[str, int, str, str]] = set()
     for residue_key, atom_indices in residue_atom_indices.items():
@@ -527,7 +528,78 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
 
         for atom_index in atom_indices:
             segid_overrides[atom_index] = canonical_segid
-        normalized_count += 1
+        normalized_residue_keys.add(residue_key)
+
+    # Some membrane/protein builders change or omit the segid in the middle of
+    # an otherwise continuous peptide chain.  Grouping residues by both chainID
+    # and segid would then create artificial termini at that transition.  TLeap
+    # adds OXT/H1/H2/H3 atoms at those false termini, and the added atoms can
+    # overlap the original peptide junction badly enough to make minimization
+    # impossible.  When adjacent regular residues have sequential residue
+    # numbers and an explicit peptide-like C-N distance, treat geometry as the
+    # authoritative evidence of continuity and use one segid for the connected
+    # component.
+    ordered_residue_keys = list(residue_atom_indices)
+    peptide_components: list[list[tuple[str, int, str, str]]] = []
+    current_component: list[tuple[str, int, str, str]] = []
+    for residue_key in ordered_residue_keys:
+        if not current_component:
+            current_component = [residue_key]
+            continue
+
+        prev_key = current_component[-1]
+        prev_chain_id, prev_resid, _, prev_resname = prev_key
+        chain_id, resid, _, resname = residue_key
+        peptide_connected = False
+        if (
+            prev_key not in ambiguous_residue_keys
+            and residue_key not in ambiguous_residue_keys
+            and chain_id == prev_chain_id
+            and resid == prev_resid + 1
+            and prev_resname not in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+            and resname not in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+        ):
+            prev_c = universe.atoms[residue_atom_indices[prev_key]].select_atoms(
+                "name C"
+            )
+            curr_n = universe.atoms[residue_atom_indices[residue_key]].select_atoms(
+                "name N"
+            )
+            if prev_c.n_atoms == 1 and curr_n.n_atoms == 1:
+                peptide_distance = float(
+                    np.linalg.norm(prev_c.positions[0] - curr_n.positions[0])
+                )
+                peptide_connected = (
+                    peptide_distance <= _PROTEIN_PEPTIDE_BOND_DISTANCE_CUTOFF_A
+                )
+
+        if peptide_connected:
+            current_component.append(residue_key)
+        else:
+            peptide_components.append(current_component)
+            current_component = [residue_key]
+    if current_component:
+        peptide_components.append(current_component)
+
+    for component in peptide_components:
+        component_segids = [
+            residue_segids[residue_key]
+            for residue_key in component
+            if residue_segids[residue_key]
+        ]
+        if not component_segids:
+            continue
+        canonical_segid = Counter(component_segids).most_common(1)[0][0]
+        for residue_key in component:
+            atom_indices = residue_atom_indices[residue_key]
+            atom_segids = {
+                str(segid).strip() for segid in universe.atoms[atom_indices].segids
+            }
+            if atom_segids != {canonical_segid}:
+                for atom_index in atom_indices:
+                    segid_overrides[atom_index] = canonical_segid
+                normalized_residue_keys.add(residue_key)
+            residue_segids[residue_key] = canonical_segid
 
     # Some membrane builders omit the segid from a whole terminal cap. Do not
     # group such a cap as a separate protein chain: inherit the segid from the
@@ -580,9 +652,9 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
         for atom_index in atom_indices:
             segid_overrides[atom_index] = closest[1]
         residue_segids[residue_key] = closest[1]
-        normalized_count += 1
+        normalized_residue_keys.add(residue_key)
 
-    return segid_overrides, normalized_count
+    return segid_overrides, len(normalized_residue_keys)
 
 
 def _write_pdb_with_normalized_protein_segids(
